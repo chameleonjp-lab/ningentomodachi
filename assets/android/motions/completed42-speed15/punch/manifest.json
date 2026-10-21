@@ -1,0 +1,1560 @@
+{
+  "category": "punch",
+  "label_ja": "パンチ",
+  "clip_count": 13,
+  "asset": "android_punch.glb",
+  "coordinates": {
+    "blender": "Z up, initial front -Y, character left +X",
+    "gltf": "Y up, initial front +Z under frozen hierarchy; global basis (x,y,z) -> (x,z,-y)",
+    "units": "meters",
+    "events": "Original source frame numbers preserved; speed15 seconds=(frame-start_frame)/45. Original source fps=30. All temporal events use this mapping."
+  },
+  "runtime_boundary": "Animation assets only. Apply complete root transform or extract correctly once; do not double-apply or reset displaced/turned endpoints. Measured root deltas are not gameplay-controller acceptance.",
+  "clips": [
+    {
+      "clip": "Jab",
+      "name_ja": "ジャブ",
+      "sheet": "S2",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        37
+      ],
+      "seconds": 0.7999999999999999,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_travel": "In-place one-shot: up to 8 mm controlled fore-aft weight shift; zero net displacement. No step, no jump, no reset teleport."
+      },
+      "support_contacts": {
+        "contact": {
+          "left_foot": "planted throughout frames 1-37, lead foot",
+          "right_foot": "planted throughout frames 1-37",
+          "support_width_m": 0.52
+        }
+      },
+      "attack_and_timeline_events": {
+        "strike_events": [
+          {
+            "frame": 12,
+            "time_seconds": 0.24444444444444444,
+            "limb": "left fist",
+            "type": "single lead-hand jab",
+            "direction": "forward -Y"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "boxing guard",
+            "frames": [
+              1,
+              7
+            ]
+          },
+          {
+            "name": "quick lead-left extension",
+            "frames": [
+              8,
+              12
+            ]
+          },
+          {
+            "name": "recoil",
+            "frames": [
+              13,
+              19
+            ]
+          },
+          {
+            "name": "settle and guard",
+            "frames": [
+              20,
+              37
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Matching stable boxing guard; blend into guard state.",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "Cross",
+      "name_ja": "クロス",
+      "sheet": "S2",
+      "source_section": "02 CROSS, rear-foot push, hip and torso rotation, straight wrist",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        45
+      ],
+      "seconds": 0.9777777777777777,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one shot with temporary weight transfer; zero net displacement and no endpoint teleport."
+      },
+      "support_contacts": {
+        "support": "Left foot planted throughout; rear toe pivot, raised heel during punch, no step."
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 17,
+            "limb": "hand.R",
+            "type": "straight rear-hand cross",
+            "window": [
+              16,
+              19
+            ]
+          }
+        ]
+      },
+      "phases": {
+        "stages": [
+          {
+            "frame": 1,
+            "phase": "orthodox high guard"
+          },
+          {
+            "frame": 7,
+            "phase": "rear-side load"
+          },
+          {
+            "frame": 11,
+            "phase": "rear-foot drive and hip initiation"
+          },
+          {
+            "frame": 17,
+            "phase": "single right cross impact"
+          },
+          {
+            "frame": 24,
+            "phase": "recoil"
+          },
+          {
+            "frame": 39,
+            "phase": "guard recovery"
+          }
+        ],
+        "timing": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] Authored 30 fps, 1.4667 seconds. Reference phases interpreted, not literal frame numbers."
+      },
+      "start_end_use": "Same orthodox guard. No gameplay hitbox or physics integration claimed.",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "Hook",
+      "name_ja": "フック",
+      "sheet": "S2",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.0666666666666667,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one-shot, no net travel; yaw load and unwind."
+      },
+      "support_contacts": {
+        "support": "Both ankle anchors fixed throughout. Lead sole pivots about fixed ankle during hip rotation, rear sole stays almost flat with minor yaw. No sliding translation."
+      },
+      "attack_and_timeline_events": {
+        "events": [
+          {
+            "frame": 10,
+            "event": "load"
+          },
+          {
+            "frame": 16,
+            "event": "horizontal swing"
+          },
+          {
+            "frame": 20,
+            "event": "left hook impact"
+          },
+          {
+            "frame": 24,
+            "event": "follow-through"
+          },
+          {
+            "frame": 34,
+            "event": "recoil"
+          },
+          {
+            "frame": 49,
+            "event": "guard recovery"
+          }
+        ]
+      },
+      "phases": {},
+      "start_end_use": "Identical left-lead combat guard; blend to/from guard state, not neutral standing.",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "Uppercut",
+      "name_ja": "アッパーカット",
+      "sheet": "S2",
+      "source_section": "04 UPPERCUT: bent-knee drop, leg and torso rise, flexed elbow and upward fist arc",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        47
+      ],
+      "seconds": 1.0222222222222224,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "Temporary 0.19 m vertical drive and small forward weight shift; zero net travel. Smooth guard recovery, no terminal teleport."
+      },
+      "support_contacts": {
+        "support": "Both feet planted in staggered stance throughout. Knee flex increases on load then decreases through impact. No step or aerial phase."
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 23,
+            "limb": "hand.R",
+            "type": "upward close-range uppercut",
+            "window": [
+              21,
+              24
+            ]
+          }
+        ]
+      },
+      "phases": {
+        "stages": [
+          {
+            "frame": 1,
+            "phase": "orthodox guard"
+          },
+          {
+            "frame": 13,
+            "phase": "bent-knee drop and rear fist load"
+          },
+          {
+            "frame": 17,
+            "phase": "leg drive and rising fist"
+          },
+          {
+            "frame": 23,
+            "phase": "single upward impact"
+          },
+          {
+            "frame": 33,
+            "phase": "recoil"
+          },
+          {
+            "frame": 41,
+            "phase": "guard recovered"
+          }
+        ],
+        "timing": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] 30 fps; frame numbers are authored timing, not literal drawing indices."
+      },
+      "start_end_use": "Identical boxing guard; non-striking left hand guards throughout.",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "PunchCombo4",
+      "name_ja": "パンチ4連撃",
+      "sheet": "S2",
+      "source_section": "Combo 01 anticipation, 02 jab, 03 cross, 04 hook, 05 uppercut, 06 recoil, 07 recovery. Seven numbering phases govern despite six-frame caption.",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        81
+      ],
+      "seconds": 1.7777777777777777,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place combat combo. Temporary weight shift and knee dip/rise, zero net translation. No terminal teleport."
+      },
+      "support_contacts": {
+        "support": "Left sole planted throughout; rear forefoot pivots with heel rise during cross, then returns flat for hook and uppercut. No steps or airborne phases."
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 12,
+            "limb": "hand.L",
+            "type": "jab",
+            "window": [
+              11,
+              12
+            ]
+          },
+          {
+            "frame": 24,
+            "limb": "hand.R",
+            "type": "cross",
+            "window": [
+              23,
+              24
+            ]
+          },
+          {
+            "frame": 39,
+            "limb": "hand.L",
+            "type": "horizontal hook",
+            "window": [
+              38,
+              40
+            ]
+          },
+          {
+            "frame": 59,
+            "limb": "hand.R",
+            "type": "upward uppercut",
+            "window": [
+              58,
+              60
+            ]
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "phase": "anticipation",
+            "frames": [
+              1,
+              6
+            ]
+          },
+          {
+            "phase": "jab",
+            "frames": [
+              7,
+              12
+            ]
+          },
+          {
+            "phase": "cross link and drive",
+            "frames": [
+              13,
+              24
+            ]
+          },
+          {
+            "phase": "hook wind-up and arc",
+            "frames": [
+              25,
+              39
+            ]
+          },
+          {
+            "phase": "uppercut load and rise",
+            "frames": [
+              40,
+              59
+            ]
+          },
+          {
+            "phase": "recoil",
+            "frames": [
+              60,
+              73
+            ]
+          },
+          {
+            "phase": "balanced guard recovery",
+            "frames": [
+              74,
+              81
+            ]
+          }
+        ],
+        "timing": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] 30 fps, frames 1-81, 2.6667 seconds; drawing numbers denote phases not literal frames."
+      },
+      "start_end_use": "Identical shared orthodox high guard; blend into combat guard rather than standing Idle.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "combo"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "FlippingSlash",
+      "name_ja": "宙返り・無手の打ち下ろし",
+      "sheet": "S4",
+      "source_section": "04 フリップスラッシュ / FLIPPING SLASH (UNARMED)",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        91
+      ],
+      "seconds": 2.0,
+      "loop": false,
+      "net_root_blender_m": [
+        3.7651400219829156e-08,
+        -1.100000023841858,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        3.7651400219829156e-08,
+        0.0,
+        1.100000023841858
+      ],
+      "root_motion": {
+        "root_motion": {
+          "translation_blender": [
+            0,
+            -1.1,
+            0
+          ],
+          "direction": "forward -Y Blender = +Z glTF in this frozen export hierarchy",
+          "flight": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] ballistic vertical pelvis/root travel; g=9.81 m/s^2, flight 40/30 s, peak 2.18 m above takeoff",
+          "rotation": "continuous unwrapped +360 degrees about Blender X around pelvis height; no yaw or roll",
+          "end_reset": false,
+          "runtime": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] Play as one-shot with root motion applied once. Retain the -Y 1.10 m landing displacement; do not reset the root at recovery."
+        }
+      },
+      "support_contacts": {
+        "contacts": [
+          {
+            "limbs": [
+              "foot.L",
+              "foot.R"
+            ],
+            "frames": [
+              1,
+              14
+            ],
+            "type": "floor / planted load"
+          },
+          {
+            "limbs": [
+              "foot.R"
+            ],
+            "frames": [
+              15,
+              20
+            ],
+            "type": "floor / final launch support"
+          },
+          {
+            "limbs": [
+              "foot.L",
+              "foot.R"
+            ],
+            "frames": [
+              60,
+              91
+            ],
+            "type": "floor / landed, fixed footprint"
+          }
+        ],
+        "support_notes": [
+          "Feet remain at fixed floor targets while knees load and absorb.",
+          "Airborne poses are never ground()-corrected.",
+          "No airborne hand, head, or knee support is claimed."
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "hand.R",
+            "type": "single downward-forward unarmed arm strike",
+            "windup_frames": [
+              33,
+              38
+            ],
+            "active_frames": [
+              41,
+              46
+            ],
+            "impact_frame": 44,
+            "follow_through_frames": [
+              45,
+              48
+            ],
+            "target_added": false
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "source_phase": 1,
+            "name": "takeoff/load",
+            "frames": [
+              1,
+              20
+            ]
+          },
+          {
+            "source_phase": 2,
+            "name": "ascent and compact flip",
+            "frames": [
+              21,
+              38
+            ]
+          },
+          {
+            "source_phase": 3,
+            "name": "downward unarmed slash",
+            "frames": [
+              39,
+              48
+            ]
+          },
+          {
+            "source_phase": 4,
+            "name": "opening descent",
+            "frames": [
+              49,
+              59
+            ]
+          },
+          {
+            "source_phase": 5,
+            "name": "landing and knee absorption",
+            "frames": [
+              60,
+              74
+            ]
+          },
+          {
+            "source_phase": 6,
+            "name": "guard recovery",
+            "frames": [
+              75,
+              91
+            ]
+          }
+        ],
+        "airborne_intervals": [
+          [
+            21,
+            59
+          ]
+        ]
+      },
+      "start_end_use": "Start in grounded ready stance. End in the same ready shape at the landed forward displacement. One-shot, not a looping aerial cycle.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "DivingLunge",
+      "name_ja": "飛び込み突進",
+      "sheet": "S4",
+      "source_section": "05 Diving lunge / 01 approach, 02 takeoff, 03 forward aerial dive, 04 impact, 05 slide landing, 06 recovery",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        85
+      ],
+      "seconds": 1.8666666666666665,
+      "loop": false,
+      "net_root_blender_m": [
+        8.899424841501968e-08,
+        -2.6000008583068848,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        8.899424841501968e-08,
+        0.0,
+        2.6000008583068848
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_direction": "-Y forward",
+          "gltf_direction": "+Z under preserved export hierarchy",
+          "forward_meters": 2.6,
+          "flight": "Shallow parabolic pelvis arch and uninterrupted forward translation. Approximately 73-80 degree pitch makes the flight horizontal, not an upright jump punch.",
+          "slide": "Additional 0.50 m decelerating root travel over frames 43-56; both supporting soles intentionally slide.",
+          "end_reset": false,
+          "runtime": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] Retain or extract accumulated 2.60 m forward root travel. Never reset root to origin at the final frame."
+        },
+        "pivot_requirement": "Root includes animated pelvis-pivot compensation. Preserve the complete transform or compensate for pivot/rotation during extraction; raw root-head translation is not the pelvis path. Continuous interpolation is not strictly monotonic."
+      },
+      "support_contacts": {
+        "support_phases": [
+          {
+            "frames": [
+              1,
+              9
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ],
+            "behavior": "Fixed planted feet while loading."
+          },
+          {
+            "frames": [
+              10,
+              15
+            ],
+            "support": [
+              "foot.R"
+            ],
+            "behavior": "Rear/right foot drives takeoff while left lifts."
+          },
+          {
+            "frames": [
+              16,
+              42
+            ],
+            "support": [],
+            "behavior": "Both feet airborne. No ground() alignment in this interval."
+          },
+          {
+            "frames": [
+              43,
+              56
+            ],
+            "support": [
+              "foot.R",
+              "foot.L"
+            ],
+            "behavior": "Intentional decelerating two-foot slide, right forward bent-knee bracing leg and left trailing leg. Foot travel in this interval is not a planted-foot claim."
+          },
+          {
+            "frames": [
+              57,
+              60
+            ],
+            "support": [
+              "foot.R",
+              "foot.L"
+            ]
+          },
+          {
+            "frames": [
+              61,
+              69
+            ],
+            "support": [
+              "foot.R"
+            ],
+            "behavior": "Right foot anchors while left takes one small recovery step."
+          },
+          {
+            "frames": [
+              70,
+              85
+            ],
+            "support": [
+              "foot.R",
+              "foot.L"
+            ],
+            "behavior": "Both foot targets fixed; final guard held 76-85."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "low forward aerial straight fist",
+            "limb": "hand.R",
+            "frames": [
+              30,
+              36
+            ],
+            "peak_frame": 33,
+            "count": 1
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "approach/load",
+            "frames": [
+              1,
+              9
+            ]
+          },
+          {
+            "name": "rear-foot push-off",
+            "frames": [
+              10,
+              15
+            ]
+          },
+          {
+            "name": "forward airborne dive",
+            "frames": [
+              16,
+              29
+            ]
+          },
+          {
+            "name": "extended right-fist impact",
+            "frames": [
+              30,
+              36
+            ]
+          },
+          {
+            "name": "descent/bracing",
+            "frames": [
+              37,
+              42
+            ]
+          },
+          {
+            "name": "controlled slide landing",
+            "frames": [
+              43,
+              56
+            ]
+          },
+          {
+            "name": "recover and hold",
+            "frames": [
+              57,
+              85
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Grounded guard at origin to displaced grounded guard. Final feet remain at the landing location; no terminal teleport.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "AcrobaticCombo",
+      "name_ja": "アクロバット連撃",
+      "sheet": "S4",
+      "source_section": "06 ACROBATIC COMBO / eight serial semantic phases",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        156
+      ],
+      "seconds": 3.4444444444444446,
+      "loop": false,
+      "net_root_blender_m": [
+        9.789368249357722e-08,
+        -2.8600001335144043,
+        -1.1175870895385742e-07
+      ],
+      "net_root_gltf_world_basis_m": [
+        9.789368249357722e-08,
+        -1.1175870895385742e-07,
+        2.8600001335144043
+      ],
+      "root_motion": {
+        "root_motion": {
+          "net_blender_m": [
+            0,
+            -2.86,
+            0
+          ],
+          "facing": "Blender front -Y; first spin unwrapped -360deg about Z, then one forward +360deg X somersault, final facing equivalent to start",
+          "runtime": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] Keep or extract accumulated one-shot translation once. Forward Blender -Y exports as glTF +Z under this frozen hierarchy. Do not reset the root to origin between attacks or on recovery.",
+          "concatenated_clips": false
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              1,
+              18
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              1,
+              14
+            ]
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              52,
+              62
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              55,
+              62
+            ]
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              96,
+              107
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              96,
+              107
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              134,
+              156
+            ]
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              140,
+              156
+            ]
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "id": 1,
+            "type": "aerial heel-led spinning kick",
+            "limb": "foot.R",
+            "active_frames": [
+              32,
+              35
+            ],
+            "impact_frame": 34
+          },
+          {
+            "id": 2,
+            "type": "left airborne follow-up straight punch",
+            "limb": "hand.L",
+            "active_frames": [
+              43,
+              46
+            ],
+            "impact_frame": 44
+          },
+          {
+            "id": 3,
+            "type": "inverted downward unarmed hand strike",
+            "limb": "hand.R",
+            "active_frames": [
+              82,
+              86
+            ],
+            "impact_frame": 84
+          },
+          {
+            "id": 4,
+            "type": "right mid-air straight hand strike",
+            "limb": "hand.R",
+            "active_frames": [
+              119,
+              123
+            ],
+            "impact_frame": 120,
+            "counterbalance": "left knee raised; knee is not an additional attack"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "source_phase": 1,
+            "name": "load and takeoff",
+            "frames": [
+              1,
+              18
+            ]
+          },
+          {
+            "source_phase": 2,
+            "name": "aerial spin kick",
+            "frames": [
+              19,
+              37
+            ]
+          },
+          {
+            "source_phase": 3,
+            "name": "left follow-up and loaded transfer",
+            "frames": [
+              38,
+              62
+            ]
+          },
+          {
+            "source_phase": 4,
+            "name": "compact forward flip",
+            "frames": [
+              63,
+              78
+            ]
+          },
+          {
+            "source_phase": 5,
+            "name": "inverted downward hand strike",
+            "frames": [
+              79,
+              96
+            ]
+          },
+          {
+            "source_phase": 6,
+            "name": "loaded relaunch",
+            "frames": [
+              97,
+              113
+            ]
+          },
+          {
+            "source_phase": 7,
+            "name": "right mid-air straight hit",
+            "frames": [
+              114,
+              129
+            ]
+          },
+          {
+            "source_phase": 8,
+            "name": "landing, absorption, controlled guard",
+            "frames": [
+              130,
+              156
+            ]
+          }
+        ],
+        "timing": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] 30 fps, semantic phases not literal numbered source frames; one connected 5.1667 s action with two short loaded transfer windows, no idle splice.",
+        "airborne_intervals": [
+          [
+            19,
+            51
+          ],
+          [
+            63,
+            95
+          ],
+          [
+            108,
+            133
+          ]
+        ]
+      },
+      "start_end_use": "Grounded guard into one continuous combo. End in controlled grounded guard at accumulated forward travel. One-shot, not a loop.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "combo",
+        "kick",
+        "mixed_attack"
+      ],
+      "classification_reason_ja": "主攻撃は手技3発、蹴り1発。パンチを主カテゴリにし、蹴りを副タグとして保持。膝上げは追加攻撃ではない。",
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "KungFuStraight",
+      "name_ja": "沖拳",
+      "sheet": "S5",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        61
+      ],
+      "seconds": 1.3333333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        0.010000002570450306,
+        -0.0729999989271164,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.010000002570450306,
+        0.0,
+        0.0729999989271164
+      ],
+      "root_motion": {
+        "root_travel": "Continuous small forward weight shift; finishes in advanced guard, not teleported to initial stance. One-shot is intentionally non-looping."
+      },
+      "support_contacts": {
+        "contact": {
+          "right_foot": "planted frames 1-61",
+          "left_foot": "planted 1-6 and 17-61; small lifted advance 7-16",
+          "support_width_m": 0.74
+        }
+      },
+      "attack_and_timeline_events": {
+        "strike_events": [
+          {
+            "frame": 25,
+            "limb": "right fist",
+            "direction": "character forward -Y",
+            "type": "single straight centerline punch"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "low guard",
+            "frames": [
+              1,
+              6
+            ]
+          },
+          {
+            "name": "load and front-foot step",
+            "frames": [
+              7,
+              17
+            ]
+          },
+          {
+            "name": "rear leg, hip and shoulder drive",
+            "frames": [
+              18,
+              24
+            ]
+          },
+          {
+            "name": "contact",
+            "frames": [
+              25,
+              28
+            ]
+          },
+          {
+            "name": "recoil",
+            "frames": [
+              29,
+              39
+            ]
+          },
+          {
+            "name": "settle into advanced guard",
+            "frames": [
+              40,
+              61
+            ]
+          }
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "PalmStrike",
+      "name_ja": "推掌",
+      "sheet": "S5",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        61
+      ],
+      "seconds": 1.3333333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        1.8825703218539047e-09,
+        -0.05500000715255737,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        1.8825703218539047e-09,
+        0.0,
+        0.05500000715255737
+      ],
+      "root_motion": {
+        "root_motion": "Root shifts 0.035 m rearward on load then 0.115 m forward during impact. Finishes 0.055 m forward, no terminal reset. Both feet remain anchored throughout. Export forward is glTF +Z."
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "bone": "foot.L",
+            "frames": [
+              1,
+              61
+            ],
+            "fixed_ankle": [
+              0.38,
+              0.18,
+              0.168
+            ]
+          },
+          {
+            "bone": "foot.R",
+            "frames": [
+              1,
+              61
+            ],
+            "fixed_ankle": [
+              -0.39,
+              -0.24,
+              0.168
+            ]
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 25,
+            "type": "palm_heel",
+            "side": "R",
+            "count": 1
+          }
+        ]
+      },
+      "phases": {
+        "timing": {
+          "ready": 1,
+          "load": 13,
+          "contact": 25,
+          "follow_through": 28,
+          "recoil": 40,
+          "guard": 61
+        }
+      },
+      "start_end_use": "One-shot begins and ends in broad open-hand guard, at shifted pelvis position. Blend to guard without resetting root.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "palm"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "WhippingStrike",
+      "name_ja": "鞭拳",
+      "sheet": "S5",
+      "source_section": "Single strike 03 鞭拳 / WHIPPING STRIKE and combo stage 04",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        61
+      ],
+      "seconds": 1.3333333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        -4.440892098500626e-15,
+        -1.1920928955078125e-07
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        -1.1920928955078125e-07,
+        4.440892098500626e-15
+      ],
+      "root_motion": {
+        "root_motion": {
+          "net_translation_m": [
+            0,
+            0,
+            0
+          ],
+          "net_yaw_radians": -0.21,
+          "policy": "One shot retains final -12 degree root yaw. No root yaw snap-back. Vertical stance compensation only; no intentional horizontal travel."
+        }
+      },
+      "support_contacts": {
+        "support": [
+          {
+            "frames": [
+              1,
+              61
+            ],
+            "feet": [
+              "L",
+              "R"
+            ],
+            "description": "Broad grounded stance; both ankle positions anchored, right support foot pivots with hip turn."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 32,
+            "time_seconds": 0.688888888888889,
+            "type": "right backfist",
+            "contact_surface": "dorsal right closed fist",
+            "count": 1
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "frames": [
+              1,
+              12
+            ],
+            "name": "guard to relaxed cross-body chamber"
+          },
+          {
+            "frames": [
+              13,
+              22
+            ],
+            "name": "hip load and arm lag"
+          },
+          {
+            "frames": [
+              23,
+              32
+            ],
+            "name": "accelerating torso-led horizontal backfist"
+          },
+          {
+            "frames": [
+              33,
+              38
+            ],
+            "name": "long lateral follow-through"
+          },
+          {
+            "frames": [
+              39,
+              61
+            ],
+            "name": "controlled recoil into guard"
+          }
+        ]
+      },
+      "start_end_use": "Starts broad two-foot guard and ends guard after retained rightward facing change; gameplay should retain root yaw or extract it.",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "ElbowStrike",
+      "name_ja": "肘打",
+      "sheet": "S5",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.0666666666666667,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one-shot with hip yaw and vertical weight shift; zero net root travel. Fixed broad ankle anchors; no terminal teleport."
+      },
+      "support_contacts": {
+        "support": "Both feet fixed in translation and yaw, bent knees throughout. Pelvis projection remains inside broad staggered support footprint."
+      },
+      "attack_and_timeline_events": {
+        "events": [
+          {
+            "frame": 11,
+            "event": "anticipation/load"
+          },
+          {
+            "frame": 17,
+            "event": "elbow drive"
+          },
+          {
+            "frame": 21,
+            "event": "right elbow contact"
+          },
+          {
+            "frame": 25,
+            "event": "short follow-through"
+          },
+          {
+            "frame": 35,
+            "event": "recoil"
+          },
+          {
+            "frame": 49,
+            "event": "guard recovery"
+          }
+        ]
+      },
+      "phases": {},
+      "start_end_use": "Matching broad combat guard, intended to blend to/from guard not neutral stand.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "elbow"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    },
+    {
+      "clip": "KungFuHandCombo5",
+      "name_ja": "中国拳法・手技5連撃",
+      "sheet": "S5",
+      "source_section": null,
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        145
+      ],
+      "seconds": 3.1999999999999997,
+      "loop": false,
+      "net_root_blender_m": [
+        5.476568087914302e-09,
+        -0.1600000262260437,
+        -2.9802322387695312e-08
+      ],
+      "net_root_gltf_world_basis_m": [
+        5.476568087914302e-09,
+        -2.9802322387695312e-08,
+        0.1600000262260437
+      ],
+      "root_motion": {
+        "root_motion": {
+          "policy": "Non-looping 0.16 m net forward Blender -Y / glTF +Z. Low pelvis weights and yaws through chain, retains final advanced location. No origin snap at recovery. Gameplay must retain or extract net translation.",
+          "net_yaw_rad": 0
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "bone": "foot.R",
+            "frames": [
+              1,
+              145
+            ],
+            "ankle_armature_m": [
+              -0.39,
+              0.19,
+              0.168
+            ],
+            "description": "rear support fixed throughout"
+          },
+          {
+            "bone": "foot.L",
+            "frames": [
+              1,
+              5
+            ],
+            "ankle_armature_m": [
+              0.37,
+              -0.13,
+              0.168
+            ]
+          },
+          {
+            "bone": "foot.L",
+            "frames": [
+              6,
+              16
+            ],
+            "description": "small lifted lead-foot advance; rear foot remains support"
+          },
+          {
+            "bone": "foot.L",
+            "frames": [
+              17,
+              145
+            ],
+            "ankle_armature_m": [
+              0.4,
+              -0.27,
+              0.168
+            ],
+            "description": "lead support planted after step"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 22,
+            "type": "沖拳 / straight punch",
+            "side": "R",
+            "surface": "closed fist",
+            "direction": "forward -Y",
+            "count": 1
+          },
+          {
+            "frame": 43,
+            "type": "推掌 / palm heel",
+            "side": "L",
+            "surface": "open upright palm heel",
+            "direction": "forward -Y",
+            "count": 1
+          },
+          {
+            "frame": 66,
+            "type": "鞭拳 / whipping backfist",
+            "side": "R",
+            "surface": "dorsal closed fist",
+            "direction": "horizontal center-to-right arc (-X)",
+            "count": 1
+          },
+          {
+            "frame": 87,
+            "type": "肘打 / elbow",
+            "side": "R",
+            "surface": "elbow, fist beside same-side head",
+            "direction": "close forward/up, -Y/+Z",
+            "count": 1
+          },
+          {
+            "frame": 108,
+            "type": "追掌 / follow-up palm",
+            "side": "L",
+            "surface": "open upright palm heel",
+            "direction": "forward -Y",
+            "count": 1
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "ready/load and lead-foot advance",
+            "frames": [
+              1,
+              17
+            ]
+          },
+          {
+            "name": "straight punch",
+            "frames": [
+              18,
+              27
+            ]
+          },
+          {
+            "name": "continuous palm drive",
+            "frames": [
+              28,
+              46
+            ]
+          },
+          {
+            "name": "cross-body load, backfist whip and follow-through",
+            "frames": [
+              47,
+              73
+            ]
+          },
+          {
+            "name": "fold into rising close elbow",
+            "frames": [
+              74,
+              93
+            ]
+          },
+          {
+            "name": "immediate open follow-up palm",
+            "frames": [
+              94,
+              114
+            ]
+          },
+          {
+            "name": "controlled guard recovery",
+            "frames": [
+              115,
+              145
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Starts low broad combat guard; ends low broad advanced guard after lead step and retained 0.16 m root advance. Blend from guard, not Idle. Extract root travel once if using root motion.",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "combo",
+        "palm",
+        "elbow"
+      ],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    }
+  ],
+  "baked_speed_multiplier": 1.5,
+  "runtime_playback_speed": 1,
+  "root_motion_speed_note": "Root displacement unchanged. Per-second linear/angular velocities are 1.5x; controller speeds expressed per second have been adjusted. Per-frame errors unchanged.",
+  "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+}

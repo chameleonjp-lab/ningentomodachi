@@ -1,0 +1,2596 @@
+{
+  "category": "kick",
+  "label_ja": "蹴り",
+  "clip_count": 19,
+  "asset": "android_kick.glb",
+  "coordinates": {
+    "blender": "Z up, initial front -Y, character left +X",
+    "gltf": "Y up, initial front +Z under frozen hierarchy; global basis (x,y,z) -> (x,z,-y)",
+    "units": "meters",
+    "events": "30 fps source-frame timing: seconds=(frame-start_frame)/30. Preview endpoint holds change video duration, not animation duration."
+  },
+  "runtime_boundary": "Animation assets only. Apply complete root transform or extract correctly once; do not double-apply or reset displaced/turned endpoints. Measured root deltas are not gameplay-controller acceptance.",
+  "clips": [
+    {
+      "clip": "FrontKick",
+      "name_ja": "前蹴り",
+      "sheet": "S3",
+      "source_section": "Single Kicks / Front Kick",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.6,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one-shot; lateral weight shift onto left support leg, small vertical flexion, zero net translation; no root yaw. No gameplay locomotion required."
+      },
+      "support_contacts": {
+        "support": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              49
+            ],
+            "ankle_armature": [
+              0.21,
+              -0.09,
+              0.168
+            ]
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              5
+            ]
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              47,
+              49
+            ]
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 24,
+            "limb": "right foot",
+            "kind": "front kick",
+            "active_frames": [
+              22,
+              25
+            ]
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "label": "01 startup / load",
+            "frames": [
+              1,
+              8
+            ]
+          },
+          {
+            "label": "02 knee chamber",
+            "frames": [
+              9,
+              16
+            ]
+          },
+          {
+            "label": "03 extension",
+            "frames": [
+              17,
+              21
+            ]
+          },
+          {
+            "label": "04 impact at maximum forward extension",
+            "frames": [
+              22,
+              24
+            ]
+          },
+          {
+            "label": "05 recoil",
+            "frames": [
+              25,
+              34
+            ]
+          },
+          {
+            "label": "06 reset",
+            "frames": [
+              35,
+              49
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Same staggered guarded stance; right foot rearward. Not the default unarmed Idle. Blend in/out.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "SideKick",
+      "name_ja": "横蹴り",
+      "sheet": "S3",
+      "source_section": "Single Kicks / Side Kick, six stages",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        53
+      ],
+      "seconds": 1.7333333333333334,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one-shot, lateral weight shift onto left support, no net translation or yaw, no teleport. No gameplay velocity."
+      },
+      "support_contacts": {
+        "support": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              53
+            ],
+            "ankle_armature": [
+              0.23,
+              -0.05,
+              0.168
+            ],
+            "pivot": "Toe pivots from forward (-Y) toward +X, opposite the lateral strike. Fixed ankle pivot, not a traveling step."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              1
+            ]
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              53,
+              53
+            ]
+          }
+        ],
+        "contact_note": "Right foot touches ground exactly at frames 1 and 53; neighboring frames are lift/landing transitions, not planted-contact flags."
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 26,
+            "active_frames": [
+              24,
+              27
+            ],
+            "limb": "right heel/sole",
+            "kind": "lateral side kick toward character right (-X)"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "label": "01 startup and weight transfer",
+            "frames": [
+              1,
+              8
+            ]
+          },
+          {
+            "label": "02 chamber and support pivot",
+            "frames": [
+              9,
+              17
+            ]
+          },
+          {
+            "label": "03 lateral heel extension",
+            "frames": [
+              18,
+              23
+            ]
+          },
+          {
+            "label": "04 impact",
+            "frames": [
+              24,
+              26
+            ]
+          },
+          {
+            "label": "05 rechamber",
+            "frames": [
+              27,
+              36
+            ]
+          },
+          {
+            "label": "06 foot reset and guard",
+            "frames": [
+              37,
+              53
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Matching staggered guarded stance. Blend from/to Idle; one attack only.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "RoundhouseKick",
+      "name_ja": "回し蹴り",
+      "sheet": "S3",
+      "source_section": "Single kicks / 3 Roundhouse kick",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        67
+      ],
+      "seconds": 2.2,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "In-place one-shot weight shift and hip turn, no net travel",
+          "peak_yaw_radians": 0.85,
+          "endpoint": "Original guard position; no translational attack travel"
+        }
+      },
+      "support_contacts": {
+        "support": [
+          {
+            "frames": [
+              1,
+              10
+            ],
+            "contact": "both feet then left weight load"
+          },
+          {
+            "frames": [
+              11,
+              60
+            ],
+            "contact": "left sole, ball-centered pivot up to 1.25 rad"
+          },
+          {
+            "frames": [
+              61,
+              67
+            ],
+            "contact": "two-foot guard"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "right shin/instep",
+            "active_frames": [
+              30,
+              35
+            ],
+            "peak_frame": 31,
+            "technique": "Horizontal inward roundhouse arc after bent-knee chamber; continues across target before recoil"
+          }
+        ]
+      },
+      "phases": {
+        "phase_frames": {
+          "startup": [
+            1,
+            10
+          ],
+          "chamber": [
+            11,
+            20
+          ],
+          "swing": [
+            21,
+            30
+          ],
+          "impact": [
+            31,
+            35
+          ],
+          "recoil": [
+            36,
+            52
+          ],
+          "reset": [
+            53,
+            67
+          ]
+        }
+      },
+      "start_end_use": "Play once from fighting guard, recover to same guard. Artwork phases mapped to 2.2 s, not literal source frame numbering.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "LowSweep",
+      "name_ja": "低い払い蹴り",
+      "sheet": "S3",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        55
+      ],
+      "seconds": 1.8,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place one-shot: pelvis lowers and shifts over planted left support. Temporary yaw -0.22 to +0.40 rad, returns continuously to initial heading and position; no endpoint teleport. No gameplay root velocity."
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              55
+            ],
+            "description": "Planted ankle; low bent knee throughout sweep. Foot pivots in place with hip turn."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              1
+            ],
+            "description": "Start stance contact; then lifted into low sweep."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              55,
+              55
+            ],
+            "description": "Recovered stance contact."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "low right leg sweep",
+            "frames": [
+              20,
+              33
+            ],
+            "impact_frame": 29,
+            "description": "Near-floor horizontal arc with bent left support leg; no aerial phase."
+          }
+        ]
+      },
+      "phases": {
+        "phase_frames": {
+          "startup": 1,
+          "low_chamber": 12,
+          "extension": 20,
+          "impact": 29,
+          "follow_through": 33,
+          "recoil": 41,
+          "reset": 55
+        }
+      },
+      "start_end_use": "Guard stance to guard stance. One shot, blend to locomotion or idle.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "KickCombo4",
+      "name_ja": "キック4連撃",
+      "sheet": "S3",
+      "source_section": "Combo kicks, eight illustrated phases",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        136
+      ],
+      "seconds": 4.5,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "in-place one-shot",
+          "net_displacement_expected": [
+            0,
+            0,
+            0
+          ],
+          "description": "Continuous weight shift, hip yaw and pelvis lowering. No intermediate neutral pose, no root translation reset. Gameplay velocity zero."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              136
+            ],
+            "description": "Continuous left support; ball-centered yaw pivot at armature xy (0.23,-0.14). Knee remains flexed, pelvis drops into final sweep."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              1
+            ],
+            "description": "Initial stance then uninterrupted kicking/chamber sequence."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              130,
+              136
+            ],
+            "description": "Final two-foot guard."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "frame": 22,
+            "active_frames": [
+              20,
+              23
+            ],
+            "limb": "right foot",
+            "kind": "front kick"
+          },
+          {
+            "frame": 43,
+            "active_frames": [
+              41,
+              44
+            ],
+            "limb": "right heel/sole",
+            "kind": "side kick"
+          },
+          {
+            "frame": 68,
+            "active_frames": [
+              66,
+              72
+            ],
+            "limb": "right instep/shin",
+            "kind": "roundhouse kick"
+          },
+          {
+            "frame": 106,
+            "active_frames": [
+              101,
+              110
+            ],
+            "limb": "right foot",
+            "kind": "low sweep"
+          }
+        ]
+      },
+      "phases": {
+        "phase_frames": {
+          "ready": [
+            1,
+            8
+          ],
+          "front_chamber": [
+            9,
+            15
+          ],
+          "front_strike": [
+            16,
+            22
+          ],
+          "transition_03": [
+            23,
+            35
+          ],
+          "side_strike": [
+            36,
+            43
+          ],
+          "transition_05": [
+            44,
+            57
+          ],
+          "roundhouse": [
+            58,
+            72
+          ],
+          "lower_to_sweep": [
+            73,
+            89
+          ],
+          "low_sweep": [
+            90,
+            110
+          ],
+          "finish_reset": [
+            111,
+            136
+          ]
+        }
+      },
+      "start_end_use": "Matching staggered guard. Blend from/to gameplay guard; all four attacks play as one action.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "combo"
+      ]
+    },
+    {
+      "clip": "SpinningAttack",
+      "name_ja": "空中回転攻撃",
+      "sheet": "S4",
+      "source_section": "01 SPINNING ATTACK, six semantic phases",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        88
+      ],
+      "seconds": 2.9,
+      "loop": false,
+      "net_root_blender_m": [
+        0.2200000286102295,
+        -0.6200001239776611,
+        -2.2351741790771484e-08
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.2200000286102295,
+        -2.2351741790771484e-08,
+        0.6200001239776611
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_net_translation_m": [
+            0.22,
+            -0.62,
+            0
+          ],
+          "facing": "Blender front -Y; end yaw -360 degrees equivalent to start facing",
+          "unwrapped_rotation_degrees": {
+            "start": 0,
+            "windup": 22,
+            "takeoff": -6,
+            "first_landing": -360,
+            "end": -360
+          },
+          "runtime": "Keep one-shot net translation; no terminal origin snap. The actual glTF root translation channel confirms +X 0.22 m and +Z 0.62 m, with glTF Y vertical.",
+          "measured_gltf_root_translation_net_m": [
+            0.2200000286,
+            -2.24e-08,
+            0.6200001147
+          ]
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              1,
+              20
+            ],
+            "kind": "fixed launch ankle; mild foot pivot about ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              1,
+              15
+            ],
+            "kind": "fixed loading ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              16,
+              20
+            ],
+            "kind": "heel-rise/push-off transition"
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              54,
+              88
+            ],
+            "kind": "fixed first landing ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              59,
+              88
+            ],
+            "kind": "fixed second landing ankle"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "foot.R",
+            "type": "heel-led aerial spinning side kick",
+            "extension_window": [
+              39,
+              43
+            ],
+            "impact_frame": 43,
+            "opposite_leg": "foot.L remains visibly bent/tucked"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "takeoff/prep",
+            "frames": [
+              1,
+              20
+            ]
+          },
+          {
+            "name": "spin up",
+            "frames": [
+              21,
+              30
+            ]
+          },
+          {
+            "name": "airborne spin",
+            "frames": [
+              31,
+              38
+            ]
+          },
+          {
+            "name": "extended kick impact",
+            "frames": [
+              39,
+              44
+            ]
+          },
+          {
+            "name": "landing/descent",
+            "frames": [
+              45,
+              63
+            ]
+          },
+          {
+            "name": "recovery",
+            "frames": [
+              64,
+              88
+            ]
+          }
+        ],
+        "airborne": {
+          "planned_frames": [
+            21,
+            53
+          ],
+          "root_pelvis_peak_armature_z_m": 1.91,
+          "peak_frame": 37,
+          "body_grounded_correction_used": false
+        }
+      },
+      "start_end_use": "Guard stance to guard stance with net travel. Suitable as a one-shot; not a seamless loop. Settle at displaced endpoint, do not reset root at recovery.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "AerialKnee",
+      "name_ja": "空中膝蹴り",
+      "sheet": "S4",
+      "source_section": "02 Aerial knee strike / 01 takeoff, 02 ascent, 03 knee impact, 04 landing, 05 recovery",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        66
+      ],
+      "seconds": 2.1666666666666665,
+      "loop": false,
+      "net_root_blender_m": [
+        3.0805697548430544e-08,
+        -0.9000001549720764,
+        -1.1175870895385742e-07
+      ],
+      "net_root_gltf_world_basis_m": [
+        3.0805697548430544e-08,
+        -1.1175870895385742e-07,
+        0.9000001549720764
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_direction": "-Y",
+          "gltf_direction": "+Z under preserved unrotated export hierarchy",
+          "forward_meters": 0.9,
+          "vertical": "Continuous ballistic root arch during flight, landing compression then stable recovery.",
+          "end_reset": false,
+          "runtime": "Keep or extract accumulated +0.90 m forward translation. Do not reset to origin at the final frame."
+        }
+      },
+      "support_contacts": {
+        "support_phases": [
+          {
+            "frames": [
+              1,
+              10
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ]
+          },
+          {
+            "frames": [
+              11,
+              17
+            ],
+            "support": [
+              "foot.L"
+            ],
+            "description": "Right knee rises as fixed left foot pushes off."
+          },
+          {
+            "frames": [
+              18,
+              39
+            ],
+            "support": [],
+            "description": "Both feet genuinely airborne."
+          },
+          {
+            "frames": [
+              40,
+              47
+            ],
+            "support": [
+              "foot.R"
+            ],
+            "description": "Right foot lands first and knee compresses."
+          },
+          {
+            "frames": [
+              48,
+              66
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ]
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "upward/forward knee",
+            "limb": "shin.R head / right knee",
+            "frames": [
+              26,
+              31
+            ],
+            "peak_frame": 29,
+            "foot_is_not_strike_surface": true
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "preparation",
+            "frames": [
+              1,
+              11
+            ]
+          },
+          {
+            "name": "push-off",
+            "frames": [
+              12,
+              17
+            ]
+          },
+          {
+            "name": "ascent",
+            "frames": [
+              18,
+              25
+            ]
+          },
+          {
+            "name": "knee impact",
+            "frames": [
+              26,
+              31
+            ]
+          },
+          {
+            "name": "descent",
+            "frames": [
+              32,
+              39
+            ]
+          },
+          {
+            "name": "landing",
+            "frames": [
+              40,
+              48
+            ]
+          },
+          {
+            "name": "recovery",
+            "frames": [
+              49,
+              66
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Grounded staggered guard. End pose is held frames 60-66 at the displaced position, with no teleport back.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "knee"
+      ]
+    },
+    {
+      "clip": "CartwheelKick",
+      "name_ja": "側転キック",
+      "sheet": "S4",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        91
+      ],
+      "seconds": 3.0,
+      "loop": false,
+      "net_root_blender_m": [
+        2.6750001907348633,
+        9.156136826504735e-08,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        2.6750001907348633,
+        0.0,
+        -9.156136826504735e-08
+      ],
+      "root_motion": {
+        "root_travel": {
+          "axis": "+X",
+          "meters": 2.675,
+          "end_reset": false
+        }
+      },
+      "support_contacts": {
+        "contacts": [
+          {
+            "limb": "hand.L",
+            "frames": [
+              23,
+              47
+            ],
+            "armature_wrist_target": [
+              1.0499999523162842,
+              -0.03999999910593033,
+              0.05700000002980232
+            ]
+          },
+          {
+            "limb": "hand.R",
+            "frames": [
+              39,
+              59
+            ],
+            "armature_wrist_target": [
+              1.5499999523162842,
+              0.03999999910593033,
+              0.05700000002980232
+            ]
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "foot.L",
+            "frame": 66,
+            "type": "lateral exit kick"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "approach",
+            "frames": [
+              1,
+              22
+            ]
+          },
+          {
+            "name": "hand plant",
+            "frames": [
+              23,
+              38
+            ]
+          },
+          {
+            "name": "inverted rotation",
+            "frames": [
+              39,
+              52
+            ]
+          },
+          {
+            "name": "kick impact",
+            "frames": [
+              59,
+              68
+            ]
+          },
+          {
+            "name": "landing",
+            "frames": [
+              69,
+              78
+            ]
+          },
+          {
+            "name": "recovery",
+            "frames": [
+              79,
+              91
+            ]
+          }
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "FrontThrustKick",
+      "name_ja": "正蹬腿",
+      "sheet": "S6",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        65
+      ],
+      "seconds": 2.1333333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place attack with small continuous pelvis counterbalance and forward pressure; returns smoothly to starting guard with zero net travel. No endpoint teleport. Blender forward -Y maps to glTF +Z."
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "side": "R",
+            "frames": [
+              1,
+              65
+            ],
+            "type": "flat planted bent-knee support"
+          },
+          {
+            "side": "L",
+            "frames": [
+              1,
+              1
+            ],
+            "type": "startup floor contact; lift begins frame 2"
+          },
+          {
+            "side": "L",
+            "frames": [
+              65,
+              65
+            ],
+            "type": "recovered stance; controlled descent through frames 54-64"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "heel_sole_thrust",
+            "side": "L",
+            "active_frames": [
+              31,
+              36
+            ],
+            "peak_frame": 33,
+            "hit_count": 1
+          }
+        ]
+      },
+      "phases": {},
+      "start_end_use": "Begins and ends in identical bent martial guard; blend from generic idle. One shot, not locomotion.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "SideThrustKick",
+      "name_ja": "側踹腿",
+      "sheet": "S6",
+      "source_section": "2 / 側踹腿 / Chinese martial arts Side Thrust Kick",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        71
+      ],
+      "seconds": 2.3333333333333335,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "in-place one-shot with continuous weight transfer, not locomotion",
+          "net_translation_blender_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "net_yaw_radians": 0.0,
+          "lateral_pelvis_drive_during_thrust_m": -0.125,
+          "handling": "Do not extract temporary counterbalance as net travel. No terminal origin snap.",
+          "axes": "Blender +Z up, -Y initial front, -X character right. Exported glTF lateral attack remains -X."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              71
+            ],
+            "ankle_armature_m": [
+              0.23,
+              -0.05,
+              0.168
+            ],
+            "type": "flat-sole support; yaw pivots about fixed ankle without translation",
+            "yaw_radians": [
+              0.0,
+              1.43,
+              0.0
+            ]
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              1
+            ],
+            "type": "startup stance"
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              71,
+              71
+            ],
+            "type": "recovered stance"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "limb": "right heel/sole",
+            "type": "lateral pushing thrust",
+            "active_frames": [
+              34,
+              39
+            ],
+            "peak_frame": 36,
+            "hit_count": 1,
+            "direction_blender": [
+              -1,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "label": "01 startup / weight onto support",
+            "frames": [
+              1,
+              10
+            ]
+          },
+          {
+            "label": "02 high chamber / opened hip and support pivot",
+            "frames": [
+              11,
+              24
+            ],
+            "key_frame": 20
+          },
+          {
+            "label": "03 heel-leading lateral push",
+            "frames": [
+              25,
+              39
+            ],
+            "key_frame": 36
+          },
+          {
+            "label": "04 recoil to high chamber",
+            "frames": [
+              40,
+              53
+            ],
+            "key_frame": 53
+          },
+          {
+            "label": "05 controlled recovery / guarded stance",
+            "frames": [
+              54,
+              71
+            ]
+          }
+        ],
+        "timing": "30 fps, 70 intervals / 2.333333 seconds. Numbered source drawings interpreted as five semantic phases."
+      },
+      "start_end_use": "Same bent guarded stance at frames 1 and 71. Blend from/to Idle. One shot and one attack.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "OutsideCrescentKick",
+      "name_ja": "外擺腿",
+      "sheet": "S6",
+      "source_section": "3 外擺腿 / OUTSIDE CRESCENT KICK",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        74
+      ],
+      "seconds": 2.433333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "in-place one-shot; continuous lateral pelvis counterbalance and yaw, zero net translation/rotation",
+          "maximum_pelvis_shift_x_m": -0.2,
+          "peak_yaw_radians": 0.36,
+          "endpoint": "same stable guard, no endpoint teleport",
+          "coordinate_convention": "Blender +X left, -Y forward; exporter maps -Y to glTF +Z"
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "frames": [
+              1,
+              10
+            ],
+            "contact": "two flat feet, weight shifts right"
+          },
+          {
+            "frames": [
+              11,
+              63
+            ],
+            "contact": "right bent support leg, flat sole with ball-centered yaw pivot; left airborne"
+          },
+          {
+            "frames": [
+              64,
+              74
+            ],
+            "contact": "two-foot guard"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "attack_count": 1,
+            "side": "L",
+            "type": "outside_crescent_outer_foot_edge",
+            "active_frames": [
+              27,
+              39
+            ],
+            "peak_frame": 34,
+            "path": "left ankle crosses inward to x=-0.25, ascends in front then sweeps out to x=+0.72; high arc, not horizontal roundhouse"
+          }
+        ]
+      },
+      "phases": {},
+      "start_end_use": "Play once from martial guard; starts and ends in the same two-foot guard. Blend with game idle. No locomotion or root extraction required.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "KungFuSweep",
+      "name_ja": "掃腿",
+      "sheet": "S6",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        78
+      ],
+      "seconds": 2.566666666666667,
+      "loop": false,
+      "net_root_blender_m": [
+        0.4058678150177002,
+        -0.08779315650463104,
+        -7.450580596923828e-09
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.4058678150177002,
+        -7.450580596923828e-09,
+        0.08779315650463104
+      ],
+      "root_motion": {
+        "root_motion": "Left ankle remains at Blender (0.22,0.035,0.146) world m. Root translates in XY to place the pelvis over the left-foot pivot during deep support, with torso counterbalance against the long sweeping leg. Body yaw winds to -0.46 rad, then turns continuously to +2.40 rad and retains this new heading. During recovery the right foot plants at frame 64 before weight returns to the two-foot stance around the new orientation. Final root travel is retained, approximately (+0.406, -0.088, 0) m in Blender space. No terminal heading or position teleport. Use authored root yaw, not an in-place loop."
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              78
+            ],
+            "description": "Continuous grounded support. Flat sole, anchored ankle, pivoting yaw; deeply flexed supporting knee during frames 19-50."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              10
+            ],
+            "description": "Remains grounded during the initial weight shift to left support; only then lifts into chamber."
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              64,
+              78
+            ],
+            "description": "Re-establishes second-foot contact at the new heading before shifting weight and rising. Holds stance contact through recovery."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "right low sweeping leg",
+            "frames": [
+              26,
+              44
+            ],
+            "impact_frame": 35,
+            "description": "One near-floor horizontal sweeping arc driven by pelvis and torso rotation, no airborne body phase."
+          }
+        ]
+      },
+      "phases": {
+        "phase_frames": {
+          "startup": 1,
+          "grounded_weight_transfer": 10,
+          "sink_chamber": 19,
+          "low_extension": 26,
+          "sweep_midpoint": 35,
+          "sweep_end": 44,
+          "follow_through": 50,
+          "second_foot_plant": 64,
+          "recovery": 78
+        }
+      },
+      "start_end_use": "Guard to turned guard. One-shot with retained 2.40 rad heading. Blend from final orientation or extract root yaw into actor transform; never reset root rotation without compensating actor orientation.",
+      "primary_category": "kick",
+      "secondary_tags": []
+    },
+    {
+      "clip": "KungFuKickChain4",
+      "name_ja": "中国拳法・脚技4連撃",
+      "sheet": "S6",
+      "source_section": "5 連環腿 / CHAIN KICKS / COMBINATION",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        191
+      ],
+      "seconds": 6.333333333333333,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "in-place guarded combination; gameplay velocity zero",
+          "expected_net_translation_blender_m": [
+            0,
+            0,
+            0
+          ],
+          "expected_net_yaw_radians": 0,
+          "description": "Continuous lateral and fore-aft weight transfer, hip opening, small root yaw; ball contacts stay fixed. No intermediate origin resets or idle recovery clips. Ends through a controlled two-foot weight return.",
+          "axes": "Blender +Z up, -Y front, +X character left; exported forward maps to glTF +Z."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "side": "R",
+            "frames": [
+              1,
+              48
+            ],
+            "type": "fixed ball-point support; L front thrust then two-foot weight transfer"
+          },
+          {
+            "side": "L",
+            "frames": [
+              1,
+              6
+            ],
+            "type": "initial load before lift"
+          },
+          {
+            "side": "L",
+            "frames": [
+              41,
+              92
+            ],
+            "type": "lands front thrust, accepts weight, pivots about fixed ball for R side thrust"
+          },
+          {
+            "side": "R",
+            "frames": [
+              85,
+              142
+            ],
+            "type": "lands side thrust, accepts weight, fixed-ball support for L outside crescent"
+          },
+          {
+            "side": "L",
+            "frames": [
+              135,
+              191
+            ],
+            "type": "lands crescent, accepts weight, fixed-ball support for R continuation; final guard"
+          },
+          {
+            "side": "R",
+            "frames": [
+              179,
+              191
+            ],
+            "type": "controlled final landing and two-foot guard"
+          }
+        ],
+        "support_switches": [
+          {
+            "frames": [
+              41,
+              48
+            ],
+            "from": "R",
+            "to": "L"
+          },
+          {
+            "frames": [
+              85,
+              92
+            ],
+            "from": "L",
+            "to": "R"
+          },
+          {
+            "frames": [
+              135,
+              142
+            ],
+            "from": "R",
+            "to": "L"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "event_id": "S6_chain_02_front",
+            "type": "front_heel_sole_thrust",
+            "side": "L",
+            "active_frames": [
+              24,
+              28
+            ],
+            "peak_frame": 26,
+            "hit_count": 1,
+            "direction_blender": [
+              0,
+              -1,
+              0
+            ]
+          },
+          {
+            "event_id": "S6_chain_04_side",
+            "type": "lateral_heel_sole_push",
+            "side": "R",
+            "active_frames": [
+              64,
+              68
+            ],
+            "peak_frame": 66,
+            "hit_count": 1,
+            "direction_blender": [
+              -1,
+              0,
+              0
+            ]
+          },
+          {
+            "event_id": "S6_chain_06_crescent",
+            "type": "inside_to_outside_high_crescent",
+            "side": "L",
+            "active_frames": [
+              106,
+              118
+            ],
+            "peak_frame": 113,
+            "hit_count": 1,
+            "arc": "x=-.25 inward crossing, high frontal ascent, outward to x=+.72; not a roundhouse"
+          },
+          {
+            "event_id": "S6_chain_08_continuation",
+            "type": "diagonal_side_like_heel_followup",
+            "side": "R",
+            "active_frames": [
+              158,
+              162
+            ],
+            "peak_frame": 160,
+            "hit_count": 1,
+            "direction_blender": [
+              -0.9887,
+              -0.1494,
+              0
+            ],
+            "interpretation": "Visible stage08 fourth extension; right side-like kick directed slightly forward of the preceding lateral side thrust."
+          }
+        ]
+      },
+      "phases": {},
+      "start_end_use": "Single nonloop action. Identical crouched two-foot guard at frames1 and191. Blend from/to a matching gameplay guard, not a locomotion clip.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "combo"
+      ]
+    },
+    {
+      "clip": "TornadoKick",
+      "name_ja": "旋風脚",
+      "sheet": "S7",
+      "source_section": "01 旋風脚 / SPINNING HOOK KICK (TORNADO KICK)",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        100
+      ],
+      "seconds": 3.3,
+      "loop": false,
+      "net_root_blender_m": [
+        0.40000003576278687,
+        -0.8500000238418579,
+        -2.2351741790771484e-08
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.40000003576278687,
+        -2.2351741790771484e-08,
+        0.8500000238418579
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_net_translation_m": [
+            0.4,
+            -0.85,
+            0
+          ],
+          "facing": "Blender front -Y, end yaw +360 degrees equivalent to starting orientation",
+          "unwrapped_yaw_degrees": {
+            "start": 0,
+            "cross_step": 70,
+            "twist": 120,
+            "takeoff": 140,
+            "impact": 302.88802197982113,
+            "first_landing": 360,
+            "end": 360
+          },
+          "turn_count_note": "One authored net revolution shared by grounded footwork and aerial kick; not a full turn count measured from the reference. No inversion.",
+          "runtime": "Keep root translation and yaw continuously; no terminal origin snap. Exported glTF forward travel is +Z, vertical +Y. Actual export root channels are validated separately.",
+          "measured_gltf_root_translation_net_m": [
+            0.40000003576278687,
+            -4.470348358154297e-08,
+            0.850000161677599
+          ]
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              1,
+              17
+            ],
+            "kind": "fixed lead ankle; pivot about ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              1,
+              7
+            ],
+            "kind": "fixed rear ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              18,
+              29
+            ],
+            "kind": "fixed crossed launch ankle; foot pivot"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              30,
+              32
+            ],
+            "kind": "heel rise/push-off transition"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              68,
+              100
+            ],
+            "kind": "fixed first landing ankle"
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              74,
+              100
+            ],
+            "kind": "fixed second landing ankle"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "foot.R",
+            "type": "aerial outside-to-inside crescent / spinning hook instep whip",
+            "extension_window": [
+              47,
+              55
+            ],
+            "impact_frame": 51,
+            "follow_through_frame": 55,
+            "left_leg": "leads with knee then stays tucked"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "guard",
+            "frames": [
+              1,
+              7
+            ]
+          },
+          {
+            "name": "step and spin",
+            "frames": [
+              8,
+              20
+            ]
+          },
+          {
+            "name": "torso twist",
+            "frames": [
+              21,
+              28
+            ]
+          },
+          {
+            "name": "takeoff",
+            "frames": [
+              29,
+              35
+            ]
+          },
+          {
+            "name": "aerial spinning kick",
+            "frames": [
+              36,
+              62
+            ]
+          },
+          {
+            "name": "land and guard",
+            "frames": [
+              63,
+              100
+            ]
+          }
+        ],
+        "airborne": {
+          "planned_frames": [
+            33,
+            67
+          ],
+          "peak_frame": 50,
+          "pelvis_peak_armature_z_m": 1.75,
+          "body_grounded_correction_used": false
+        }
+      },
+      "start_end_use": "One-shot left-leading guard to displaced left-leading guard; preserve endpoint offset. Not a seamless loop.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "FlyingKick",
+      "name_ja": "飛脚",
+      "sheet": "S7",
+      "source_section": "02 飛脚（飛び蹴り） / FLYING KICK",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        78
+      ],
+      "seconds": 2.566666666666667,
+      "loop": false,
+      "net_root_blender_m": [
+        7.393366985297689e-08,
+        -2.1600003242492676,
+        9.685754776000977e-08
+      ],
+      "net_root_gltf_world_basis_m": [
+        7.393366985297689e-08,
+        9.685754776000977e-08,
+        2.1600003242492676
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "translating one-shot",
+          "blender_forward_axis": "-Y",
+          "gltf_forward_axis": "+Z under unchanged exported parent hierarchy",
+          "net_blender_translation_m": [
+            0,
+            -2.16,
+            0
+          ],
+          "end_reset": false,
+          "retain_end_displacement": true,
+          "lateral_weight_transfer": "Root first shifts -0.12 m over the right approach support, then +0.14 m over the left launch sole and returns to +0.13 m above the first left landing, then centers between both feet.",
+          "runtime_note": "Apply authored root travel once, or extract it into gameplay movement. Do not double-apply travel or reset this displaced recovery to the launch origin."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              1,
+              6
+            ],
+            "kind": "initial flat support",
+            "armature_ankle_target": [
+              0.2,
+              -0.16,
+              0.168
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              1,
+              16
+            ],
+            "kind": "initial approach support",
+            "armature_ankle_target": [
+              -0.2,
+              0.18,
+              0.168
+            ]
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              16,
+              26
+            ],
+            "kind": "fixed launch plant",
+            "armature_ankle_target": [
+              0.2,
+              -0.65,
+              0.168
+            ]
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              56,
+              78
+            ],
+            "kind": "fixed first landing and recovery",
+            "armature_ankle_target": [
+              0.2,
+              -2.02,
+              0.168
+            ]
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              63,
+              78
+            ],
+            "kind": "second landing and recovered guard",
+            "armature_ankle_target": [
+              -0.2,
+              -2.35,
+              0.168
+            ]
+          }
+        ],
+        "plant_transitions": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              7,
+              15
+            ],
+            "kind": "lifted approach step, no contact claimed"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              17,
+              26
+            ],
+            "kind": "lift into driving chamber, no contact claimed"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "forward_airborne_extended_foot_kick",
+            "limb": "foot.R",
+            "active_frames": [
+              39,
+              46
+            ],
+            "peak_frame": 42,
+            "hit_count": 1,
+            "not_a_knee_strike": true
+          }
+        ]
+      },
+      "phases": {
+        "airborne": {
+          "frames": [
+            27,
+            55
+          ],
+          "no_ground_snap": true,
+          "root_peak_frame": 41,
+          "root_peak_z_relative_to_rest_m": 0.63,
+          "flight_root_forward_displacement_m": 1.41
+        }
+      },
+      "start_end_use": "Begin in bent martial guard; finish in a landing guard 2.16 m forward. One shot; blend to next state at the displaced endpoint. Start/end leg lead differs deliberately after the step and landing.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "ButterflyKick",
+      "name_ja": "蝴蝶脚",
+      "sheet": "S7",
+      "source_section": "03 蝴蝶脚 / BUTTERFLY KICK STYLE",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        88
+      ],
+      "seconds": 2.9,
+      "loop": false,
+      "net_root_blender_m": [
+        0.9800001978874207,
+        -0.2800000011920929,
+        -7.450580596923828e-09
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.9800001978874207,
+        -7.450580596923828e-09,
+        0.2800000011920929
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_net_translation_m": [
+            0.98,
+            -0.28,
+            0
+          ],
+          "blender_heading_degrees": {
+            "start": 0,
+            "wind_up": 30,
+            "takeoff": -30,
+            "first_landing": -354,
+            "end": -360
+          },
+          "runtime": "Keep one-shot travel. Blender net +X 0.98 m, -Y 0.28 m maps to measured glTF +X 0.9800002 m, +Z 0.2800000 m, Y up. Final -360 degree heading is equivalent to initial -Y facing. Do not snap back at recovery. Full source/half-frame checks are in contact_and_continuity_validation.json.",
+          "measured_gltf_root_translation_net_m": [
+            0.9800001978874207,
+            0.0,
+            0.2800000458955765
+          ]
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "limb": "foot.L",
+            "frames": [
+              1,
+              26
+            ],
+            "kind": "fixed loading and final launch ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              1,
+              18
+            ],
+            "kind": "fixed loading ankle"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              19,
+              26
+            ],
+            "kind": "swing/chamber, no support"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              56,
+              88
+            ],
+            "kind": "fixed first landing ankle"
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              62,
+              88
+            ],
+            "kind": "fixed second landing ankle"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "foot.L",
+            "type": "first butterfly scissor sweep",
+            "extension_window": [
+              35,
+              39
+            ],
+            "peak_frame": 37
+          },
+          {
+            "limb": "foot.R",
+            "type": "second butterfly scissor sweep",
+            "extension_window": [
+              41,
+              47
+            ],
+            "peak_frame": 43
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "source_stage": 1,
+            "name": "wind-up / approach",
+            "frames": [
+              1,
+              20
+            ]
+          },
+          {
+            "source_stage": 2,
+            "name": "jump and open",
+            "frames": [
+              21,
+              32
+            ]
+          },
+          {
+            "source_stage": 3,
+            "name": "horizontal-body aerial twist",
+            "frames": [
+              33,
+              39
+            ]
+          },
+          {
+            "source_stage": 4,
+            "name": "double kick / scissor legs",
+            "frames": [
+              40,
+              48
+            ]
+          },
+          {
+            "source_stage": 5,
+            "name": "spin landing",
+            "frames": [
+              49,
+              65
+            ]
+          },
+          {
+            "source_stage": 6,
+            "name": "recovery",
+            "frames": [
+              66,
+              88
+            ]
+          }
+        ],
+        "airborne": {
+          "planned_frames": [
+            27,
+            55
+          ],
+          "no_hand_support": true,
+          "torso_near_horizontal_frames": [
+            33,
+            47
+          ],
+          "peak_pelvis_armature_z_m": 1.69,
+          "body_grounding_correction_used": false,
+          "measured_minimum_body_clearance_m": 0.027933336794376373,
+          "measured_minimum_hand_surface_clearance_m": 0.781090572476387
+        }
+      },
+      "start_end_use": "Grounded guard to grounded guard with retained travel. One-shot, not a seamless loop. Settle at the displaced endpoint.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "ChineseCartwheelKick",
+      "name_ja": "中国式側転蹴",
+      "sheet": "S7",
+      "source_section": "04 側転蹴り (車輪蹴り) / Cartwheel kick (Chinese variation)",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        101
+      ],
+      "seconds": 3.3333333333333335,
+      "loop": false,
+      "net_root_blender_m": [
+        2.6750001907348633,
+        9.156136826504735e-08,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        2.6750001907348633,
+        0.0,
+        -9.156136826504735e-08
+      ],
+      "root_motion": {
+        "root_travel": {
+          "axis": "+X",
+          "meters": 2.675,
+          "end_reset": false,
+          "heading_end_degrees": 0,
+          "continuous_cartwheel_roll_degrees": 360
+        }
+      },
+      "support_contacts": {
+        "contacts": [
+          {
+            "limb": "hand.L",
+            "frames": [
+              25,
+              49
+            ],
+            "armature_wrist_target": [
+              1.0499999523162842,
+              -0.03999999910593033,
+              0.05700000002980232
+            ],
+            "contact": "stationary open palm"
+          },
+          {
+            "limb": "hand.R",
+            "frames": [
+              42,
+              63
+            ],
+            "armature_wrist_target": [
+              1.5499999523162842,
+              0.03999999910593033,
+              0.05700000002980232
+            ],
+            "contact": "stationary open palm"
+          },
+          {
+            "limb": "foot.R",
+            "frames": [
+              73,
+              101
+            ],
+            "contact": "landing then planted"
+          },
+          {
+            "limb": "foot.L",
+            "frames": [
+              78,
+              101
+            ],
+            "contact": "landing then planted"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "strikes": [
+          {
+            "limb": "foot.R",
+            "frame": 49,
+            "window": [
+              45,
+              52
+            ],
+            "type": "inverted cartwheel extension; sole attack"
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "Chinese guard",
+            "frames": [
+              1,
+              9
+            ],
+            "source_figure": "01"
+          },
+          {
+            "name": "crouch and hand plant",
+            "frames": [
+              10,
+              33
+            ],
+            "source_figure": "02"
+          },
+          {
+            "name": "hand-supported cartwheel",
+            "frames": [
+              34,
+              44
+            ],
+            "source_figure": "03"
+          },
+          {
+            "name": "inverted kick",
+            "frames": [
+              45,
+              55
+            ],
+            "source_figure": "04"
+          },
+          {
+            "name": "feet landing",
+            "frames": [
+              56,
+              83
+            ],
+            "source_figure": "05"
+          },
+          {
+            "name": "guard recovery",
+            "frames": [
+              84,
+              101
+            ],
+            "source_figure": "06"
+          }
+        ]
+      },
+      "start_end_use": "One-shot starts and ends in a broad Chinese guard. Retain final lateral root displacement; blend recovery pose, not world position, into the next state.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ]
+    },
+    {
+      "clip": "ChineseAerialKnee",
+      "name_ja": "中国式空中膝撃",
+      "sheet": "S7",
+      "source_section": "05 空中膝撃 / Aerial knee strike, six numbered semantic phases",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        84
+      ],
+      "seconds": 2.7666666666666666,
+      "loop": false,
+      "net_root_blender_m": [
+        0.320000022649765,
+        -1.200000286102295,
+        1.2665987014770508e-07
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.320000022649765,
+        1.2665987014770508e-07,
+        1.200000286102295
+      ],
+      "root_motion": {
+        "root_motion": {
+          "blender_net_xy_m": [
+            0.32,
+            -1.2
+          ],
+          "gltf_net_xyz_expected_m": [
+            0.32,
+            0,
+            1.2
+          ],
+          "gltf_axis_note": "Preserved unrotated export parent maps Blender -Y to glTF +Z and Blender +Z to glTF +Y. Heading retained; actual GLB channels checked separately.",
+          "root_heading_final_radians": 0.7853981633974483,
+          "root_heading_final_degrees": 45,
+          "vertical": "Continuous raised arch during frames 24-50, then grounded knee compression and recovery.",
+          "end_reset": false,
+          "runtime": "One-shot. Keep or extract accumulated translation and +45-degree Blender-Z heading. Do not reset root at recovery or silently reuse as an in-place loop."
+        }
+      },
+      "support_contacts": {
+        "support_phases": [
+          {
+            "frames": [
+              1,
+              1
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ]
+          },
+          {
+            "frames": [
+              2,
+              10
+            ],
+            "support": [
+              "foot.R"
+            ],
+            "description": "Right ankle remains planted while the left foot steps diagonally forward."
+          },
+          {
+            "frames": [
+              11,
+              14
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ]
+          },
+          {
+            "frames": [
+              15,
+              23
+            ],
+            "support": [
+              "foot.L"
+            ],
+            "description": "Left launch ankle stays fixed while the right knee rises."
+          },
+          {
+            "frames": [
+              24,
+              50
+            ],
+            "support": [],
+            "description": "Both feet visibly airborne; no grounding correction."
+          },
+          {
+            "frames": [
+              51,
+              58
+            ],
+            "support": [
+              "foot.R"
+            ],
+            "description": "Right ankle held fixed; root rotates and sinks to absorb landing."
+          },
+          {
+            "frames": [
+              59,
+              84
+            ],
+            "support": [
+              "foot.L",
+              "foot.R"
+            ],
+            "description": "Both ankle locations retained while recovering into rotated guard."
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": [
+          {
+            "type": "forward/upward knee",
+            "limb": "right knee / shin.R head",
+            "frames": [
+              34,
+              39
+            ],
+            "peak_frame": 37,
+            "foot_is_not_strike_surface": true
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "name": "approach / diagonal left step",
+            "frames": [
+              1,
+              14
+            ]
+          },
+          {
+            "name": "load and takeoff",
+            "frames": [
+              15,
+              23
+            ]
+          },
+          {
+            "name": "air knee drive",
+            "frames": [
+              24,
+              33
+            ]
+          },
+          {
+            "name": "right knee strike",
+            "frames": [
+              34,
+              39
+            ]
+          },
+          {
+            "name": "twist and descent",
+            "frames": [
+              40,
+              50
+            ]
+          },
+          {
+            "name": "twist landing / absorption",
+            "frames": [
+              51,
+              59
+            ]
+          },
+          {
+            "name": "guard recovery",
+            "frames": [
+              60,
+              84
+            ]
+          }
+        ]
+      },
+      "start_end_use": "Starts grounded and facing Blender -Y. Ends in grounded guard translated +0.32 X / -1.20 Y and facing diagonally +X / -Y. Frames 75-84 hold the final guard without teleport.",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "knee"
+      ]
+    },
+    {
+      "clip": "KungFuAcrobaticCombo",
+      "name_ja": "中国拳法・アクロバット連撃",
+      "sheet": "S7",
+      "source_section": "06 Acrobatic Chinese Martial Arts Combo",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        208
+      ],
+      "seconds": 6.9,
+      "loop": false,
+      "net_root_blender_m": [
+        0.3000001013278961,
+        -2.690000534057617,
+        7.450580596923828e-09
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.3000001013278961,
+        7.450580596923828e-09,
+        2.690000534057617
+      ],
+      "root_motion": {
+        "root_motion": {
+          "net_blender_m": [
+            0.3,
+            -2.69,
+            0
+          ],
+          "yaw_degrees": [
+            0,
+            720
+          ],
+          "no_endpoint_teleport": true,
+          "runtime": "Retain displaced endpoint. Apply or extract authored root motion once, never both. Blender -Y maps to glTF +Z."
+        }
+      },
+      "support_contacts": {
+        "support_note": "World-space fixed ankles outside lifted footwork and airborne transitions; see authored_checks. Low avoid keeps final landing footprint and lowers pelvis with torso duck."
+      },
+      "attack_and_timeline_events": {
+        "attacks": [
+          {
+            "limb": "foot.R",
+            "type": "flying forward kick",
+            "peak_frame": 40
+          },
+          {
+            "limb": "foot.R",
+            "type": "aerial crescent spinning kick",
+            "peak_frame": 94
+          },
+          {
+            "limb": "foot.R",
+            "type": "twist follow kick",
+            "peak_frame": 140
+          }
+        ]
+      },
+      "phases": {
+        "phases": [
+          {
+            "phase": "guard",
+            "frames": [
+              1,
+              8
+            ]
+          },
+          {
+            "phase": "step in",
+            "frames": [
+              9,
+              26
+            ]
+          },
+          {
+            "phase": "flying kick",
+            "frames": [
+              27,
+              53
+            ]
+          },
+          {
+            "phase": "land and spin",
+            "frames": [
+              54,
+              78
+            ]
+          },
+          {
+            "phase": "spinning kick",
+            "frames": [
+              79,
+              106
+            ]
+          },
+          {
+            "phase": "aerial twist",
+            "frames": [
+              107,
+              134
+            ]
+          },
+          {
+            "phase": "follow kick",
+            "frames": [
+              135,
+              153
+            ]
+          },
+          {
+            "phase": "land",
+            "frames": [
+              154,
+              162
+            ]
+          },
+          {
+            "phase": "low avoid",
+            "frames": [
+              163,
+              183
+            ]
+          },
+          {
+            "phase": "recover",
+            "frames": [
+              184,
+              208
+            ]
+          }
+        ],
+        "airborne_intervals": [
+          [
+            27,
+            53
+          ],
+          [
+            79,
+            105
+          ],
+          [
+            117,
+            153
+          ]
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "combo"
+      ]
+    }
+  ]
+}
