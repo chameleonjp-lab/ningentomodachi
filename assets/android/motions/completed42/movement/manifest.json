@@ -1,0 +1,892 @@
+{
+  "category": "movement",
+  "label_ja": "移動",
+  "clip_count": 9,
+  "asset": "android_movement.glb",
+  "coordinates": {
+    "blender": "Z up, initial front -Y, character left +X",
+    "gltf": "Y up, initial front +Z under frozen hierarchy; global basis (x,y,z) -> (x,z,-y)",
+    "units": "meters",
+    "events": "30 fps source-frame timing: seconds=(frame-start_frame)/30. Preview endpoint holds change video duration, not animation duration."
+  },
+  "runtime_boundary": "Animation assets only. Apply complete root transform or extract correctly once; do not double-apply or reset displaced/turned endpoints. Measured root deltas are not gameplay-controller acceptance.",
+  "clips": [
+    {
+      "clip": "Idle",
+      "name_ja": "待機",
+      "sheet": "S1",
+      "source_section": "Idle neutral, front and side",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        91
+      ],
+      "seconds": 3.0,
+      "loop": true,
+      "net_root_blender_m": [
+        0.0,
+        -1.509043456773966e-26,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        1.509043456773966e-26
+      ],
+      "root_motion": {
+        "root_motion_intent": "No horizontal travel; existing small vertical breathing bob retained."
+      },
+      "support_contacts": {
+        "standing_note": "Accepted-source neutral stance retains approximately ±1.8 mm vertical foot bob."
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "phases": [
+          "neutral breathing loop"
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": [
+        "idle"
+      ]
+    },
+    {
+      "clip": "Walk",
+      "name_ja": "歩行",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        37
+      ],
+      "seconds": 1.2,
+      "loop": true,
+      "net_root_blender_m": [
+        6.123234262925839e-18,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        6.123234262925839e-18,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": "In-place. Root has periodic vertical/lateral weight shift only. Gameplay translation −Y at nominated speed produces planted flat support."
+      },
+      "support_contacts": {
+        "contact": {
+          "stance_fraction_per_foot": 0.62,
+          "forward_axis": "−Y",
+          "left_side": "+X",
+          "gameplay_speed_m_s": 0.6182795698924731,
+          "half_stride_m": 0.23,
+          "roll": "Heel loading and toe push-off pivot about sole ends; actual mesh floor corrected per foot.",
+          "flat_contact_velocity_error_m_per_frame": 3.938927017888005e-09,
+          "no_airborne_interval": true
+        }
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "stages": [
+          {
+            "sheet_stage": "01 Right contact",
+            "frame": 1
+          },
+          {
+            "sheet_stage": "02 Passing",
+            "frame": 10
+          },
+          {
+            "sheet_stage": "03 Left contact",
+            "frame": 19
+          },
+          {
+            "sheet_stage": "04 Left push-off",
+            "frame": 3,
+            "note": "Cyclic phase: trailing left foot finishes previous support as right receives weight."
+          },
+          {
+            "sheet_stage": "05 Passing",
+            "frame": 28
+          },
+          {
+            "sheet_stage": "06 Right swing",
+            "frame": 31
+          }
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "Run",
+      "name_ja": "走行",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        25
+      ],
+      "seconds": 0.8,
+      "loop": true,
+      "net_root_blender_m": [
+        -1.9594351543878095e-18,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        -1.9594351543878095e-18,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_travel": "In place; no net horizontal translation; treadmill equivalent travel is −Y at 1.9333 m/s."
+      },
+      "support_contacts": {
+        "contact": {
+          "right_stance_frames": [
+            1,
+            10
+          ],
+          "left_stance_frames": [
+            13,
+            22
+          ],
+          "both_airborne_frames": [
+            [
+              11,
+              12
+            ],
+            [
+              23,
+              24
+            ]
+          ],
+          "stance_fraction_per_leg": 0.375,
+          "ankle_height_armature_m": 0.168,
+          "stance_displacement_per_second_m": 1.933333,
+          "meaning": "Support foot moves +Y on a virtual treadmill, not world-space foot locking. No double support."
+        }
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "stages": [
+          {
+            "sheet_stage": 1,
+            "label": "Right contact",
+            "frame": 1
+          },
+          {
+            "sheet_stage": 2,
+            "label": "Right push off",
+            "frame": 9
+          },
+          {
+            "sheet_stage": 3,
+            "label": "Left contact",
+            "frame": 13
+          },
+          {
+            "sheet_stage": 4,
+            "label": "Left push off",
+            "frame": 21
+          },
+          {
+            "sheet_stage": 5,
+            "label": "Airborne",
+            "frame": 24
+          },
+          {
+            "sheet_stage": 6,
+            "label": "Right contact / loop repeat",
+            "frame": 25
+          }
+        ],
+        "timing": "0.8 second cycle at 30 fps; frames 1 and 25 identical; play frames 1–24 for seamless repeat."
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "DashStart",
+      "name_ja": "ダッシュ開始",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        46
+      ],
+      "seconds": 1.5,
+      "loop": false,
+      "net_root_blender_m": [
+        5.294015181789291e-08,
+        -1.5466667413711548,
+        0.259748637676239
+      ],
+      "net_root_gltf_world_basis_m": [
+        5.294015181789291e-08,
+        0.259748637676239,
+        1.5466667413711548
+      ],
+      "root_motion": {
+        "root_travel": "Forward −Y; stationary load then quadratic distance during acceleration and linear at full speed. No terminal return to origin.",
+        "endpoint": {
+          "intended_transition": "Run iteration03 frame 1 / 25; local pose matches except root translation. Continue root −Y at 1.9333333333333333 m/s, Run remains treadmill/in-place until runtime translation applied.",
+          "terminal_speed_m_s": 1.9333333333333333,
+          "root_motion_required": true,
+          "do_not_reset_root": true
+        }
+      },
+      "support_contacts": {
+        "contact": {
+          "model": "World-space feet anchored during stance; gait phase proportional to integrated root travel. Both feet planted during load; left releases as right pushes.",
+          "ankle_height_armature_m": 0.168,
+          "stance_fraction_per_leg": 0.375
+        }
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "stages": [
+          {
+            "sheet_stage": 1,
+            "label": "Crouch and load",
+            "frames": [
+              1,
+              13
+            ]
+          },
+          {
+            "sheet_stage": 2,
+            "label": "Push off from right support with trailing left leg",
+            "frames": [
+              14,
+              26
+            ]
+          },
+          {
+            "sheet_stage": 3,
+            "label": "Acceleration and opposite support",
+            "frames": [
+              27,
+              37
+            ]
+          },
+          {
+            "sheet_stage": 4,
+            "label": "Into dash / running right contact",
+            "frames": [
+              38,
+              46
+            ]
+          }
+        ],
+        "timing": "1.5 seconds, 30 fps; 0.4 second load, 0.6 second acceleration, 0.5 second full-speed running. Drawing stage numbers are semantic, not timing frames."
+      },
+      "start_end_use": {
+        "intended_transition": "Run iteration03 frame 1 / 25; local pose matches except root translation. Continue root −Y at 1.9333333333333333 m/s, Run remains treadmill/in-place until runtime translation applied.",
+        "terminal_speed_m_s": 1.9333333333333333,
+        "root_motion_required": true,
+        "do_not_reset_root": true
+      },
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "DashStop",
+      "name_ja": "ダッシュ停止",
+      "sheet": "S1",
+      "source_section": "S1 Dash Stop, all four numbered drawings",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        69
+      ],
+      "seconds": 2.2666666666666666,
+      "loop": false,
+      "net_root_blender_m": [
+        3.5293432176786155e-08,
+        -1.0311111211776733,
+        0.08025126159191132
+      ],
+      "net_root_gltf_world_basis_m": [
+        3.5293432176786155e-08,
+        0.08025126159191132,
+        1.0311111211776733
+      ],
+      "root_motion": {
+        "root_motion": {
+          "direction": "-Y",
+          "distance_m": 1.0311111111109335,
+          "initial_speed_m_s": 1.933333333333,
+          "stop_time_s": 0.8,
+          "no_terminal_reset": true
+        },
+        "end_transforms": {
+          "root_location": [
+            0.0,
+            0.0,
+            1.031111240386963
+          ],
+          "root_world_head": [
+            0.0,
+            -1.031111240386963,
+            -0.02199999988079071
+          ],
+          "root_rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "markers": {
+            "foot.L": [
+              0.17399999499320984,
+              -1.031111240386963,
+              0.1459999531507492
+            ],
+            "foot.R": [
+              -0.17399999499320984,
+              -1.031111240386963,
+              0.1459999531507492
+            ],
+            "hand.L": [
+              0.47099998593330383,
+              -1.0451111793518066,
+              1.0570000410079956
+            ],
+            "hand.R": [
+              -0.47099998593330383,
+              -1.0451111793518066,
+              1.0570000410079956
+            ],
+            "pelvis": [
+              0.0,
+              -1.031111240386963,
+              1.0830000638961792
+            ]
+          }
+        },
+        "start_transforms": {
+          "root_location": [
+            0.0,
+            -0.08025126904249191,
+            0.0
+          ],
+          "root_world_head": [
+            0.0,
+            0.0,
+            -0.10225126892328262
+          ],
+          "root_rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "markers": {
+            "foot.L": [
+              0.17400024831295013,
+              0.32247987389564514,
+              0.357602596282959
+            ],
+            "foot.R": [
+              -0.17399980127811432,
+              -0.2900001108646393,
+              0.14599980413913727
+            ],
+            "hand.L": [
+              0.4429772198200226,
+              -0.43096718192100525,
+              1.277134656906128
+            ],
+            "hand.R": [
+              -0.4381779730319977,
+              0.08006792515516281,
+              1.0806338787078857
+            ],
+            "pelvis": [
+              0.0,
+              0.0,
+              1.0027488470077515
+            ]
+          }
+        }
+      },
+      "support_contacts": {
+        "support": [
+          {
+            "foot": "R",
+            "frames": [
+              1,
+              16
+            ],
+            "anchor_y": -0.29
+          },
+          {
+            "foot": "L",
+            "frames": [
+              16,
+              50
+            ],
+            "anchor_y": -1.43
+          },
+          {
+            "foot": "R",
+            "frames": [
+              22,
+              35
+            ],
+            "anchor_y": -0.65
+          },
+          {
+            "foot": "R",
+            "frames": [
+              46,
+              69
+            ],
+            "anchor_y": -1.0311111111109335
+          },
+          {
+            "foot": "L",
+            "frames": [
+              60,
+              69
+            ],
+            "anchor_y": -1.0311111111109335
+          }
+        ]
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "stages": [
+          {
+            "stage": 1,
+            "name": "Forward run",
+            "frames": [
+              1,
+              9
+            ]
+          },
+          {
+            "stage": 2,
+            "name": "Braking and rearward shift",
+            "frames": [
+              10,
+              22
+            ]
+          },
+          {
+            "stage": 3,
+            "name": "Low stop",
+            "frames": [
+              23,
+              32
+            ]
+          },
+          {
+            "stage": 4,
+            "name": "Upright stop with gathering steps",
+            "frames": [
+              33,
+              69
+            ]
+          }
+        ],
+        "timing": "2.2667 s; drawings are semantic stages, interpreted timing. Entry uses Run iteration03 phase 0 and speed 1.933333 m/s. Continuous root speed decreases to zero at 0.8 s."
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "StrafeLeft",
+      "name_ja": "左ステップ",
+      "sheet": "S1",
+      "source_section": "Strafe left, four illustrated stages",
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.6,
+      "loop": false,
+      "net_root_blender_m": [
+        0.4000000059604645,
+        1.369141866547352e-08,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.4000000059604645,
+        0.0,
+        -1.369141866547352e-08
+      ],
+      "root_motion": {
+        "root_cycle": {
+          "net_translation_m": [
+            0.4,
+            0,
+            0
+          ],
+          "duration_seconds": 1.6,
+          "boundary": "Pose repeats modulo +0.40 m X translation; accumulate translation each repeated cycle, never snap root to initial position."
+        },
+        "gameplay_usage": "Root-motion lateral locomotion. Accumulate +0.40 m character-local left per 1.6 s cycle; preserve orientation. For in-place controller extract root X and apply that trajectory to the character controller. Do not restart raw root coordinates without offset."
+      },
+      "support_contacts": {
+        "contact": {
+          "planted_frames": {
+            "L": [
+              1,
+              2,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38,
+              39,
+              40,
+              41,
+              42,
+              43,
+              44,
+              45,
+              46,
+              47,
+              48,
+              49
+            ],
+            "R": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              47,
+              48,
+              49
+            ]
+          },
+          "method": "World anchored ankle targets during stance; vertical swing sin-squared with zero endpoint vertical velocity; no per-frame grounding."
+        }
+      },
+      "attack_and_timeline_events": {},
+      "phases": {
+        "timings": [
+          {
+            "phase": "Lead left foot steps out; right support",
+            "frames": [
+              3,
+              22
+            ]
+          },
+          {
+            "phase": "Wide planted weight transfer",
+            "frames": [
+              22,
+              27
+            ]
+          },
+          {
+            "phase": "Right foot recovers without crossing",
+            "frames": [
+              27,
+              46
+            ]
+          },
+          {
+            "phase": "Recovery and cycle boundary",
+            "frames": [
+              46,
+              49
+            ]
+          }
+        ]
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "StrafeRight",
+      "name_ja": "右ステップ",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.6,
+      "loop": false,
+      "net_root_blender_m": [
+        -0.4000000059604645,
+        -1.369141955365194e-08,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        -0.4000000059604645,
+        0.0,
+        1.369141955365194e-08
+      ],
+      "root_motion": {
+        "root_motion": {
+          "mode": "translational repeatable side-step",
+          "axis": "−X character-local right",
+          "net_m": [
+            -0.4,
+            0,
+            0
+          ],
+          "average_velocity_m_s": [
+            -0.25,
+            0,
+            0
+          ],
+          "handling": "Repeat using accumulated root motion: add previous cycle −0.40 m to next cycle world origin. Alternatively extract root translation into controller. Never reset world root to origin. Relative pose endpoints match; GLB is intentionally nonzero-root-displacement and loop=false to prevent naive teleport."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "foot": "L",
+            "frames": [
+              1,
+              26
+            ],
+            "type": "world planted"
+          },
+          {
+            "foot": "R",
+            "frames": [
+              1,
+              2
+            ],
+            "type": "world planted"
+          },
+          {
+            "foot": "R",
+            "frames": [
+              23,
+              49
+            ],
+            "type": "world planted"
+          },
+          {
+            "foot": "L",
+            "frames": [
+              47,
+              49
+            ],
+            "type": "world planted"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": []
+      },
+      "phases": {},
+      "start_end_use": "Periodic crouched lateral locomotion stance. Blend from/to neutral before or after playback; not a stand-to-stand one-shot.",
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "QuickTurn",
+      "name_ja": "方向転換",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        49
+      ],
+      "seconds": 1.6,
+      "loop": false,
+      "net_root_blender_m": [
+        0.34800001978874207,
+        1.191153486956864e-08,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.34800001978874207,
+        0.0,
+        -1.191153486956864e-08
+      ],
+      "root_motion": {
+        "root_motion": {
+          "net_yaw_degrees": 180,
+          "net_translation_blender_m": [
+            0.348,
+            0,
+            0
+          ],
+          "engine": "One-shot root-motion action. Extract and accumulate root translation and yaw into actor transform. Retain final +180 degree heading and +0.348 m world X offset; do not loop/reset root. Blender +Z up, front -Y; glTF maps Blender X,Y,Z to X,Z,-Y. Blend to new-facing idle after extraction."
+        }
+      },
+      "support_contacts": {
+        "support_contacts": [
+          {
+            "frames": [
+              1,
+              10
+            ],
+            "feet": "both; weight loads left"
+          },
+          {
+            "frames": [
+              11,
+              24
+            ],
+            "feet": "left pivot ankle fixed; right swing arc"
+          },
+          {
+            "frames": [
+              25,
+              31
+            ],
+            "feet": "both; shift center over right before left lifts"
+          },
+          {
+            "frames": [
+              32,
+              41
+            ],
+            "feet": "right fixed; left lift/pivot step-through"
+          },
+          {
+            "frames": [
+              42,
+              49
+            ],
+            "feet": "both, settle centered"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": []
+      },
+      "phases": {},
+      "start_end_use": "Start standing facing -Y, end standing facing +Y. Authored small lateral shift allows two grounded weight transfers. No endpoint orientation reset.",
+      "primary_category": "movement",
+      "secondary_tags": []
+    },
+    {
+      "clip": "CrouchMove",
+      "name_ja": "しゃがみ移動",
+      "sheet": "S1",
+      "source_section": null,
+      "fps": 30,
+      "source_frame_range": [
+        1,
+        61
+      ],
+      "seconds": 2.0,
+      "loop": false,
+      "net_root_blender_m": [
+        2.2351741790771484e-08,
+        -0.6399999856948853,
+        5.960464477539063e-08
+      ],
+      "net_root_gltf_world_basis_m": [
+        2.2351741790771484e-08,
+        5.960464477539063e-08,
+        0.6399999856948853
+      ],
+      "root_motion": {
+        "root_motion": {
+          "type": "translational locomotion cycle",
+          "net_meters": [
+            0,
+            -0.64,
+            0
+          ],
+          "axis": "Blender -Y forward; this exported glTF root channel advances +Z (0.640 m per cycle)",
+          "duration_seconds": 2,
+          "game_velocity_mps": 0.32,
+          "integration": "Extract root delta to game actor and remove animated horizontal root from skeleton, then repeat phases 1..60. Alternatively accumulate -0.64 m per cycle before resetting animation phase. Never reset world position at wrap. Endpoint 61 duplicates next cycle phase 1 displaced -0.64 m.",
+          "phase_note": "Continues crouched, no idle entry or upright recovery."
+        }
+      },
+      "support_contacts": {
+        "contacts": {
+          "right_stance_frames": [
+            1,
+            34
+          ],
+          "left_stance_frames": [
+            28,
+            61
+          ],
+          "double_support_frames": [
+            [
+              28,
+              34
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              61,
+              61
+            ]
+          ],
+          "support": "At least one flat planted foot; knees flexed forward; no aerial phase."
+        }
+      },
+      "attack_and_timeline_events": {
+        "attack_events": []
+      },
+      "phases": {
+        "phase_frames": {
+          "right_contact": 1,
+          "passing": 15,
+          "left_contact": 28,
+          "left_push_off_and_right_swing": 48,
+          "next_right_contact": 61
+        }
+      },
+      "start_end_use": null,
+      "primary_category": "movement",
+      "secondary_tags": []
+    }
+  ]
+}

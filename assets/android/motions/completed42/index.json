@@ -1,0 +1,388 @@
+{
+  "title": "Android 42モーション・カテゴリ別",
+  "clip_count": 42,
+  "categories": [
+    {
+      "id": "movement",
+      "label_ja": "移動",
+      "clip_count": 9,
+      "asset": "movement/android_movement.glb",
+      "manifest": "movement/manifest.json"
+    },
+    {
+      "id": "jump",
+      "label_ja": "ジャンプ",
+      "clip_count": 1,
+      "asset": "jump/android_jump.glb",
+      "manifest": "jump/manifest.json"
+    },
+    {
+      "id": "punch",
+      "label_ja": "パンチ",
+      "clip_count": 13,
+      "asset": "punch/android_punch.glb",
+      "manifest": "punch/manifest.json"
+    },
+    {
+      "id": "kick",
+      "label_ja": "蹴り",
+      "clip_count": 19,
+      "asset": "kick/android_kick.glb",
+      "manifest": "kick/manifest.json"
+    }
+  ],
+  "clips": [
+    {
+      "clip": "Idle",
+      "name_ja": "待機",
+      "primary_category": "movement",
+      "secondary_tags": [
+        "idle"
+      ],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "Walk",
+      "name_ja": "歩行",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "Run",
+      "name_ja": "走行",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "DashStart",
+      "name_ja": "ダッシュ開始",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "DashStop",
+      "name_ja": "ダッシュ停止",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "StrafeLeft",
+      "name_ja": "左ステップ",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "StrafeRight",
+      "name_ja": "右ステップ",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "QuickTurn",
+      "name_ja": "方向転換",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "CrouchMove",
+      "name_ja": "しゃがみ移動",
+      "primary_category": "movement",
+      "secondary_tags": [],
+      "asset": "movement/android_movement.glb"
+    },
+    {
+      "clip": "Jump",
+      "name_ja": "ジャンプ",
+      "primary_category": "jump",
+      "secondary_tags": [],
+      "asset": "jump/android_jump.glb"
+    },
+    {
+      "clip": "Jab",
+      "name_ja": "ジャブ",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "Cross",
+      "name_ja": "クロス",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "Hook",
+      "name_ja": "フック",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "Uppercut",
+      "name_ja": "アッパーカット",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "PunchCombo4",
+      "name_ja": "パンチ4連撃",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "combo"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "FlippingSlash",
+      "name_ja": "宙返り・無手の打ち下ろし",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "DivingLunge",
+      "name_ja": "飛び込み突進",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "AcrobaticCombo",
+      "name_ja": "アクロバット連撃",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "combo",
+        "kick",
+        "mixed_attack"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "KungFuStraight",
+      "name_ja": "沖拳",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "PalmStrike",
+      "name_ja": "推掌",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "palm"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "WhippingStrike",
+      "name_ja": "鞭拳",
+      "primary_category": "punch",
+      "secondary_tags": [],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "ElbowStrike",
+      "name_ja": "肘打",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "elbow"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "KungFuHandCombo5",
+      "name_ja": "中国拳法・手技5連撃",
+      "primary_category": "punch",
+      "secondary_tags": [
+        "combo",
+        "palm",
+        "elbow"
+      ],
+      "asset": "punch/android_punch.glb"
+    },
+    {
+      "clip": "FrontKick",
+      "name_ja": "前蹴り",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "SideKick",
+      "name_ja": "横蹴り",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "RoundhouseKick",
+      "name_ja": "回し蹴り",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "LowSweep",
+      "name_ja": "低い払い蹴り",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "KickCombo4",
+      "name_ja": "キック4連撃",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "combo"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "SpinningAttack",
+      "name_ja": "空中回転攻撃",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "AerialKnee",
+      "name_ja": "空中膝蹴り",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "knee"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "CartwheelKick",
+      "name_ja": "側転キック",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "FrontThrustKick",
+      "name_ja": "正蹬腿",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "SideThrustKick",
+      "name_ja": "側踹腿",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "OutsideCrescentKick",
+      "name_ja": "外擺腿",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "KungFuSweep",
+      "name_ja": "掃腿",
+      "primary_category": "kick",
+      "secondary_tags": [],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "KungFuKickChain4",
+      "name_ja": "中国拳法・脚技4連撃",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "combo"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "TornadoKick",
+      "name_ja": "旋風脚",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "FlyingKick",
+      "name_ja": "飛脚",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "ButterflyKick",
+      "name_ja": "蝴蝶脚",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "ChineseCartwheelKick",
+      "name_ja": "中国式側転蹴",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "ChineseAerialKnee",
+      "name_ja": "中国式空中膝撃",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "knee"
+      ],
+      "asset": "kick/android_kick.glb"
+    },
+    {
+      "clip": "KungFuAcrobaticCombo",
+      "name_ja": "中国拳法・アクロバット連撃",
+      "primary_category": "kick",
+      "secondary_tags": [
+        "aerial",
+        "acrobatic",
+        "combo"
+      ],
+      "asset": "kick/android_kick.glb"
+    }
+  ]
+}
