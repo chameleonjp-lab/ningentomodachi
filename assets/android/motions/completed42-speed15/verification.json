@@ -1,0 +1,450 @@
+{
+  "passed": true,
+  "speed_multiplier": 1.5,
+  "unique_motion_count": 42,
+  "category_counts": [
+    9,
+    1,
+    13,
+    19
+  ],
+  "acrobatic_combo_311_samples_preserved": true,
+  "glb_files": 4,
+  "files": [
+    {
+      "source": "../completed42/movement/android_movement.glb",
+      "file": "movement/android_movement.glb",
+      "source_sha256": "5940653fe329a9bccdb257df45934f8cbb08966f8720e90d4d217fdbcc380be1",
+      "sha256": "c5ade077f78d87b33bb4e6aee4d331a8fd0dbfa190d4d5718a87873d3e94774f",
+      "clip_count": 9,
+      "unique_input_accessors": 14,
+      "static_and_output_bytes_identical": true,
+      "json_identical_except_input_bounds": true,
+      "all_timestamps_float32_divided_by_1_5": true,
+      "original_unchanged": true,
+      "clips": [
+        {
+          "name": "Idle",
+          "original_seconds": 2.9999999664723873,
+          "speed15_seconds": 2.0000000577419996,
+          "timestamp_counts": [
+            2,
+            91
+          ]
+        },
+        {
+          "name": "Walk",
+          "original_seconds": 1.2000000141561031,
+          "speed15_seconds": 0.8000000100582838,
+          "timestamp_counts": [
+            2,
+            37
+          ]
+        },
+        {
+          "name": "Run",
+          "original_seconds": 0.7999999783933163,
+          "speed15_seconds": 0.5333332996815443,
+          "timestamp_counts": [
+            2,
+            25
+          ]
+        },
+        {
+          "name": "DashStart",
+          "original_seconds": 1.4999999664723873,
+          "speed15_seconds": 0.9999999385327101,
+          "timestamp_counts": [
+            2,
+            46
+          ]
+        },
+        {
+          "name": "DashStop",
+          "original_seconds": 2.266666617244482,
+          "speed15_seconds": 1.5111110787838697,
+          "timestamp_counts": [
+            2,
+            69
+          ]
+        },
+        {
+          "name": "StrafeLeft",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "StrafeRight",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "QuickTurn",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "CrouchMove",
+          "original_seconds": 1.9999999664723873,
+          "speed15_seconds": 1.3333333116024733,
+          "timestamp_counts": [
+            2,
+            61
+          ]
+        }
+      ]
+    },
+    {
+      "source": "../completed42/jump/android_jump.glb",
+      "file": "jump/android_jump.glb",
+      "source_sha256": "46b7459539f654552f1cb0b4973d596a537e13b10ba516571282b4f2f49749b7",
+      "sha256": "c3a6b2595633e29ee264a6555ad46165f1c6bc3de878fa75167c5221b7ddb2a4",
+      "clip_count": 1,
+      "unique_input_accessors": 2,
+      "static_and_output_bytes_identical": true,
+      "json_identical_except_input_bounds": true,
+      "all_timestamps_float32_divided_by_1_5": true,
+      "original_unchanged": true,
+      "clips": [
+        {
+          "name": "Jump",
+          "original_seconds": 2.266666617244482,
+          "speed15_seconds": 1.5111110787838697,
+          "timestamp_counts": [
+            2,
+            69
+          ]
+        }
+      ]
+    },
+    {
+      "source": "../completed42/punch/android_punch.glb",
+      "file": "punch/android_punch.glb",
+      "source_sha256": "bd6c304c4a44ef2b1cb9b6cf0aeff698e9c7ad3b482920399755c97b24d38aa0",
+      "sha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+      "clip_count": 13,
+      "unique_input_accessors": 19,
+      "static_and_output_bytes_identical": true,
+      "json_identical_except_input_bounds": true,
+      "all_timestamps_float32_divided_by_1_5": true,
+      "original_unchanged": true,
+      "clips": [
+        {
+          "name": "Jab",
+          "original_seconds": 1.2000000141561031,
+          "speed15_seconds": 0.8000000100582838,
+          "timestamp_counts": [
+            2,
+            37
+          ]
+        },
+        {
+          "name": "Cross",
+          "original_seconds": 1.4666666649281979,
+          "speed15_seconds": 0.9777777772396803,
+          "timestamp_counts": [
+            2,
+            45
+          ]
+        },
+        {
+          "name": "Hook",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "Uppercut",
+          "original_seconds": 1.5333333872258663,
+          "speed15_seconds": 1.0222222190350294,
+          "timestamp_counts": [
+            2,
+            47
+          ]
+        },
+        {
+          "name": "PunchCombo4",
+          "original_seconds": 2.6666667126119137,
+          "speed15_seconds": 1.777777848765254,
+          "timestamp_counts": [
+            2,
+            81
+          ]
+        },
+        {
+          "name": "FlippingSlash",
+          "original_seconds": 2.9999999664723873,
+          "speed15_seconds": 2.0000000577419996,
+          "timestamp_counts": [
+            2,
+            91
+          ]
+        },
+        {
+          "name": "DivingLunge",
+          "original_seconds": 2.7999999187886715,
+          "speed15_seconds": 1.8666666131466627,
+          "timestamp_counts": [
+            2,
+            85
+          ]
+        },
+        {
+          "name": "AcrobaticCombo",
+          "original_seconds": 5.166666474193335,
+          "speed15_seconds": 3.4444442372769117,
+          "timestamp_counts": [
+            311
+          ]
+        },
+        {
+          "name": "KungFuStraight",
+          "original_seconds": 1.9999999664723873,
+          "speed15_seconds": 1.3333333116024733,
+          "timestamp_counts": [
+            2,
+            61
+          ]
+        },
+        {
+          "name": "PalmStrike",
+          "original_seconds": 1.9999999664723873,
+          "speed15_seconds": 1.3333333116024733,
+          "timestamp_counts": [
+            2,
+            61
+          ]
+        },
+        {
+          "name": "WhippingStrike",
+          "original_seconds": 1.9999999664723873,
+          "speed15_seconds": 1.3333333116024733,
+          "timestamp_counts": [
+            2,
+            61
+          ]
+        },
+        {
+          "name": "ElbowStrike",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "KungFuHandCombo5",
+          "original_seconds": 4.800000157207251,
+          "speed15_seconds": 3.2000001054257154,
+          "timestamp_counts": [
+            2,
+            145
+          ]
+        }
+      ]
+    },
+    {
+      "source": "../completed42/kick/android_kick.glb",
+      "file": "kick/android_kick.glb",
+      "source_sha256": "62b01c4443610e50fee190d1c78a93772e3447e8225b325ad960717d7a115723",
+      "sha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+      "clip_count": 19,
+      "unique_input_accessors": 34,
+      "static_and_output_bytes_identical": true,
+      "json_identical_except_input_bounds": true,
+      "all_timestamps_float32_divided_by_1_5": true,
+      "original_unchanged": true,
+      "clips": [
+        {
+          "name": "FrontKick",
+          "original_seconds": 1.5999999903142452,
+          "speed15_seconds": 1.0666666608303785,
+          "timestamp_counts": [
+            2,
+            49
+          ]
+        },
+        {
+          "name": "SideKick",
+          "original_seconds": 1.7333333157002926,
+          "speed15_seconds": 1.1555555444210768,
+          "timestamp_counts": [
+            2,
+            53
+          ]
+        },
+        {
+          "name": "RoundhouseKick",
+          "original_seconds": 2.200000014156103,
+          "speed15_seconds": 1.4666666369885206,
+          "timestamp_counts": [
+            2,
+            67
+          ]
+        },
+        {
+          "name": "LowSweep",
+          "original_seconds": 1.800000037997961,
+          "speed15_seconds": 1.199999986216426,
+          "timestamp_counts": [
+            2,
+            55
+          ]
+        },
+        {
+          "name": "KickCombo4",
+          "original_seconds": 4.499999966472387,
+          "speed15_seconds": 3.0000000577419996,
+          "timestamp_counts": [
+            2,
+            136
+          ]
+        },
+        {
+          "name": "SpinningAttack",
+          "original_seconds": 2.900000061839819,
+          "speed15_seconds": 1.9333333354443312,
+          "timestamp_counts": [
+            2,
+            88
+          ]
+        },
+        {
+          "name": "AerialKnee",
+          "original_seconds": 2.1666667126119137,
+          "speed15_seconds": 1.4444444756954908,
+          "timestamp_counts": [
+            2,
+            66
+          ]
+        },
+        {
+          "name": "CartwheelKick",
+          "original_seconds": 2.9999999664723873,
+          "speed15_seconds": 2.0000000577419996,
+          "timestamp_counts": [
+            2,
+            91
+          ]
+        },
+        {
+          "name": "FrontThrustKick",
+          "original_seconds": 2.1333334110677242,
+          "speed15_seconds": 1.422222314402461,
+          "timestamp_counts": [
+            2,
+            65
+          ]
+        },
+        {
+          "name": "SideThrustKick",
+          "original_seconds": 2.333333220332861,
+          "speed15_seconds": 1.5555555205792189,
+          "timestamp_counts": [
+            2,
+            71
+          ]
+        },
+        {
+          "name": "OutsideCrescentKick",
+          "original_seconds": 2.4333333633840084,
+          "speed15_seconds": 1.6222222428768873,
+          "timestamp_counts": [
+            2,
+            74
+          ]
+        },
+        {
+          "name": "KungFuSweep",
+          "original_seconds": 2.566666569560766,
+          "speed15_seconds": 1.711111007258296,
+          "timestamp_counts": [
+            2,
+            78
+          ]
+        },
+        {
+          "name": "KungFuKickChain4",
+          "original_seconds": 6.33333345875144,
+          "speed15_seconds": 4.222222147509456,
+          "timestamp_counts": [
+            2,
+            191
+          ]
+        },
+        {
+          "name": "TornadoKick",
+          "original_seconds": 3.2999999187886715,
+          "speed15_seconds": 2.1999998670071363,
+          "timestamp_counts": [
+            2,
+            100
+          ]
+        },
+        {
+          "name": "FlyingKick",
+          "original_seconds": 2.566666569560766,
+          "speed15_seconds": 1.711111007258296,
+          "timestamp_counts": [
+            2,
+            78
+          ]
+        },
+        {
+          "name": "ButterflyKick",
+          "original_seconds": 2.900000061839819,
+          "speed15_seconds": 1.9333333354443312,
+          "timestamp_counts": [
+            2,
+            88
+          ]
+        },
+        {
+          "name": "ChineseCartwheelKick",
+          "original_seconds": 3.333333220332861,
+          "speed15_seconds": 2.2222221475094557,
+          "timestamp_counts": [
+            2,
+            101
+          ]
+        },
+        {
+          "name": "ChineseAerialKnee",
+          "original_seconds": 2.766666617244482,
+          "speed15_seconds": 1.844444451853633,
+          "timestamp_counts": [
+            2,
+            84
+          ]
+        },
+        {
+          "name": "KungFuAcrobaticCombo",
+          "original_seconds": 6.900000061839819,
+          "speed15_seconds": 4.600000200793147,
+          "timestamp_counts": [
+            2,
+            208
+          ]
+        }
+      ]
+    }
+  ],
+  "independent_review": "PASS",
+  "scope": "Four categorized GLBs and metadata only. Runtime integration and collision acceptance not tested."
+}

@@ -1,0 +1,83 @@
+{
+  "category": "jump",
+  "label_ja": "ジャンプ",
+  "clip_count": 1,
+  "asset": "android_jump.glb",
+  "coordinates": {
+    "blender": "Z up, initial front -Y, character left +X",
+    "gltf": "Y up, initial front +Z under frozen hierarchy; global basis (x,y,z) -> (x,z,-y)",
+    "units": "meters",
+    "events": "Original source frame numbers preserved; speed15 seconds=(frame-start_frame)/45. Original source fps=30. All temporal events use this mapping."
+  },
+  "runtime_boundary": "Animation assets only. Apply complete root transform or extract correctly once; do not double-apply or reset displaced/turned endpoints. Measured root deltas are not gameplay-controller acceptance.",
+  "clips": [
+    {
+      "clip": "Jump",
+      "name_ja": "ジャンプ",
+      "sheet": "S1",
+      "source_section": "Jump takeoff / landing, six phases",
+      "fps": 45,
+      "source_frame_range": [
+        1,
+        69
+      ],
+      "seconds": 1.511111111111111,
+      "loop": false,
+      "net_root_blender_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "net_root_gltf_world_basis_m": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "root_motion": {
+        "root_motion": {
+          "horizontal": "In place: no measured horizontal travel is specified in the sheet; stationary upward arrows interpreted as vertical jump.",
+          "vertical": "Continuous root translation, approximately 0.60 m takeoff-to-apex root rise; simultaneous bent-knee tuck adds clearance.",
+          "rotation": "No spin or turn."
+        }
+      },
+      "support_contacts": {
+        "support_phases": [
+          {
+            "frames": [
+              1,
+              20
+            ],
+            "support": "both feet"
+          },
+          {
+            "frames": [
+              21,
+              41
+            ],
+            "support": "none; both feet airborne"
+          },
+          {
+            "frames": [
+              42,
+              69
+            ],
+            "support": "both feet; knees absorb landing through frame 48"
+          }
+        ]
+      },
+      "attack_and_timeline_events": {
+        "attack_events": []
+      },
+      "phases": {},
+      "start_end_use": "Grounded lightly bent-knee guard; final six frames held stable. Same horizontal position.",
+      "primary_category": "jump",
+      "secondary_tags": [],
+      "original_source_fps": 30,
+      "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+    }
+  ],
+  "baked_speed_multiplier": 1.5,
+  "runtime_playback_speed": 1,
+  "root_motion_speed_note": "Root displacement unchanged. Per-second linear/angular velocities are 1.5x; controller speeds expressed per second have been adjusted. Per-frame errors unchanged.",
+  "source_prose_warning": "元資料1.0倍速の説明文です。本文中の秒数は2/3倍、秒単位の速度は1.5倍に換算してください。フレーム番号・距離・角度は不変。併記の数値フィールドはすでに1.5倍速用に換算済みです。重力など物理設定は元資料の注釈であり、1.5倍速版を再シミュレーションする設定ではありません。"
+}
