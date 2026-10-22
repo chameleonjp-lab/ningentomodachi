@@ -29,6 +29,10 @@ separate integration work. This module does not claim those checks are complete.
 - Grounded-only attacks are the default, configurable with `groundedAttacksOnly`.
   Input is not buffered. Within one ordered transport batch the first accepted
   attack wins over jump; rejected input does not spend heat or draw a move.
+  Held movement direction/session persists across attacks and accepts validated updates
+  during the attack-only movement lock. This is not attack/jump buffering: C still
+  suppresses free movement and owns authored-root application. Release, session end,
+  pause/background and encounter/terminal transitions clear retained direction.
 - AI approaches at a provisional 1.8 m threshold, alternates kick/punch intents for
   normal actors and uses kicks for black. Core randomly selects within the fixed
   category set using the seeded RNG.

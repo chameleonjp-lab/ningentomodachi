@@ -370,7 +370,7 @@ export function createCore(
           })),
         },
       });
-      moves.delete(a.actorId);
+      // Held direction is intent, not free movement; C gates its application during attacks.
       emit({
         type: 'AttackAccepted',
         actorId: a.actorId,
@@ -385,7 +385,10 @@ export function createCore(
       return;
     }
     if (
-      a.actions.move.allowed &&
+      !a.defeated &&
+      !pendingOpponent &&
+      snapshot.presentation.kind !== 'opponent-defeat' &&
+      (a.actions.move.allowed || a.attack !== null) &&
       Number.isFinite(command.x) &&
       Number.isFinite(command.z) &&
       Math.hypot(command.x, command.z) <= 1 + 1e-9 &&
@@ -422,7 +425,11 @@ export function createCore(
           attacking.add(c.actorId);
       }
     for (const c of unique)
-      if (c.type !== 'AttackRequested' && !attacking.has(c.actorId)) accept(c);
+      if (
+        c.type === 'MoveRequested' ||
+        (c.type === 'JumpRequested' && !attacking.has(c.actorId))
+      )
+        accept(c);
   }
   function handle(command: CoreCommand) {
     if (
