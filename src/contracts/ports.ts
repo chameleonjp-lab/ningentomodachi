@@ -27,6 +27,8 @@ export interface Disposable {
 export interface RunContext {
   readonly runId: RunId;
   readonly seed: number;
+  /** Declaration for future immutable negotiation; current composition does not enable it. */
+  readonly posePolicy?: import('./pose').PoseRunPolicy;
 }
 export interface ModuleContext extends RunContext {
   readonly viewport: ViewportReader;
@@ -70,6 +72,8 @@ export interface CorePort extends Disposable {
   fail(message: string): void;
 }
 export interface MotionCatalogPort extends Disposable {
+  /** Structural timing capability only; never an anatomy/CCD readiness claim. */
+  readonly pose?: import('./pose').PoseCatalogBindings;
   /** Complete validated pack only, including resolvable shape samples. */
   prepare(signal: AbortSignal): Promise<void>;
   get(clipId: ClipId): MotionDefinition | undefined;
@@ -81,9 +85,11 @@ export interface MotionCatalogPort extends Disposable {
   ): MotionIntervalSample | undefined;
 }
 export interface AnimationPort extends Disposable {
+  readonly poseProtocol?: import('./pose').PoseDisplayCapability;
   render(frame: CommittedFrame): void;
 }
 export interface SpatialPort extends Disposable {
+  readonly poseProtocol?: import('./pose').PoseSpatialCapability;
   step(
     request: SpatialStepRequest,
     catalog: MotionCatalogPort,

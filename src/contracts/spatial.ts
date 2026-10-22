@@ -11,6 +11,7 @@ import type {
   WorldObjectId,
 } from './ids';
 import type { Vector3 } from './motion';
+import type { ActorPoseStamp } from './pose';
 export interface SpatialActor {
   readonly actorId: ActorId;
   /** C-owned physical anchor. B posture and defeated-only presentation offsets do not
@@ -20,6 +21,9 @@ export interface SpatialActor {
   readonly velocity: Vector3;
   readonly grounded: boolean;
   readonly locomotion: 'idle' | 'walk' | 'run' | 'jump';
+  /** Future qualified v1 mode requires this after readiness. Loading/legacy may omit.
+   * Declaration only: current runtime remains legacy and produces no pose stamps. */
+  readonly pose?: ActorPoseStamp;
 }
 export interface SpatialVehicle {
   readonly vehicleId: VehicleId;

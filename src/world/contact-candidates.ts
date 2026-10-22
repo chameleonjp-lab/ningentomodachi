@@ -11,7 +11,8 @@ import {
   type SpatialCandidate,
   type Vector3,
 } from '../contracts';
-import { body, type PathKey, toBox } from './character-motor';
+import { type PathKey, toBox } from './character-motor';
+import { combatHurt } from './combat-hurt';
 import { add, lerp, localToWorld } from './math';
 import {
   interpolateVolume,
@@ -156,8 +157,8 @@ export function combatContacts(
             sweep.end,
             (to - sweep.from) / (sweep.to - sweep.from),
           ),
-          body(positionAt(target.path, from)),
-          body(positionAt(target.path, to)),
+          combatHurt(positionAt(target.path, from)),
+          combatHurt(positionAt(target.path, to)),
         );
         if (hit)
           candidates.push({
