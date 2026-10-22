@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   PR_NUMBER: ${{ github.event.pull_request.number || '' }}
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
@@ -33,7 +33,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p reports
-          { npm run format && npm run lint && npm run typecheck; } 2>&1 | tee reports/typecheck.log
+          { npm run format && npm run lint && npm run typecheck && node --test deployment/validate-pages-artifact.test.mjs; } 2>&1 | tee reports/typecheck.log
       - name: Record exact-SHA evidence
         if: ${{ always() }}
         env:
@@ -441,3 +441,152 @@ jobs:
           }
           console.log(`All ${expected.length} required checks and exact-SHA evidence verified for ${checkedSha}`);
           NODE
+  pages-package:
+    name: pages-package
+    needs: [ci-required]
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          github.repository == 'chameleonjp-lab/ningentomodachi' &&
+          needs.ci-required.result == 'success' && vars.PAGES_DEPLOY_ENABLED == 'true' }}
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact-name }}
+      package-attempt: ${{ steps.package.outputs.package-attempt }}
+      manifest-sha256: ${{ steps.package.outputs.manifest-sha256 }}
+      site-manifest-sha256: ${{ steps.package.outputs.site-manifest-sha256 }}
+      build-attempt: ${{ steps.package.outputs.build-attempt }}
+    steps:
+      - name: Require exact merged-PR provenance
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            if (context.payload?.forced !== false) throw new Error('Push force state must be explicitly false');
+            const matches = (pr) => pr.merged_at && pr.merge_commit_sha === context.sha &&
+              pr.base?.ref === 'main' && pr.base?.repo?.full_name === 'chameleonjp-lab/ningentomodachi';
+            for (let attempt = 0; attempt < 6; attempt++) {
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                ...context.repo, commit_sha: context.sha, per_page: 100,
+              });
+              for (const candidate of data.filter(matches)) {
+                const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: candidate.number });
+                if (matches(pr)) { core.info(`Exact main SHA belongs to merged PR #${pr.number}`); return; }
+              }
+              if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            throw new Error('No exact merged PR into this repository/main; direct pushes do not publish');
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.19.0'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ci-build-${{ github.sha }}-${{ github.run_id }}-*
+          path: pages-evidence
+      - name: Require accepted release and package exact verified build bytes
+        id: package
+        env:
+          PAGES_DEPLOY_ENABLED: ${{ vars.PAGES_DEPLOY_ENABLED }}
+        run: node deployment/validate-pages-artifact.mjs
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          name: pages-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pages-site
+          retention-days: 14
+  pages-deploy:
+    name: pages-deploy
+    needs: [pages-package]
+    if: >-
+      ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          github.repository == 'chameleonjp-lab/ningentomodachi' &&
+          needs.pages-package.result == 'success' && vars.PAGES_DEPLOY_ENABLED == 'true' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ningentomodachi-pages-production
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page-url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Verify approved Pages configuration before deployment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const { data } = await github.request('GET /repos/{owner}/{repo}/pages', context.repo);
+            if (data.html_url !== 'https://chameleonjp-lab.github.io/ningentomodachi/' ||
+                data.cname !== null || data.build_type !== 'workflow') {
+              throw new Error('Pages configuration is not the approved default public URL and workflow source');
+            }
+      - name: Reject stale main immediately before deployment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const { data } = await github.rest.repos.getBranch({ ...context.repo, branch: 'main' });
+            if (data.commit.sha !== context.sha) throw new Error('Stale main build; wait for current main CI');
+      - name: Deploy already verified artifact without executing repository code
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        with:
+          artifact_name: ${{ needs.pages-package.outputs.artifact-name }}
+  pages-verify:
+    name: pages-verify
+    needs: [pages-package, pages-deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify public commit identity and every deployed static file
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PAGE_URL: ${{ needs.pages-deploy.outputs.page-url }}
+          BUILD_MANIFEST_SHA256: ${{ needs.pages-package.outputs.manifest-sha256 }}
+          SITE_MANIFEST_SHA256: ${{ needs.pages-package.outputs.site-manifest-sha256 }}
+          PACKAGE_ATTEMPT: ${{ needs.pages-package.outputs.package-attempt }}
+          BUILD_ATTEMPT: ${{ needs.pages-package.outputs.build-attempt }}
+        with:
+          script: |
+            const { createHash } = require('node:crypto');
+            const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+            const base = new URL(process.env.PAGE_URL);
+            if (base.href !== 'https://chameleonjp-lab.github.io/ningentomodachi/') {
+              throw new Error('Unexpected public destination; custom domains are not approved');
+            }
+            const read = async (path) => {
+              const url = new URL(path, base);
+              if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) throw new Error('Unsafe public path');
+              url.searchParams.set('verification', `${context.runId}-${process.env.GITHUB_RUN_ATTEMPT}`);
+              const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Cache-Control': 'no-cache' } });
+              if (!response.ok) throw new Error(`Public HTTP ${response.status}: ${path}`);
+              return Buffer.from(await response.arrayBuffer());
+            };
+            let manifestBytes;
+            for (let attempt = 0; attempt < 12; attempt++) {
+              try {
+                const bytes = await read('deployment-manifest.json');
+                if (digest(bytes) === process.env.SITE_MANIFEST_SHA256) { manifestBytes = bytes; break; }
+              } catch (error) { core.info(`Waiting for public deployment: ${error.message}`); }
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            if (!manifestBytes) throw new Error('Public manifest mismatch: inspect live version; last-good preservation is not guaranteed after deploy');
+            const manifest = JSON.parse(manifestBytes);
+            const version = JSON.parse(await read('version.json'));
+            if (version.commit !== context.sha || version.ciRun !== String(context.runId) ||
+                version.ciAttempt !== process.env.PACKAGE_ATTEMPT || version.buildAttempt !== process.env.BUILD_ATTEMPT ||
+                version.buildManifestSha256 !== process.env.BUILD_MANIFEST_SHA256) throw new Error('Public version mismatch');
+            for (const file of manifest.files) {
+              if (digest(await read(file.path)) !== file.sha256) throw new Error(`Public file mismatch: ${file.path}`);
+            }
+            await core.summary.addHeading('Verified Pages deployment').addRaw(`Commit: ${context.sha}\nBuild attempt: ${version.buildAttempt}\nURL: ${base.href}\n`).write();
