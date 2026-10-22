@@ -27,6 +27,7 @@ import {
   type GameController,
 } from './createGame';
 import { immutableDto } from './immutableDto';
+import { createResidentAssetStage } from './residentAssets';
 
 export interface PreparedGameAssets {
   readonly motions: readonly MotionAsset[];
@@ -94,6 +95,7 @@ export function createIntegratedGame(
   type Bundle = {
     catalog: ReturnType<typeof createMotionCatalog>;
     assets: PreparedGameAssets | null;
+    residents: ReturnType<typeof createResidentAssetStage<Object3D>> | null;
     ai: ReturnType<typeof createEnemyAi> | null;
     layout: StreetLayout;
     disposed: boolean;
@@ -141,9 +143,15 @@ export function createIntegratedGame(
           // Retain before validation so normal initialization rollback owns the pack.
           bundle.assets = assets;
           validateVisualCoverage(assets, moves);
+          bundle.residents = createResidentAssetStage(
+            residentPlan,
+            assets.animator,
+          );
+          await bundle.residents.prepare(signal);
           return assets.motions;
         }),
         assets: null,
+        residents: null,
         ai: null,
         layout,
         disposed: false,
@@ -155,6 +163,8 @@ export function createIntegratedGame(
         enemyAi: (snapshot, spatial) =>
           bundle.ai?.decide(snapshot, spatial) ?? [],
       });
+      // Capture Core-issued IDs before asynchronous loading; currentOpponentId is still null.
+      const residentPlan = core.read();
       bundles.set(context.runId, bundle);
       return {
         ...core,
@@ -178,8 +188,14 @@ export function createIntegratedGame(
           try {
             bundle.catalog.dispose();
           } finally {
-            bundle.assets?.animator.dispose();
-            bundle.assets = null;
+            try {
+              bundle.residents?.dispose();
+            } finally {
+              bundle.residents = null;
+              const assets = bundle.assets;
+              bundle.assets = null;
+              assets?.animator.dispose();
+            }
           }
         },
       };
@@ -210,11 +226,13 @@ export function createIntegratedGame(
         render(frame) {
           if (frame.snapshot.phase === 'loading') return;
           if (!animation) {
-            if (!bundle.assets)
+            if (!bundle.residents)
               throw new Error('Animation assets have not prepared');
-            animation = createActorAnimator(context, bundle.assets.animator);
+            animation = createActorAnimator(context, bundle.residents.assets);
           }
-          animation.render(frame);
+          bundle.residents!.render(frame.snapshot, () =>
+            animation!.render(frame),
+          );
         },
         dispose() {
           animation?.dispose();

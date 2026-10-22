@@ -1064,3 +1064,159 @@ test('actual host UI counts down alongside loading, then noncombat movement and 
     game.dispose();
   }
 });
+
+test('required resident rigs are staged while loading with a real task between creations', async () => {
+  const f = fixture();
+  const node = root();
+  const phases: string[] = [];
+  const load = f.config.loadAssets;
+  f.config.loadAssets = async (context, signal) => {
+    const assets = await load(context, signal);
+    const create = assets.animator.create.bind(assets.animator);
+    return {
+      ...assets,
+      animator: {
+        ...assets.animator,
+        create(color) {
+          phases.push(game.read()?.phase ?? 'absent');
+          const rig = create(color);
+          setTimeout(() => f.lifecycle.push(`task:${color}`), 0);
+          return rig;
+        },
+      },
+    };
+  };
+  const game = createIntegratedGame(node, {
+    sessionId: 'staged-real-task',
+    seed: 11,
+    viewport,
+    configuration: f.config,
+    createRenderer: renderer,
+  });
+  try {
+    await game.start();
+    expect(phases).toEqual(['loading', 'loading']);
+    expect(f.lifecycle.slice(0, 3)).toEqual([
+      'create:white',
+      'task:white',
+      'create:blue',
+    ]);
+    expect(f.rigs.size).toBe(2);
+    expect(game.read()?.residentActorIds).toEqual(
+      game
+        .read()
+        ?.actors.filter((a) => a.color === 'white' || a.color === 'blue')
+        .map((a) => a.actorId),
+    );
+    expect(game.read()?.phase).toBe('ready');
+  } finally {
+    game.dispose();
+    node.remove();
+  }
+});
+
+test('retry between staged rig creations releases the old run and ignores stale startup settings', async () => {
+  const f = fixture(),
+    node = root();
+  const load = f.config.loadAssets;
+  const events: string[] = [];
+  const runs: string[] = [];
+  let retryQueued = false;
+  f.config.loadAssets = async (context, signal) => {
+    runs.push(context.runId);
+    const assets = await load(context, signal);
+    const create = assets.animator.create.bind(assets.animator);
+    return {
+      ...assets,
+      animator: {
+        ...assets.animator,
+        create(color) {
+          events.push(`create:${context.runId}:${color}`);
+          const rig = create(color);
+          if (!retryQueued) {
+            retryQueued = true;
+            setTimeout(
+              () =>
+                game.request({
+                  type: 'RetryRequested',
+                  requestId: 'staging-retry',
+                }),
+              0,
+            );
+          }
+          return {
+            ...rig,
+            dispose() {
+              events.push(`dispose:${context.runId}:${color}`);
+              rig.dispose();
+            },
+          };
+        },
+        dispose() {
+          events.push(`pack:${context.runId}`);
+          assets.animator.dispose();
+        },
+      },
+    };
+  };
+  const game = createIntegratedGame(node, {
+    sessionId: 'staging-retry',
+    seed: 1,
+    viewport,
+    configuration: f.config,
+    createRenderer: renderer,
+  });
+  try {
+    game.request({ type: 'PrepareRequested', requestId: 'explicit-first' });
+    const oldGeneration = game.hostState().startup!.generation;
+    await expect.poll(() => runs.length).toBe(2);
+    await expect.poll(() => game.read()?.phase).toBe('ready');
+    const old = runs[0]!,
+      current = runs[1]!;
+    expect(current).not.toBe(old);
+    expect(game.read()?.runId).toBe(current);
+    expect(
+      events.filter((event) => event.startsWith(`create:${old}:`)),
+    ).toEqual([`create:${old}:white`]);
+    expect(events.indexOf(`dispose:${old}:white`)).toBeLessThan(
+      events.indexOf(`pack:${old}`),
+    );
+    expect(
+      events.filter((event) => event.startsWith(`create:${current}:`)),
+    ).toEqual([`create:${current}:white`, `create:${current}:blue`]);
+    const generation = game.hostState().startup!.generation;
+    game.request({
+      type: 'StartupPauseRequested',
+      requestId: 'current-settings',
+      startupGeneration: generation,
+      reason: 'settings',
+    });
+    game.request({
+      type: 'StartupResumeRequested',
+      requestId: 'stale-close',
+      startupGeneration: oldGeneration,
+      reason: 'settings',
+    });
+    game.advance(4000);
+    expect(game.hostState().startup).toMatchObject({
+      countdown: 3,
+      requiredAssetsReady: true,
+      pauseReasons: ['settings'],
+    });
+    expect(game.read()?.phase).toBe('ready');
+    game.request({
+      type: 'StartupResumeRequested',
+      requestId: 'current-close',
+      startupGeneration: generation,
+      reason: 'settings',
+    });
+    game.advance(3000);
+    expect(game.read()?.phase).toBe('running');
+    expect(f.rigs.size).toBe(2);
+  } finally {
+    game.dispose();
+    node.remove();
+  }
+  expect(f.dispose).toHaveBeenCalledTimes(2);
+  expect(f.rigDispose).toHaveBeenCalledTimes(3);
+});

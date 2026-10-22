@@ -61,7 +61,36 @@ function validateTransform(node: Record<string, unknown>): void {
   )
     throw new Error('Conflicting node matrix and TRS');
 }
+/** Synchronous compatibility driver. Both paths execute exactly the same checks. */
 export function inspectGlb(bytes: Uint8Array): SourceInspection {
+  const steps = inspectGlbSteps(bytes);
+  for (;;) {
+    const result = steps.next();
+    if (result.done) return result.value;
+  }
+}
+/** Internal cooperative driver. The trusted preparation scheduler supplies an
+ * actual macrotask yield and cancellation check, not a resolved Promise. Input is
+ * captured before yielding; callers cannot alter an accessor mid-inspection. */
+export async function inspectGlbYielding(
+  bytes: Uint8Array,
+  checkpoint: (chunk: number) => Promise<void>,
+): Promise<SourceInspection> {
+  const steps = inspectGlbSteps(new Uint8Array(bytes));
+  let chunk = 0;
+  for (;;) {
+    const result = steps.next();
+    if (result.done) return result.value;
+    await checkpoint(chunk++);
+  }
+}
+function* inspectGlbSteps(
+  bytes: Uint8Array,
+): Generator<void, SourceInspection, void> {
+  // An operation quota, not a device-independent wall-clock guarantee. Native
+  // JSON parsing and each small structural/sort operation remain synchronous.
+  let work = 0;
+  const quota = 16384;
   if (bytes.length < 28) throw new Error('Empty or truncated GLB');
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (
@@ -116,11 +145,11 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
     binary.byteOffset,
     binary.byteLength,
   );
-  function readAccessor(
+  function* readAccessor(
     index: unknown,
     expectedType: string,
     unsigned = false,
-  ): number[] {
+  ): Generator<void, number[], void> {
     const accessor = accessors[integer(index)];
     if (
       !accessor ||
@@ -179,6 +208,10 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
                 : data.getFloat32(offset, true);
         if (!Number.isFinite(value)) throw new Error('Non-finite accessor');
         result.push(value);
+        if (++work === quota) {
+          work = 0;
+          yield;
+        }
       }
     return result;
   }
@@ -189,7 +222,8 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
       throw new Error('External/missing image');
   }
   const names = new Set<string>();
-  const clips = array(document.animations).map((entry): SourceClip => {
+  const clips: SourceClip[] = [];
+  for (const entry of array(document.animations)) {
     const animation = record(entry);
     const name = named(animation.name);
     if (names.has(name)) throw new Error('Duplicate clip name');
@@ -200,11 +234,15 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
       throw new Error('Empty clip');
     for (const sampler of samplers) {
       let previous = -1;
-      for (const time of readAccessor(sampler.input, 'SCALAR')) {
+      for (const time of yield* readAccessor(sampler.input, 'SCALAR')) {
         if (time < 0 || time <= previous)
           throw new Error('Invalid sample order');
         times.add(time);
         previous = time;
+        if (++work === quota) {
+          work = 0;
+          yield;
+        }
       }
     }
     for (const channel of array(animation.channels).map(record)) {
@@ -222,8 +260,8 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
       const interpolation = sampler.interpolation ?? 'LINEAR';
       if (!['LINEAR', 'STEP', 'CUBICSPLINE'].includes(String(interpolation)))
         throw new Error('Unsupported interpolation');
-      const output = readAccessor(sampler.output, type);
-      const input = readAccessor(sampler.input, 'SCALAR');
+      const output = yield* readAccessor(sampler.output, type);
+      const input = yield* readAccessor(sampler.input, 'SCALAR');
       if (
         output.length !==
         input.length *
@@ -235,8 +273,8 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
     const sampleTimes = [...times].sort((a, b) => a - b);
     const durationSeconds = sampleTimes.at(-1) ?? 0;
     if (durationSeconds <= 0) throw new Error('Empty duration');
-    return { name, durationSeconds, sampleTimes };
-  });
+    clips.push({ name, durationSeconds, sampleTimes });
+  }
   if (!clips.length) throw new Error('No clips');
   const nodes = array(document.nodes).map(record);
   const meshes = array(document.meshes).map(record);
@@ -344,7 +382,7 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
         matrix: node.matrix ?? null,
       };
     });
-  const inverseBind = readAccessor(skin.inverseBindMatrices, 'MAT4');
+  const inverseBind = yield* readAccessor(skin.inverseBindMatrices, 'MAT4');
   if (inverseBind.length !== joints.length * 16)
     throw new Error('Bind count mismatch');
   let triangleCount = 0;
@@ -364,7 +402,7 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
       for (const index of Object.values(attributes))
         if (!accessors[integer(index)])
           throw new Error('Invalid attribute accessor reference');
-      const positions = readAccessor(attributes.POSITION, 'VEC3');
+      const positions = yield* readAccessor(attributes.POSITION, 'VEC3');
       for (const [name, type, width] of [
         ['NORMAL', 'VEC3', 3],
         ['TANGENT', 'VEC4', 4],
@@ -373,13 +411,17 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
       ] as const) {
         if (
           attributes[name] !== undefined &&
-          readAccessor(attributes[name], type).length / width !==
+          (yield* readAccessor(attributes[name], type)).length / width !==
             positions.length / 3
         )
           throw new Error('Attribute vertex count mismatch');
       }
-      const weights = readAccessor(attributes.WEIGHTS_0, 'VEC4');
-      const jointIndices = readAccessor(attributes.JOINTS_0, 'VEC4', true);
+      const weights = yield* readAccessor(attributes.WEIGHTS_0, 'VEC4');
+      const jointIndices = yield* readAccessor(
+        attributes.JOINTS_0,
+        'VEC4',
+        true,
+      );
       if (
         weights.length !== jointIndices.length ||
         positions.length / 3 !== weights.length / 4
@@ -399,13 +441,27 @@ export function inspectGlb(bytes: Uint8Array): SourceInspection {
           )
             throw new Error('Invalid skin weight/joint');
           sum += weight;
+          if (++work === quota) {
+            work = 0;
+            yield;
+          }
         }
         if (Math.abs(sum - 1) > 1e-4)
           throw new Error('Unnormalized skin weights');
       }
-      const indicesValues = readAccessor(primitive.indices, 'SCALAR', true);
-      if (indicesValues.some((index) => index >= positions.length / 3))
-        throw new Error('Index outside vertex range');
+      const indicesValues = yield* readAccessor(
+        primitive.indices,
+        'SCALAR',
+        true,
+      );
+      for (const index of indicesValues) {
+        if (index >= positions.length / 3)
+          throw new Error('Index outside vertex range');
+        if (++work === quota) {
+          work = 0;
+          yield;
+        }
+      }
       triangleCount += integer(indices.count) / 3;
     }
   return {

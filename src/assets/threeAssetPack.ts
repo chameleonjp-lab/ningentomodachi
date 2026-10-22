@@ -59,6 +59,32 @@ export async function createThreeAssetPack(
   extraClips: readonly AnimationClip[] = [],
   rootPolicies: readonly ClipRootPolicy[] = [],
 ): Promise<ThreeAssetPack> {
+  return prepareThreeAssetPack(sources, palettes, extraClips, rootPolicies);
+}
+/** Internal shared parser. The public pinned factory supplies verified offline data;
+ * ordinary createThreeAssetPack remains the offline/qualification certifier. */
+export async function prepareThreeAssetPack(
+  sources: readonly Uint8Array[],
+  palettes: Partial<Record<ActorColor, VerifiedPalette>>,
+  extraClips: readonly AnimationClip[],
+  rootPolicies: readonly ClipRootPolicy[],
+  preparation?: {
+    readonly checkpoint: (stage: string) => Promise<void>;
+    readonly support: (template: Object3D) => Promise<SkinBoundsPlan>;
+    /** Trusted derived factory binds original policy provenance to its pinned
+     * lossless source map; legacy callers still hash original source bytes. */
+    readonly verifyPolicy?: (policy: ClipRootPolicy) => Promise<void>;
+    /** Trusted preparation strategy only; source authorization remains in the factory. */
+    readonly inspect?: (
+      bytes: Uint8Array,
+      index: number,
+    ) => Promise<ReturnType<typeof inspectGlb>>;
+    readonly parse?: (
+      bytes: Uint8Array,
+      index: number,
+    ) => ReturnType<GLTFLoader['parseAsync']>;
+  },
+): Promise<ThreeAssetPack> {
   if (!sources.length) throw new Error('No source GLBs');
   const captured = sources.map((bytes) => new Uint8Array(bytes));
   const policies = rootPolicies.map(copyRootPolicy);
@@ -66,14 +92,27 @@ export async function createThreeAssetPack(
   const policyMap = new Map(policies.map((policy) => [policy.clipId, policy]));
   if (policyMap.size !== policies.length)
     throw new Error('Duplicate root policy');
-  const receipts = captured.map(inspectGlb);
+  const receipts: ReturnType<typeof inspectGlb>[] = [];
+  for (let index = 0; index < captured.length; index++) {
+    const bytes = captured[index];
+    if (!bytes) throw new Error('Missing source GLB');
+    await preparation?.checkpoint(`inspect:${index}:before`);
+    receipts.push(
+      preparation?.inspect
+        ? await preparation.inspect(bytes, index)
+        : inspectGlb(bytes),
+    );
+    await preparation?.checkpoint(`inspect:${index}:after`);
+  }
   for (const policy of policies) {
     const index = receipts.findIndex((receipt) =>
       receipt.clips.some((clip) => clip.name === policy.clipId),
     );
     const bytes = captured[index];
     if (!bytes) throw new Error('Unknown root policy clip');
-    await verifyRootPolicySource(policy, bytes, policy.clipId);
+    if (preparation?.verifyPolicy) await preparation.verifyPolicy(policy);
+    else await verifyRootPolicySource(policy, bytes, policy.clipId);
+    await preparation?.checkpoint(`policy:${policy.clipId}`);
   }
   if (new Set(receipts.map((source) => source.skeletonSignature)).size !== 1)
     throw new Error('Incompatible skeleton/bind pose');
@@ -96,6 +135,7 @@ export async function createThreeAssetPack(
   ]
     .map((value) => value.toString(16).padStart(2, '0'))
     .join('');
+  await preparation?.checkpoint('hash:template');
   const loader = new GLTFLoader();
   const loaded: Awaited<ReturnType<GLTFLoader['parseAsync']>>[] = [];
   const releaseScene = (scene: Object3D) => {
@@ -110,8 +150,17 @@ export async function createThreeAssetPack(
     });
   };
   try {
-    for (const bytes of captured)
-      loaded.push(await loader.parseAsync(new Uint8Array(bytes).buffer, ''));
+    for (let index = 0; index < captured.length; index++) {
+      const bytes = captured[index];
+      if (!bytes) throw new Error('Missing source GLB');
+      await preparation?.checkpoint(`parse:${index}:before`);
+      loaded.push(
+        preparation?.parse
+          ? await preparation.parse(bytes, index)
+          : await loader.parseAsync(new Uint8Array(bytes).buffer, ''),
+      );
+      await preparation?.checkpoint(`parse:${index}:after`);
+    }
   } catch (error) {
     for (const item of loaded) releaseScene(item.scene);
     throw error;
@@ -119,11 +168,13 @@ export async function createThreeAssetPack(
   const template = loaded[0]?.scene;
   if (!template) throw new Error('No template');
   // Certify while the pack is being prepared, never on the first displayed frame.
-  let supportPlan: SkinBoundsPlan;
+  let supportPlan: SkinBoundsPlan | undefined;
   try {
-    const cached = supportPlans.get(sourceKey);
-    supportPlan = cached ?? prepareSkinBounds(template);
-    if (!cached) {
+    const cached = preparation ? undefined : supportPlans.get(sourceKey);
+    supportPlan = preparation
+      ? await preparation.support(template)
+      : (cached ?? prepareSkinBounds(template));
+    if (!preparation && !cached) {
       if (supportPlans.size >= 4) {
         const oldest = supportPlans.keys().next().value;
         if (oldest !== undefined) supportPlans.delete(oldest);
@@ -148,6 +199,9 @@ export async function createThreeAssetPack(
   const release = () => {
     if (!disposed || references || released) return;
     released = true;
+    supportPlan = undefined;
+    animations.clear();
+    policyMap.clear();
     const textures = new Set<Texture>();
     template.traverse((node) => {
       if (node instanceof Mesh)
@@ -176,7 +230,7 @@ export async function createThreeAssetPack(
       return clip ? durationMs(clip.duration * 1000) : undefined;
     },
     create(color): ActorRig<Object3D> {
-      if (disposed) throw new Error('Asset pack disposed');
+      if (disposed || !supportPlan) throw new Error('Asset pack disposed');
       const palette = palettes[color];
       if (color !== 'white' && !palette)
         throw new Error(`Missing verified palette: ${color}`);
