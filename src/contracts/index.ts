@@ -10,3 +10,4 @@ export * from './snapshot';
 export * from './ports';
 export * from './interaction';
 export * from './render';
+export * from './pose';
