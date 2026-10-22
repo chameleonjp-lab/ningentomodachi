@@ -5,6 +5,7 @@ import type {
   Projection,
   RunId,
 } from '../contracts';
+import { hudActors } from './viewModel';
 type Point = { readonly x: number; readonly y: number };
 interface Loss {
   low: number;
@@ -42,14 +43,7 @@ export function createDamageTimeline(runId: RunId) {
       if (snapshot.runId !== runId || snapshot.revision < revision) return;
       revision = snapshot.revision;
       now = snapshot.clocks.presentationTimeMs;
-      actors = new Map(
-        snapshot.actors
-          .filter(
-            (a) =>
-              a.color === 'white' || a.actorId === snapshot.currentOpponentId,
-          )
-          .map((a) => [a.actorId, a]),
-      );
+      actors = new Map(hudActors(snapshot).map((a) => [a.actorId, a]));
       for (const id of losses.keys()) if (!actors.has(id)) losses.delete(id);
       for (const event of frame.events) {
         if (event.runId !== runId || event.sequence <= sequence) continue;
@@ -60,7 +54,11 @@ export function createDamageTimeline(runId: RunId) {
           const oldest = seen.values().next().value;
           if (oldest) seen.delete(oldest);
         }
-        if (event.type === 'OpponentChanged' && event.previousActorId)
+        if (
+          event.type === 'OpponentChanged' &&
+          event.previousActorId &&
+          !actors.has(event.previousActorId)
+        )
           losses.delete(event.previousActorId);
         if (event.type === 'Healed') losses.delete(event.actorId);
         if (
