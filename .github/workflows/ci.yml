@@ -1,0 +1,443 @@
+name: Foundation CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  CI_RUN_ID: ${{ github.run_id }}
+  CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+jobs:
+  ci-typecheck:
+    name: ci-typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          { npm run format && npm run lint && npm run typecheck; } 2>&1 | tee reports/typecheck.log
+      - name: Record exact-SHA evidence
+        if: ${{ always() }}
+        env:
+          CHECK_NAME: ci-typecheck
+          CHECK_RESULT: ${{ job.status }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const files = [];
+          function collect(directory) {
+            if (!existsSync(directory)) return;
+            for (const item of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, item.name);
+              if (item.isDirectory()) collect(path);
+              else if (item.isFile() && path !== 'reports/manifest.json') files.push({ path, sha256: hash(path) });
+            }
+          }
+          collect('reports'); collect('dist');
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: 1, contractVersion: 1, checkName: process.env.CHECK_NAME,
+            prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
+            prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
+            baseSha: process.env.BASE_SHA || null,
+            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
+            result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
+            files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          mkdirSync('reports', { recursive: true });
+          writeFileSync('reports/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          mkdirSync('ci-evidence', { recursive: true });
+          cpSync('reports', 'ci-evidence/reports', { recursive: true });
+          if (existsSync('dist')) cpSync('dist', 'ci-evidence/dist', { recursive: true });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: ci-typecheck-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ci-contracts:
+    name: ci-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          npm run test:contracts -- --reporter=default --reporter=junit --reporter=json --outputFile.junit=reports/contracts.xml --outputFile.json=reports/contracts.json 2>&1 | tee reports/contracts.log
+      - name: Record exact-SHA evidence
+        if: ${{ always() }}
+        env:
+          CHECK_NAME: ci-contracts
+          CHECK_RESULT: ${{ job.status }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const files = [];
+          function collect(directory) {
+            if (!existsSync(directory)) return;
+            for (const item of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, item.name);
+              if (item.isDirectory()) collect(path);
+              else if (item.isFile() && path !== 'reports/manifest.json') files.push({ path, sha256: hash(path) });
+            }
+          }
+          collect('reports'); collect('dist');
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: 1, contractVersion: 1, checkName: process.env.CHECK_NAME,
+            prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
+            prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
+            baseSha: process.env.BASE_SHA || null,
+            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
+            result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
+            files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          mkdirSync('reports', { recursive: true });
+          writeFileSync('reports/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          mkdirSync('ci-evidence', { recursive: true });
+          cpSync('reports', 'ci-evidence/reports', { recursive: true });
+          if (existsSync('dist')) cpSync('dist', 'ci-evidence/dist', { recursive: true });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: ci-contracts-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ci-unit:
+    name: ci-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          npm run test:unit -- --reporter=default --reporter=junit --reporter=json --outputFile.junit=reports/unit.xml --outputFile.json=reports/unit.json 2>&1 | tee reports/unit.log
+      - name: Record exact-SHA evidence
+        if: ${{ always() }}
+        env:
+          CHECK_NAME: ci-unit
+          CHECK_RESULT: ${{ job.status }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const files = [];
+          function collect(directory) {
+            if (!existsSync(directory)) return;
+            for (const item of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, item.name);
+              if (item.isDirectory()) collect(path);
+              else if (item.isFile() && path !== 'reports/manifest.json') files.push({ path, sha256: hash(path) });
+            }
+          }
+          collect('reports'); collect('dist');
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: 1, contractVersion: 1, checkName: process.env.CHECK_NAME,
+            prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
+            prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
+            baseSha: process.env.BASE_SHA || null,
+            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
+            result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
+            files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          mkdirSync('reports', { recursive: true });
+          writeFileSync('reports/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          mkdirSync('ci-evidence', { recursive: true });
+          cpSync('reports', 'ci-evidence/reports', { recursive: true });
+          if (existsSync('dist')) cpSync('dist', 'ci-evidence/dist', { recursive: true });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: ci-unit-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ci-integration:
+    name: ci-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          npm run test:integration -- --reporter=default --reporter=junit --reporter=json --outputFile.junit=reports/integration.xml --outputFile.json=reports/integration.json 2>&1 | tee reports/integration.log
+      - name: Record exact-SHA evidence
+        if: ${{ always() }}
+        env:
+          CHECK_NAME: ci-integration
+          CHECK_RESULT: ${{ job.status }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const files = [];
+          function collect(directory) {
+            if (!existsSync(directory)) return;
+            for (const item of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, item.name);
+              if (item.isDirectory()) collect(path);
+              else if (item.isFile() && path !== 'reports/manifest.json') files.push({ path, sha256: hash(path) });
+            }
+          }
+          collect('reports'); collect('dist');
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: 1, contractVersion: 1, checkName: process.env.CHECK_NAME,
+            prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
+            prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
+            baseSha: process.env.BASE_SHA || null,
+            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
+            result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
+            files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          mkdirSync('reports', { recursive: true });
+          writeFileSync('reports/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          mkdirSync('ci-evidence', { recursive: true });
+          cpSync('reports', 'ci-evidence/reports', { recursive: true });
+          if (existsSync('dist')) cpSync('dist', 'ci-evidence/dist', { recursive: true });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: ci-integration-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ci-build:
+    name: ci-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          npm run build 2>&1 | tee reports/build.log
+      - name: Record exact-SHA evidence
+        if: ${{ always() }}
+        env:
+          CHECK_NAME: ci-build
+          CHECK_RESULT: ${{ job.status }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const hash = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          const files = [];
+          function collect(directory) {
+            if (!existsSync(directory)) return;
+            for (const item of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, item.name);
+              if (item.isDirectory()) collect(path);
+              else if (item.isFile() && path !== 'reports/manifest.json') files.push({ path, sha256: hash(path) });
+            }
+          }
+          collect('reports'); collect('dist');
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const manifest = {
+            schemaVersion: 1, contractVersion: 1, checkName: process.env.CHECK_NAME,
+            prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
+            prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
+            baseSha: process.env.BASE_SHA || null,
+            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
+            result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
+            files: files.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          mkdirSync('reports', { recursive: true });
+          writeFileSync('reports/manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+          mkdirSync('ci-evidence', { recursive: true });
+          cpSync('reports', 'ci-evidence/reports', { recursive: true });
+          if (existsSync('dist')) cpSync('dist', 'ci-evidence/dist', { recursive: true });
+          NODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: ci-build-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ci-required:
+    name: ci-required
+    if: ${{ always() }}
+    needs: [ci-typecheck, ci-contracts, ci-unit, ci-integration, ci-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ci-*-${{ github.sha }}-${{ github.run_id }}-*
+          path: evidence
+      - name: Require successful checks and matching evidence
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, readdirSync } from 'node:fs';
+          import { resolve, sep } from 'node:path';
+          const expected = ['ci-typecheck', 'ci-contracts', 'ci-unit', 'ci-integration', 'ci-build'];
+          const results = JSON.parse(process.env.NEEDS_JSON);
+          assert.deepEqual(Object.keys(results).sort(), [...expected].sort(), 'Every required job must exist');
+          for (const name of expected) assert.equal(results[name].result, 'success', `${name} must succeed, not skip/fail/cancel`);
+          const checkedSha = execFileSync('git', ['-C', process.env.GITHUB_WORKSPACE || '.', 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const lockHash = createHash('sha256').update(readFileSync('package-lock.json')).digest('hex');
+          const directories = readdirSync('evidence');
+          for (const name of expected) {
+            const prefix = `${name}-${checkedSha}-${process.env.CI_RUN_ID}-`;
+            const candidates = directories.filter((entry) => entry.startsWith(prefix) && /^[1-9][0-9]*$/.test(entry.slice(prefix.length)))
+              .sort((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)));
+            const artifact = candidates[0];
+            assert(artifact, `Missing exact-SHA/run artifact for ${name}`);
+            const root = resolve('evidence', artifact);
+            const manifest = JSON.parse(readFileSync(resolve(root, 'reports/manifest.json'), 'utf8'));
+            assert.equal(manifest.checkName, name); assert.equal(manifest.result, 'success');
+            assert.equal(manifest.checkedSha, checkedSha); assert.equal(manifest.lockfileSha256, lockHash);
+            assert.equal(manifest.prHeadSha, process.env.PR_HEAD_SHA || null);
+            assert.equal(manifest.baseSha, process.env.BASE_SHA || null);
+            assert.equal(manifest.runId, process.env.CI_RUN_ID);
+            const attempt = Number(manifest.runAttempt);
+            assert(Number.isSafeInteger(attempt) && attempt > 0 && attempt <= Number(process.env.CI_RUN_ATTEMPT), 'Evidence must belong to a completed attempt in this run');
+            assert.equal(artifact, `${prefix}${attempt}`);
+            assert.equal(manifest.schemaVersion, 1); assert.equal(manifest.contractVersion, 1);
+            assert.equal(manifest.prNumber, process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null);
+            assert.equal(manifest.p1BaseMainSha, null);
+            assert.equal(manifest.p1Gate, 'unresolved-before-owner-merge-of-P0');
+            assert(Array.isArray(manifest.files) && manifest.files.length > 0, 'Evidence cannot be empty');
+            const listed = manifest.files.map((file) => file.path);
+            assert.equal(new Set(listed).size, listed.length, 'Artifact paths must be unique');
+            const kind = name.slice(3);
+            const testCheck = ['contracts', 'unit', 'integration'].includes(kind);
+            const required = [`reports/${kind}.log`, ...(testCheck ? [`reports/${kind}.xml`, `reports/${kind}.json`] : []), ...(name === 'ci-build' ? ['dist/index.html'] : [])];
+            for (const path of required) {
+              assert(listed.includes(path), `Missing required evidence: ${path}`);
+              assert(readFileSync(resolve(root, path)).length > 0, `Required evidence is empty: ${path}`);
+            }
+            const actual = [];
+            function collect(directory, prefix = '') {
+              for (const item of readdirSync(directory, { withFileTypes: true })) {
+                const path = prefix ? `${prefix}/${item.name}` : item.name;
+                assert(item.isFile() || item.isDirectory(), 'Evidence must contain only regular files/directories');
+                if (item.isDirectory()) collect(resolve(directory, item.name), path);
+                else if (path !== 'reports/manifest.json') actual.push(path);
+              }
+            }
+            collect(root);
+            assert.deepEqual([...listed].sort(), actual.sort(), 'Every artifact byte must be listed, with no omitted reports or extra unhashed files');
+            for (const file of manifest.files) {
+              assert.equal(typeof file.path, 'string');
+              assert.match(file.sha256, /^[0-9a-f]{64}$/);
+              const path = resolve(root, file.path);
+              assert(path.startsWith(root + sep), 'Artifact path must stay inside the artifact');
+              assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'), file.sha256, `Hash mismatch: ${file.path}`);
+            }
+            if (testCheck) {
+              const report = JSON.parse(readFileSync(resolve(root, `reports/${kind}.json`), 'utf8'));
+              assert.equal(report.success, true, 'Structured test report must succeed');
+              for (const field of ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests']) assert(Number.isSafeInteger(report[field]) && report[field] >= 0, `Invalid test count: ${field}`);
+              assert(report.numPassedTests > 0, 'At least one test must actually execute and pass');
+              assert.equal(report.numFailedTests, 0); assert.equal(report.numPendingTests, 0); assert.equal(report.numTodoTests, 0);
+              assert.equal(report.numTotalTests, report.numPassedTests, 'No skip/todo exclusions are permitted in P0');
+              assert(Array.isArray(report.testResults) && report.testResults.length > 0, 'Executed test-file results are required');
+              const assertions = [];
+              for (const suite of report.testResults) {
+                assert.equal(suite.status, 'passed'); assert(Array.isArray(suite.assertionResults));
+                assertions.push(...suite.assertionResults);
+              }
+              assert.equal(assertions.length, report.numPassedTests, 'Structured counts must match the actual assertions');
+              for (const assertion of assertions) assert.equal(assertion.status, 'passed', 'Every reported test must have executed successfully');
+            }
+          }
+          console.log(`All ${expected.length} required checks and exact-SHA evidence verified for ${checkedSha}`);
+          NODE

@@ -1,0 +1,10 @@
+name: Publish boundary (disabled)
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  publish-disabled:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Publishing is disabled. Separate destination and scope approval is required."

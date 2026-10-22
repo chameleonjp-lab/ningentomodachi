@@ -1,0 +1,30 @@
+{
+  "name": "ningentomodachi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "format": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:contracts": "vitest run tests/contracts",
+    "test:core": "vitest run tests/core",
+    "test:unit": "vitest run --exclude 'tests/contracts/**' --exclude 'tests/integration/**'",
+    "test:integration": "vitest run tests/integration",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "24.19.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5",
+    "yaml": "2.9.1"
+  }
+}
