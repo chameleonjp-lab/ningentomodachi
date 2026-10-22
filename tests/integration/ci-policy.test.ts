@@ -221,7 +221,10 @@ test('actual workflow programs require complete meaningful reports and exact art
       expect(manifest.lockfileSha256).toBe(
         createHash('sha256').update(lock).digest('hex'),
       );
-      expect(manifest.p1BaseMainSha).toBeNull();
+      expect(manifest.p1BaseMainSha).toBe(
+        'a586b99bd9ccca09d48088e323f97f12039e0ced',
+      );
+      expect(manifest.p1Gate).toBe('owner-merged-common-base-verified');
     }
     return destination;
   }

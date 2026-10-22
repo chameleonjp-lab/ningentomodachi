@@ -25,6 +25,7 @@ export interface ViewportReader {
   subscribe(listener: (viewport: ViewportSnapshot) => void): () => void;
 }
 /** Acquired synchronously at gesture start, even at zero displacement, never at the next tick. */
+/** Held gesture basis: right maps positive screen x; depth maps screen-up/away-from-camera. */
 export interface MovementBasisSnapshot {
   readonly runId: RunId;
   readonly sessionId: string;

@@ -62,7 +62,7 @@ jobs:
             prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
             prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
             baseSha: process.env.BASE_SHA || null,
-            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            p1BaseMainSha: 'a586b99bd9ccca09d48088e323f97f12039e0ced', p1Gate: 'owner-merged-common-base-verified',
             runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
             result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
             files: files.sort((a, b) => a.path.localeCompare(b.path)),
@@ -127,7 +127,7 @@ jobs:
             prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
             prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
             baseSha: process.env.BASE_SHA || null,
-            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            p1BaseMainSha: 'a586b99bd9ccca09d48088e323f97f12039e0ced', p1Gate: 'owner-merged-common-base-verified',
             runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
             result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
             files: files.sort((a, b) => a.path.localeCompare(b.path)),
@@ -192,7 +192,7 @@ jobs:
             prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
             prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
             baseSha: process.env.BASE_SHA || null,
-            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            p1BaseMainSha: 'a586b99bd9ccca09d48088e323f97f12039e0ced', p1Gate: 'owner-merged-common-base-verified',
             runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
             result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
             files: files.sort((a, b) => a.path.localeCompare(b.path)),
@@ -257,7 +257,7 @@ jobs:
             prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
             prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
             baseSha: process.env.BASE_SHA || null,
-            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            p1BaseMainSha: 'a586b99bd9ccca09d48088e323f97f12039e0ced', p1Gate: 'owner-merged-common-base-verified',
             runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
             result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
             files: files.sort((a, b) => a.path.localeCompare(b.path)),
@@ -322,7 +322,7 @@ jobs:
             prNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null,
             prHeadSha: process.env.PR_HEAD_SHA || null, checkedSha,
             baseSha: process.env.BASE_SHA || null,
-            p1BaseMainSha: null, p1Gate: 'unresolved-before-owner-merge-of-P0',
+            p1BaseMainSha: 'a586b99bd9ccca09d48088e323f97f12039e0ced', p1Gate: 'owner-merged-common-base-verified',
             runId: process.env.CI_RUN_ID, runAttempt: process.env.CI_RUN_ATTEMPT,
             result: process.env.CHECK_RESULT, lockfileSha256: hash('package-lock.json'),
             files: files.sort((a, b) => a.path.localeCompare(b.path)),
@@ -392,8 +392,8 @@ jobs:
             assert.equal(artifact, `${prefix}${attempt}`);
             assert.equal(manifest.schemaVersion, 1); assert.equal(manifest.contractVersion, 1);
             assert.equal(manifest.prNumber, process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : null);
-            assert.equal(manifest.p1BaseMainSha, null);
-            assert.equal(manifest.p1Gate, 'unresolved-before-owner-merge-of-P0');
+            assert.equal(manifest.p1BaseMainSha, 'a586b99bd9ccca09d48088e323f97f12039e0ced');
+            assert.equal(manifest.p1Gate, 'owner-merged-common-base-verified');
             assert(Array.isArray(manifest.files) && manifest.files.length > 0, 'Evidence cannot be empty');
             const listed = manifest.files.map((file) => file.path);
             assert.equal(new Set(listed).size, listed.length, 'Artifact paths must be unique');

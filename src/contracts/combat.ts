@@ -1,4 +1,9 @@
-import type { ActiveRealTimeMs, GameTimeMs } from './clock';
+import type {
+  ActiveRealTimeMs,
+  DurationMs,
+  GameTimeMs,
+  PresentationTimeMs,
+} from './clock';
 import type {
   ActorId,
   AttackActivationId,
@@ -47,6 +52,15 @@ export interface ActorState {
   readonly heat: HeatState;
   readonly attack: AttackState | null;
   readonly defeated: boolean;
+  /** Durable A-owned visual choice. Optional only for pre-P1 fixtures. Vehicle -> kick is provisional.
+   * B seeks the shared presentation clock, applies the slow rate until its duration, then 1.0,
+   * clamps to its mapped clip duration and holds the final pose. No render callback changes HP. */
+  readonly defeatPresentation?: {
+    readonly category: AttackCategory;
+    readonly startedAt: PresentationTimeMs;
+    readonly slowDurationMs: DurationMs;
+    readonly playbackRate: 0.25;
+  };
   /** Authoritative Core permissions, not UI-derived heat thresholds. */
   readonly actions: {
     readonly punch: ActionPermission;
@@ -81,10 +95,24 @@ export type DamageCause =
       readonly launchId: LaunchId;
     };
 export interface ScoreBreakdown {
+  /** P1 Core always provides authoritative signed contributions. Optional for P0 fixtures only.
+   * Sum equals total; adjustment accounts for final rounding and the nonnegative clamp. */
+  readonly contributions?: {
+    readonly survival: number;
+    readonly defeats: number;
+    readonly remainingHp: number;
+    readonly clear: number;
+    readonly speed: number;
+    readonly destruction: number;
+    readonly adjustment: number;
+  };
   readonly defeatedEnemies: number;
   readonly remainingHp: number;
   readonly survivalTime: GameTimeMs;
   readonly clearTime: GameTimeMs | null;
+  /** P1 always supplies actual player-caused loss / initial total car+street durability.
+   * Zero initial durability yields 0. This attribution does not change total damage scoring. */
+  readonly playerCausedDestructionRate?: number;
   readonly destructionPenalty: number;
   readonly streetDestructionRate: number;
   readonly vehicleDestructionRate: number;
