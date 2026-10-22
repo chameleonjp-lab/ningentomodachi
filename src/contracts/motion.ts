@@ -17,6 +17,8 @@ export interface MotionImpact {
 }
 export interface RootSample {
   readonly atMs: DurationMs;
+  /** Selected extracted transport, not necessarily the complete raw source-root position.
+   * B uses one explicit extraction policy for both runtime pose and baked geometry. */
   readonly position: Vector3;
   /** Unwrapped radians: preserve authored full turns, never shortest-angle interpolation. */
   readonly visualYawRad: number;
@@ -111,7 +113,9 @@ export function validateMotionDefinition(
   });
 }
 
-/** Frozen B -> C convention. GLB axis/scale conversion happens once in B, never in C. */
+/** Frozen B -> C convention. GLB axis/scale conversion happens once in B, never in C.
+ * "root-translation-removed" means the selected extracted transport is removed.
+ * Explicitly retained posture translation stays in both B pose and actor-local hit geometry. */
 export const MOTION_SPACE = Object.freeze({
   version: 1,
   distanceUnit: 'metres',
@@ -145,7 +149,8 @@ export interface MotionRootSegment {
   readonly to: RootSample;
   readonly deltaTranslation: Vector3;
   readonly horizontalOwner: 'authored-root' | 'spatial-movement';
-  /** Exclusive: authored Y and C's jump/gravity must never be added together. */
+  /** Exclusive transport ownership: authored Y and C's jump/gravity never add together.
+   * This does not remove B's explicitly retained actor-local posture Y or infer its policy. */
   readonly verticalOwner: 'authored-root' | 'spatial-jump';
   /** Actor world facing is held by C; visual root yaw must not rotate that basis again. */
   readonly yawOwner: 'visual-only';

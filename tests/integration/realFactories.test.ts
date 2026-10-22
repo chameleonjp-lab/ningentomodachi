@@ -15,6 +15,7 @@ import {
 } from '../../src/app/integratedGame';
 function fixture() {
   const rigs = new Map<ActorColor, Group>();
+  const lifecycle: string[] = [];
   const motions: MotionAsset[] = ['punch', 'kick'].flatMap((category) =>
     Array.from({ length: category === 'kick' ? 19 : 4 }, (_, i) => ({
       definition: {
@@ -101,11 +102,17 @@ function fixture() {
         create: (color) => {
           const node = new Group();
           rigs.set(color, node);
+          lifecycle.push(`create:${color}`);
           return {
             node,
             seek,
             setEmissiveEnabled() {},
-            dispose: rigDispose,
+            dispose: () => {
+              lifecycle.push(
+                `dispose:${color}:${node.parent === null ? 'detached' : 'mounted'}`,
+              );
+              rigDispose();
+            },
           };
         },
         clipDuration: (id) => durationMs(id.startsWith('Defeat') ? 500 : 100),
@@ -119,7 +126,7 @@ function fixture() {
       },
     }),
   };
-  return { config, dispose, rigDispose, seek, rigs };
+  return { config, dispose, rigDispose, seek, rigs, lifecycle };
 }
 function root() {
   const node = document.createElement('div');
@@ -213,6 +220,7 @@ test('real public B/C/D factories share one renderer, exact AI session service, 
   await game.start();
   expect(game.read()?.phase).toBe('ready');
   expect(f.seek).toHaveBeenCalled();
+  expect([...f.rigs.keys()]).toEqual(['white', 'blue']);
   expect(node.querySelectorAll('canvas')).toHaveLength(1);
   const ready = game.read();
   if (!ready) throw new Error('Ready snapshot missing');
@@ -236,7 +244,7 @@ test('real public B/C/D factories share one renderer, exact AI session service, 
   await game.restart();
   expect(game.read()?.runId).not.toBe(id);
   expect(f.dispose).toHaveBeenCalledTimes(1);
-  expect(f.rigDispose).toHaveBeenCalledTimes(5);
+  expect(f.rigDispose).toHaveBeenCalledTimes(2);
   expect(node.querySelectorAll('canvas')).toHaveLength(1);
   game.dispose();
   expect(f.dispose).toHaveBeenCalledTimes(2);
@@ -537,6 +545,54 @@ test.each([false, true])(
       if (!snapshot || !stage || !('endsAt' in stage))
         throw new Error('Missing defeat deadline');
       game.advance(stage.endsAt - snapshot.clocks.presentationTimeMs);
+      const finish = game.read();
+      expect(finish?.presentation.kind).toBe('opponent-defeat-finish');
+      expect(finish?.currentOpponentId).toBeNull();
+      expect(node.querySelectorAll('.nt-number')[1]?.textContent).toBe(
+        '青 0 / 500',
+      );
+      expect(
+        f.lifecycle.some((event) => event.startsWith('dispose:blue')),
+      ).toBe(false);
+      expect(
+        f.seek.mock.calls.some(
+          (call) =>
+            call[0] === 'DefeatPunch' &&
+            Math.abs(Number(call[1]) - 0.375) < 1e-7,
+        ),
+      ).toBe(true);
+      // The20ms fixed-step fixture may lag accepted presentation by one step.
+      // During the125ms normal-speed tail, ordinary movement/jump must still work.
+      game.advance(20);
+      const playerRig = f.rigs.get('white'),
+        swipe = node.querySelector('.nt-swipe');
+      const jump = [...node.querySelectorAll('button')].find(
+        (button) => button.textContent === 'ジャンプ',
+      );
+      if (!playerRig || !swipe || !jump)
+        throw new Error('Missing tail controls');
+      const beforeTail = playerRig.getWorldPosition(new Vector3());
+      pointer(swipe, 'pointerdown', 88, 100, 200);
+      pointer(document, 'pointermove', 88, 164, 200);
+      jump.click();
+      game.advance(80);
+      pointer(document, 'pointerup', 88, 164, 200);
+      const movedTail = playerRig.getWorldPosition(new Vector3());
+      expect(movedTail.distanceTo(beforeTail)).toBeGreaterThan(0.1);
+      expect(movedTail.y).toBeGreaterThan(beforeTail.y);
+      expect(physical.position.y).toBe(frozenHeight);
+      expect(game.read()?.currentOpponentId).toBeNull();
+      game.advance(25);
+      expect(game.read()?.currentOpponentId).toBeNull();
+      expect(
+        f.seek.mock.calls.some(
+          (call) => call[0] === 'DefeatPunch' && Number(call[1]) === 0.5,
+        ),
+      ).toBe(true);
+      game.advance(20); // Retirement waits for processed time, never skips backlog.
+      expect(game.read()?.currentOpponentId).toBe(
+        game.read()?.actors.find((a) => a.color === 'green')?.actorId,
+      );
       expect(
         [...node.querySelectorAll('.nt-number')].some((n) =>
           n.textContent?.startsWith('青 '),
@@ -544,6 +600,12 @@ test.each([false, true])(
       ).toBe(false);
       expect(node.querySelector('.nt-particle:not([hidden])')).toBeNull();
       expect(game.lastError()).toBeNull();
+      const retired = f.lifecycle.indexOf('dispose:blue:detached');
+      expect(
+        retired,
+        'the retiring rig must be detached and disposed',
+      ).toBeGreaterThan(-1);
+      expect(retired).toBeLessThan(f.lifecycle.indexOf('create:green'));
     } finally {
       game.dispose();
       rect.mockRestore();
@@ -592,7 +654,7 @@ test('missing selected catalog data cannot unlock readiness and retry creates a 
     game.dispose();
   }
   expect(f.dispose).toHaveBeenCalledTimes(2);
-  expect(f.rigDispose).toHaveBeenCalledTimes(5);
+  expect(f.rigDispose).toHaveBeenCalledTimes(2);
 });
 test.each(['release', 'pause'] as const)(
   'real held input cannot resume after %s during an attack',
@@ -771,12 +833,12 @@ test.each([
       incomplete = false;
       await game.restart();
       expect(game.read()?.phase).toBe('ready');
-      expect(f.rigs.size).toBe(5);
+      expect([...f.rigs.keys()]).toEqual(['white', 'blue']);
     } finally {
       game.dispose();
     }
     expect(f.dispose).toHaveBeenCalledTimes(2);
-    expect(f.rigDispose).toHaveBeenCalledTimes(5);
+    expect(f.rigDispose).toHaveBeenCalledTimes(2);
   },
 );
 test.each([
@@ -925,3 +987,80 @@ test.each([
     expect(f.dispose).toHaveBeenCalledOnce();
   },
 );
+
+test('actual host UI counts down alongside loading, then noncombat movement and settings resume without a second start', async () => {
+  const f = fixture(),
+    node = root(),
+    r = renderer();
+  let release: (() => void) | undefined;
+  const game = createIntegratedGame(node, {
+    sessionId: 'actual-startup',
+    seed: 1,
+    viewport,
+    stepMs: 20,
+    createRenderer: () => r,
+    configuration: {
+      ...f.config,
+      loadAssets: async (context, signal) => {
+        const pack = await f.config.loadAssets(context, signal);
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return pack;
+      },
+    },
+  });
+  const click = (label: string) => {
+    const button = [...node.querySelectorAll('button')].find(
+      (b) => b.textContent === label,
+    );
+    if (!button) throw new Error(`Missing actual UI button ${label}`);
+    button.click();
+  };
+  try {
+    click('はじめる');
+    expect(node.querySelector('.nt-startup-status')?.textContent).toContain(
+      '開始まで 3',
+    );
+    game.advance(1000);
+    expect(node.querySelector('.nt-startup-status')?.textContent).toContain(
+      '開始まで 2',
+    );
+    expect([...f.rigs.keys()]).toEqual([]);
+    await expect.poll(() => release).toBeTypeOf('function');
+    game.advance(2000);
+    expect(node.querySelector('.nt-startup-status')?.textContent).toContain(
+      '読み込み完了を待っています',
+    );
+    expect(game.read()?.phase).toBe('loading');
+    release?.();
+    await expect.poll(() => game.read()?.phase).toBe('running');
+    expect(game.read()?.clocks.gameTimeMs).toBe(0);
+    expect([...f.rigs.keys()]).toEqual(['white', 'blue']);
+    expect(node.querySelector('.nt-startup-status')).toBeNull();
+    const white = f.rigs.get('white'),
+      swipe = node.querySelector('.nt-swipe');
+    if (!white || !swipe) throw new Error('Missing actual player controls');
+    const before = white.getWorldPosition(new Vector3()),
+      draws = r.render.mock.calls.length;
+    pointer(swipe, 'pointerdown', 77, 100, 200);
+    pointer(document, 'pointermove', 77, 164, 200);
+    game.advance(100);
+    pointer(document, 'pointerup', 77, 164, 200);
+    expect(
+      white.getWorldPosition(new Vector3()).distanceTo(before),
+    ).toBeGreaterThan(0.1);
+    expect(r.render.mock.calls.length).toBeGreaterThan(draws);
+    click('設定');
+    const paused = game.read()?.clocks.gameTimeMs;
+    game.advance(1000);
+    expect(game.read()?.clocks.gameTimeMs).toBe(paused);
+    click('設定を閉じる');
+    expect(game.hostState().startup).toBeNull();
+    expect(game.read()?.phase).toBe('running');
+    game.advance(20);
+    expect(game.read()?.clocks.gameTimeMs).toBe(Number(paused) + 20);
+  } finally {
+    game.dispose();
+  }
+});

@@ -137,7 +137,7 @@ test('waiting actors cannot attack; black has700, all19 kicks and no punches', (
   ).toBeNull();
   for (let n = 0; n < 3; n++) {
     for (let i = 0; i < 5; i++) hitOpponent(core);
-    advanceCore(core, 1500);
+    advanceCore(core, 1625);
   }
   expect(
     requireValue(core.read().actors.find((a) => a.color === 'black')).hp,
@@ -260,7 +260,7 @@ test('all4 final mutual defeat keeps4 kills but never clear-time or resurrection
   core.handle({ type: 'StartRequested', runId: run });
   for (let n = 0; n < 3; n++) {
     for (let i = 0; i < 5; i++) hitOpponent(core);
-    advanceCore(core, 1500);
+    advanceCore(core, 1625);
   }
   for (let n = 0; n < 7; n++) {
     advanceCore(core, 500);
@@ -409,7 +409,7 @@ test.each(['white', 'blue', 'green', 'yellow', 'black'] as const)(
         ).color !== color
       ) {
         for (let i = 0; i < 5; i++) hitOpponent(core);
-        advanceCore(core, 1500);
+        advanceCore(core, 1625);
       }
     }
     const actor = () =>

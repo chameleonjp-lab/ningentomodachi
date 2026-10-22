@@ -384,6 +384,7 @@ test('A-owned presentation deadline survives paused/backgrounded time and low-fp
   const initial = game.read();
   if (!initial || !scripted) throw new Error('Missing run');
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   scripted.script({
     phase: 'terminal',
     result,

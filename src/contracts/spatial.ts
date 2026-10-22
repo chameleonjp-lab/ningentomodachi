@@ -13,6 +13,8 @@ import type {
 import type { Vector3 } from './motion';
 export interface SpatialActor {
   readonly actorId: ActorId;
+  /** C-owned physical anchor. B posture and defeated-only presentation offsets do not
+   * redefine it or turn C's fixed physical hurt proxy into skeletal mesh collision. */
   readonly position: Vector3;
   readonly facing: Vector3;
   readonly velocity: Vector3;

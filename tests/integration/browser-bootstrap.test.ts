@@ -1,16 +1,19 @@
 import { expect, test } from 'vitest';
 import type { GameController } from '../../src/app/createGame';
+
 function readRunningFixture(game: GameController) {
   const snapshot = game.read();
   if (!snapshot) throw new Error('Expected an active fixture run');
   return snapshot;
 }
-import { createGame } from '../../src/app/createGame';
+
 import type {
   BrowserHost,
   BrowserLifecycleEvent,
 } from '../../src/app/bootstrap';
+import { createGame } from '../../src/app/createGame';
 import { createFixturePorts } from '../core/fixtures/ports';
+
 function hostFixture() {
   let callback: ((nowMs: number) => void) | undefined;
   let lifecycle: ((event: BrowserLifecycleEvent) => void) | undefined;
@@ -257,8 +260,68 @@ test('bootstrap supports a title-first host and one shared viewport source', asy
   await expect.poll(() => game.hostState().phase).toBe('ready');
   game.request({ type: 'StartRequested', requestId: 'title-start' });
   host.frame(1000);
-  host.frame(1020);
+  host.frame(4000);
+  expect(game.read()?.phase).toBe('running');
+  host.frame(4020);
+  host.frame(4040);
   expect(game.read()?.clocks.tick).toBe(1);
   binding.dispose();
   expect(resize).toBeUndefined();
+});
+
+test('startup countdown is pumped before loading completes and hidden retry remains frozen', async () => {
+  const fixtures = createFixturePorts();
+  const host = hostFixture();
+  let release: (() => void) | undefined;
+  const catalog = fixtures.factories.catalog;
+  const game = createGame(
+    {
+      ...fixtures.factories,
+      catalog: (context) => ({
+        ...catalog(context),
+        prepare: () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      }),
+    },
+    { sessionId: 'startup-browser', seed: 1 },
+  );
+  const binding = (await bootstrapFactory())(game, host.host, () => {}, {
+    autoPrepare: false,
+  });
+  game.request({ type: 'PrepareRequested', requestId: 'prepare-countdown' });
+  host.frame(0);
+  host.frame(1000);
+  expect(game.hostState().startup?.countdown).toBe(2);
+  host.event('hidden');
+  game.request({ type: 'RetryRequested', requestId: 'retry-hidden' });
+  host.frame(50000);
+  expect(game.hostState().startup?.countdown).toBe(3);
+  expect(game.hostState().startup?.pauseReasons).toContain('background');
+  host.event('visible');
+  host.frame(60000);
+  host.frame(61000);
+  expect(game.hostState().startup?.countdown).toBe(3);
+  const generation = game.hostState().startup?.generation ?? -1;
+  game.request({
+    type: 'StartupResumeRequested',
+    requestId: 'explicit-resume',
+    startupGeneration: generation,
+    reason: 'interruption',
+  });
+  host.frame(62000);
+  host.frame(63000);
+  expect(game.hostState().startup?.countdown).toBe(2);
+  await expect.poll(() => release).toBeTypeOf('function');
+  release?.();
+  await expect
+    .poll(() => game.hostState().startup?.requiredAssetsReady)
+    .toBe(true);
+  host.frame(64000);
+  expect(game.hostState().startup?.countdown).toBe(1);
+  host.frame(65000);
+  expect(game.read()?.phase).toBe('running');
+  expect(game.read()?.clocks.gameTimeMs).toBe(0);
+  binding.dispose();
 });

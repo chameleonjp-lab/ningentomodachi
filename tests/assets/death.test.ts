@@ -17,7 +17,7 @@ test('two distinct nonloop death clips have exactly 0.5 seconds and preserve sou
   const clips = authorDeathClips(node);
   expect(clips.map((c) => c.name)).toEqual(['DefeatPunch', 'DefeatKick']);
   expect(clips.map((c) => c.duration)).toEqual([0.5, 0.5]);
-  expect(clips[0]?.tracks[0]?.values).not.toEqual(clips[1]?.tracks[0]?.values);
+  expect(clips[0]?.tracks).not.toEqual(clips[1]?.tracks);
   expect(node.toJSON()).toEqual(original);
 });
 test('authoritative death clock completes white in two real seconds and enemy remainder at full speed without resetting', () => {

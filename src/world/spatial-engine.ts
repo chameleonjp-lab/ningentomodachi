@@ -1,6 +1,7 @@
 import {
   type ActorId,
   type CoreOutput,
+  type GameSnapshot,
   durationMs,
   type MotionCatalogPort,
   type MovementBasisSnapshot,
@@ -24,6 +25,20 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
   const vehicles = createVehicleSystem(run, layout);
   const poses = new Map<ActorId, SpatialActor>();
   const attacks = new Map<ActorId, string>();
+  // Identity-only tombstones never retain poses, nodes, clips or actor resources.
+  const retired = new Set<ActorId>();
+  let explicitResidency = false;
+  let latestAuthority:
+    | { revision: number; tick: number; residents: ReadonlySet<ActorId> }
+    | undefined;
+  function assertReplayAllowed(snapshot: GameSnapshot) {
+    if (explicitResidency && snapshot.residentActorIds === undefined)
+      throw new Error('Explicit residency cannot downgrade to legacy');
+    const ids =
+      snapshot.residentActorIds ?? snapshot.actors.map((a) => a.actorId);
+    if (ids.some((id) => retired.has(id)))
+      throw new Error('Retired actor cannot be recreated or visually replayed');
+  }
   const bases = new Map<string, MovementBasisSnapshot>();
   const usedSessions = new Set<string>();
   let revision = 0,
@@ -36,12 +51,50 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
   function sync(output: CoreOutput) {
     alive();
     if (output.snapshot.runId !== run) throw new Error('Stale spatial run');
+    assertReplayAllowed(output.snapshot);
+    const residents = new Set(
+      output.snapshot.residentActorIds ??
+        output.snapshot.actors.map((a) => a.actorId),
+    );
+    if (
+      output.snapshot.residentActorIds &&
+      residents.size !== output.snapshot.residentActorIds.length
+    )
+      throw new Error('Duplicate resident actor');
+    for (const id of residents)
+      if (!output.snapshot.actors.some((a) => a.actorId === id))
+        throw new Error('Unknown resident actor');
+    const priorAuthority = latestAuthority;
+    if (
+      priorAuthority &&
+      (output.snapshot.revision < priorAuthority.revision ||
+        output.snapshot.clocks.tick < priorAuthority.tick ||
+        (output.snapshot.revision === priorAuthority.revision &&
+          output.snapshot.residentActorIds !== undefined &&
+          (residents.size !== priorAuthority.residents.size ||
+            [...residents].some((id) => !priorAuthority.residents.has(id)))))
+    )
+      throw new Error('Stale or conflicting residency authority');
+    // All rejection guards precede retirement. Presentation can advance at the
+    // same game tick; revision, not a second presentation clock, orders authority.
+    explicitResidency ||= output.snapshot.residentActorIds !== undefined;
+    latestAuthority = {
+      revision: output.snapshot.revision,
+      tick: output.snapshot.clocks.tick,
+      residents,
+    };
+    for (const id of poses.keys())
+      if (!residents.has(id)) {
+        poses.delete(id);
+        attacks.delete(id);
+        retired.add(id);
+      }
     if (lastTick < 0) {
       lastTick = output.snapshot.clocks.tick;
       lastTime = output.snapshot.clocks.gameTimeMs;
     }
     for (const state of output.snapshot.actors)
-      if (!poses.has(state.actorId))
+      if (residents.has(state.actorId) && !poses.has(state.actorId))
         poses.set(state.actorId, {
           actorId: state.actorId,
           position: { ...layout.actorSpawns[state.color] },
@@ -80,6 +133,8 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
     };
   }
   return {
+    isRetired: (id: ActorId) => retired.has(id),
+    assertReplayAllowed,
     commit(output: CoreOutput): SpatialSnapshot {
       sync(output);
       vehicles.commit(output, poses);
@@ -123,6 +178,9 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
       poses.clear();
       bases.clear();
       attacks.clear();
+      retired.clear();
+      latestAuthority = undefined;
+      explicitResidency = false;
       usedSessions.clear();
     },
     step(
@@ -161,6 +219,7 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
       const active = state.actors.filter(
         (a) =>
           !a.defeated &&
+          poses.has(a.actorId) &&
           (a.actorId === player?.actorId ||
             a.actorId === state.currentOpponentId),
       );

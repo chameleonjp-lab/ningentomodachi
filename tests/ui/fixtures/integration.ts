@@ -103,7 +103,7 @@ export function pointer(
   target.dispatchEvent(event);
 }
 export function createIntegrationFixture(
-  options: { failFirst?: boolean } = {},
+  options: { failFirst?: boolean; prepareWait?: Promise<void> } = {},
 ) {
   const root = document.createElement('div');
   root.style.position = 'relative';
@@ -170,6 +170,7 @@ export function createIntegrationFixture(
           attempts++;
           if (options.failFirst && attempts === 1)
             throw Error('TEST source unavailable');
+          await options.prepareWait;
         },
         sampleMotion: () => undefined,
         dispose: () => {},

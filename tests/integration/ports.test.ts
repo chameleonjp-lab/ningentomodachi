@@ -297,7 +297,9 @@ test('a fire-and-forget retry exposes its startup error instead of silently swal
     type: 'RetryRequested',
     runId: readRunningFixture(game).runId,
   });
-  expect(game.lastError?.()).toMatchObject({ message: 'retry failed' });
+  await expect
+    .poll(() => game.lastError?.())
+    .toMatchObject({ message: 'retry failed' });
   await expect.poll(() => errors.length).toBe(1);
   game.dispose();
 });

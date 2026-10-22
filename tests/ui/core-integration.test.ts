@@ -18,11 +18,68 @@ async function start(f: ReturnType<typeof make>) {
   expect(f.game.hostState().phase).toBe('title');
   f.click('はじめる');
   expect(f.game.hostState().phase).toBe('loading');
-  await f.game.start();
-  await expect.poll(() => f.game.hostState().phase).toBe('ready');
-  f.click('プレイ開始');
+  await finishStartup(f);
+}
+async function finishStartup(f: ReturnType<typeof make>) {
+  await expect
+    .poll(() => f.game.hostState().startup?.requiredAssetsReady)
+    .toBe(true);
+  const acceptedBefore = f.events.filter(
+    (event) => event.type === 'AttackAccepted',
+  ).length;
+  expect(f.game.hostState().startup?.countdown).toBe(3);
+  expect(f.game.read()?.phase).not.toBe('running');
+  f.tap('punch');
+  f.game.advance(1000);
+  expect(f.game.hostState().startup?.countdown).toBe(2);
+  f.game.advance(1000);
+  expect(f.game.hostState().startup?.countdown).toBe(1);
+  f.game.advance(999);
+  expect(f.game.read()?.phase).not.toBe('running');
+  expect(
+    f.events.filter((event) => event.type === 'AttackAccepted'),
+  ).toHaveLength(acceptedBefore);
+  f.game.advance(1);
+  expect(f.game.hostState().startup).toBeNull();
+  expect(f.game.hostState().phase).toBe('playing');
   expect(f.game.read()?.phase).toBe('running');
+  expect(f.game.read()?.clocks.gameTimeMs).toBe(0);
   f.bars();
+}
+function advanceChunks(f: ReturnType<typeof make>, elapsed: number) {
+  while (elapsed > 0) {
+    const step = Math.min(10, elapsed);
+    f.game.advance(step);
+    elapsed -= step;
+  }
+}
+function finishOpponent(f: ReturnType<typeof make>) {
+  const stage = f.game.read()?.presentation;
+  if (stage?.kind !== 'opponent-defeat') throw Error('missing opponent defeat');
+  advanceChunks(
+    f,
+    stage.endsAt - (f.game.read()?.clocks.presentationTimeMs ?? 0),
+  );
+  expect(f.game.read()?.presentation).toMatchObject({
+    kind: 'opponent-defeat-finish',
+    actorId: stage.actorId,
+    startedAt: stage.startedAt,
+    endsAt: stage.startedAt + 1625,
+  });
+  expect(f.game.read()?.currentOpponentId).toBeNull();
+  expect(
+    f.root.querySelectorAll('.nt-hp')[1]?.getAttribute('aria-valuenow'),
+  ).toBe('0');
+  advanceChunks(f, 124);
+  expect(f.game.read()?.presentation.kind).toBe('opponent-defeat-finish');
+  f.game.advance(1);
+  expect(f.game.read()?.clocks.presentationTimeMs).toBe(stage.startedAt + 1625);
+  expect(f.game.read()?.currentOpponentId).toBeNull();
+  expect(f.root.querySelectorAll('.nt-hp')).toHaveLength(1);
+  // The 10ms simulation lattice retires on the next admitted tick, never early.
+  f.game.advance(5);
+  expect(f.game.read()?.presentation.kind).toBe('none');
+  expect(f.game.read()?.currentOpponentId).not.toBeNull();
 }
 test('actual Core accepts D button input after readiness and emits damage consumed by HUD', async () => {
   const f = make();
@@ -106,12 +163,10 @@ test('held movement and competing action intents follow Core arbitration; pause 
 test('failure retry and title restart preserve shell while stale run controls cannot leak', async () => {
   const f = make({ failFirst: true });
   f.click('はじめる');
-  await expect(f.game.start()).rejects.toThrow('TEST source unavailable');
   await expect.poll(() => f.game.hostState().phase).toBe('error');
   expect(f.root.textContent).toContain('TEST source unavailable');
   f.click('再試行');
-  await expect.poll(() => f.game.hostState().phase).toBe('ready');
-  f.click('プレイ開始');
+  await finishStartup(f);
   const old = f.game.read();
   if (!old) throw Error('missing state');
   pointer(f.control('move'), 'pointerdown', 1);
@@ -175,16 +230,19 @@ test('real damage then defeat healing clears player red history while preserving
   expect(f.game.read()?.actors.find((a) => a.color === 'white')?.hp).toBe(450);
   const stage = f.game.read()?.presentation;
   if (!stage || !('endsAt' in stage)) throw Error('missing deadline');
-  f.game.advance(
+  advanceChunks(
+    f,
     stage.endsAt - (f.game.read()?.clocks.presentationTimeMs ?? 0),
   );
   expect(
     [...f.root.querySelectorAll('.nt-number')].some((node) =>
       node.textContent?.startsWith('青 '),
     ),
-  ).toBe(false);
+  ).toBe(true);
+  expect(f.game.read()?.presentation.kind).toBe('opponent-defeat-finish');
   expect(f.root.querySelector('.nt-particle:not([hidden])')).toBeNull();
-  for (let i = 0; i < 160; i++) f.game.advance(10);
+  advanceChunks(f, 125);
+  f.game.advance(5);
   expect(f.root.querySelectorAll('.nt-hp')).toHaveLength(2);
   expect(f.root.querySelectorAll('.nt-number')[1]?.textContent).toBe(
     '緑 500 / 500',
@@ -301,7 +359,7 @@ test('four real encounters retain black 700 maximum and publish supplied clear c
       f.game.advance(10);
     }
     if (color !== 'black') {
-      for (let i = 0; i < 160; i++) f.game.advance(10);
+      finishOpponent(f);
     }
   }
   const result = f.game.read()?.result;
@@ -337,7 +395,8 @@ test('four real encounters retain black 700 maximum and publish supplied clear c
   expect(result?.score.remainingHp).toBe(500);
   const stage = f.game.read()?.presentation;
   if (!stage || !('endsAt' in stage)) throw Error('missing terminal deadline');
-  f.game.advance(
+  advanceChunks(
+    f,
     stage.endsAt - (f.game.read()?.clocks.presentationTimeMs ?? 0),
   );
   f.game.advance(400);
@@ -415,7 +474,7 @@ test.each(['blue', 'black'] as const)(
           f.tap('punch');
           f.game.advance(10);
         }
-        for (let i = 0; i < 160; i++) f.game.advance(10);
+        finishOpponent(f);
       }
       f.bars();
       f.tap('punch');
@@ -513,3 +572,35 @@ test.each(['blue', 'black'] as const)(
     expect(f.root.querySelector('.nt-particle:not([hidden])')).toBeNull();
   },
 );
+
+test('actual host countdown finishing before required assets cannot start or accept input', async () => {
+  let release: (() => void) | undefined;
+  const prepareWait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = make({ prepareWait });
+  f.click('はじめる');
+  f.game.advance(2999);
+  expect(f.game.hostState().startup).toMatchObject({
+    countdown: 1,
+    requiredAssetsReady: false,
+  });
+  f.tap('punch');
+  f.game.advance(1);
+  expect(f.game.hostState().phase).toBe('loading');
+  expect(f.game.hostState().startup).toMatchObject({
+    countdown: 0,
+    requiredAssetsReady: false,
+  });
+  expect(f.game.read()?.phase).not.toBe('running');
+  expect(f.events.some((e) => e.type === 'AttackAccepted')).toBe(false);
+  expect(f.root.textContent).toContain('読み込み完了を待');
+  release?.();
+  await expect.poll(() => f.game.hostState().phase).toBe('playing');
+  expect(f.game.hostState().startup).toBeNull();
+  expect(f.game.read()?.clocks.gameTimeMs).toBe(0);
+  const run = f.game.read()?.runId;
+  f.game.advance(10);
+  expect(f.game.read()?.runId).toBe(run);
+  expect(f.events.some((e) => e.type === 'AttackAccepted')).toBe(false);
+});

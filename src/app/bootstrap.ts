@@ -1,4 +1,4 @@
-import type { Unsubscribe, ViewportMetrics } from '../contracts';
+import type { PauseReason, Unsubscribe, ViewportMetrics } from '../contracts';
 import type { GameController } from './createGame';
 export type BrowserLifecycleEvent = 'hidden' | 'visible' | 'blur';
 export interface ViewportSource {
@@ -23,6 +23,22 @@ export function bootstrap(
   let previous: number | null = null;
   let hidden = false;
   let previousRun: string | null = null;
+  let previousStartup: number | null = null;
+  let startupRequest = 0;
+  function startupPause(reason: PauseReason, paused: boolean) {
+    const startup = game.hostState().startup;
+    if (!startup) return;
+    game.request({
+      type: paused ? 'StartupPauseRequested' : 'StartupResumeRequested',
+      requestId: `browser-startup:${++startupRequest}`,
+      startupGeneration: startup.generation,
+      reason,
+    });
+  }
+  function pauseHiddenStartup() {
+    startupPause('background', true);
+    startupPause('interruption', true);
+  }
   let previousEpoch = game.timingEpoch();
   let unsubscribeViewport: Unsubscribe = () => {};
   let unsubscribe: Unsubscribe = () => {};
@@ -40,6 +56,14 @@ export function bootstrap(
       const wasHidden = hidden;
       if (event === 'hidden') hidden = true;
       if (event === 'visible') hidden = false;
+      if (game.hostState().startup) {
+        if (event === 'hidden') pauseHiddenStartup();
+        else if (event === 'visible') {
+          if (wasHidden) startupPause('interruption', true);
+          startupPause('background', false);
+        } else startupPause('interruption', true);
+        return;
+      }
       const snapshot = game.read();
       if (!snapshot) return;
       if (event === 'hidden')
@@ -103,6 +127,12 @@ export function bootstrap(
       return;
     }
     // Keep a non-simulating pump during errors so a successful game.restart can recover.
+    const startup = game.hostState().startup;
+    if ((startup?.generation ?? null) !== previousStartup) {
+      previousStartup = startup?.generation ?? null;
+      previous = null;
+      if (startup && hidden) pauseHiddenStartup();
+    }
     const snapshot = game.read();
     const epoch = game.timingEpoch();
     if (epoch !== previousEpoch) {
@@ -110,15 +140,15 @@ export function bootstrap(
       previousEpoch = epoch;
     }
     if (snapshot?.runId !== previousRun) {
-      previous = null;
+      if (!startup) previous = null;
       previousRun = snapshot?.runId ?? null;
-      if (hidden && snapshot)
+      if (hidden && snapshot && !startup)
         game.dispatch({ type: 'Backgrounded', runId: snapshot.runId });
     }
     if (
       !hidden &&
-      snapshot &&
-      !['error', 'loading', 'stopped'].includes(snapshot.phase)
+      (startup ||
+        (snapshot && !['error', 'loading', 'stopped'].includes(snapshot.phase)))
     ) {
       if (previous !== null) {
         try {
@@ -149,7 +179,8 @@ export function bootstrap(
   )
     .then(() => {
       const snapshot = game.read();
-      if (!stopped && hidden && snapshot)
+      if (!stopped && hidden && game.hostState().startup) pauseHiddenStartup();
+      else if (!stopped && hidden && snapshot)
         game.dispatch({ type: 'Backgrounded', runId: snapshot.runId });
     })
     .catch((error: unknown) => {

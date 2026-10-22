@@ -27,6 +27,9 @@ test('sequential four enemies, authoritative IDs, recovery cap and terminal scor
       core.present(durationMs(1499));
       expect(core.read().currentOpponentId).toBeNull();
       advanceCore(core, 1);
+      expect(core.read().presentation.kind).toBe('opponent-defeat-finish');
+      expect(core.read().currentOpponentId).toBeNull();
+      advanceCore(core, 125);
     }
   }
   expect(colors).toEqual(['blue', 'green', 'yellow', 'black']);

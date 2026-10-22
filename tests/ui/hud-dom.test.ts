@@ -11,6 +11,7 @@ import {
   actor,
 } from './fixtures/core';
 import {
+  actorId,
   batchId,
   contactId,
   domainEventId,
@@ -230,3 +231,98 @@ test('larger confirmed loss increases particle density within the fixed pool, ne
   }
   expect(counts[1]).toBeGreaterThan(counts[0] ?? 0);
 });
+
+test.each([false, true])(
+  'finish keeps victim DOM identity without restarting absorption, skipped finish=%s',
+  (skipFinish) => {
+    const s = setup();
+    const event = { ...loss(), beforeHp: 50, afterHp: 0, actualHpLost: 50 };
+    const initial = snapshot({
+      actors: [actor(), { ...actor(opponent, 0, 700), defeated: true }],
+      currentOpponentId: null,
+      presentation: {
+        kind: 'opponent-defeat',
+        actorId: opponent,
+        startedAt: presentationTimeMs(0),
+        endsAt: presentationTimeMs(1500),
+      },
+    });
+    s.ui.render(frame({ snapshot: initial, events: [event] }), [
+      {
+        runId: run,
+        eventId: event.eventId,
+        actorId: opponent,
+        viewportRevision: viewport.revision,
+        visibility: 'visible',
+        cssPoint: { x: 150, y: 400 },
+      },
+    ]);
+    const victim = s.root.querySelector('[aria-label="敵 HP"]');
+    expect(victim?.getAttribute('aria-valuenow')).toBe('0');
+    expect(victim?.getAttribute('aria-valuemax')).toBe('700');
+    expect(victim?.querySelector('.nt-hp-red:not([hidden])')).not.toBeNull();
+    for (const now of skipFinish ? [] : [1500, 1624]) {
+      s.ui.render(
+        frame({
+          snapshot: {
+            ...initial,
+            revision: now,
+            clocks: {
+              ...initial.clocks,
+              presentationTimeMs: presentationTimeMs(now),
+            },
+            presentation: {
+              kind: 'opponent-defeat-finish',
+              actorId: opponent,
+              startedAt: presentationTimeMs(0),
+              endsAt: presentationTimeMs(1625),
+            },
+          },
+        }),
+        [],
+      );
+      expect(s.root.querySelector('[aria-label="敵 HP"]')).toBe(victim);
+      expect(victim?.querySelector('.nt-hp-red:not([hidden])')).toBeNull();
+      expect(s.root.querySelector('.nt-particle:not([hidden])')).toBeNull();
+    }
+    s.ui.render(
+      frame({
+        snapshot: {
+          ...initial,
+          revision: 1625,
+          clocks: {
+            ...initial.clocks,
+            presentationTimeMs: presentationTimeMs(1625),
+          },
+          presentation: {
+            kind: 'opponent-defeat-finish',
+            actorId: opponent,
+            startedAt: presentationTimeMs(0),
+            endsAt: presentationTimeMs(1625),
+          },
+        },
+      }),
+      [],
+    );
+    expect(s.root.querySelector('[aria-label="敵 HP"]')).toBeNull();
+    const next = actorId('blue');
+    s.ui.render(
+      frame({
+        snapshot: {
+          ...initial,
+          revision: 1626,
+          currentOpponentId: next,
+          actors: [actor(), { ...actor(next, 250, 250), color: 'blue' }],
+        },
+      }),
+      [],
+    );
+    expect(s.root.querySelector('[aria-label="敵 HP"]')).not.toBe(victim);
+    expect(
+      s.root
+        .querySelector('[aria-label="敵 HP"]')
+        ?.getAttribute('aria-valuenow'),
+    ).toBe('250');
+    s.finish();
+  },
+);

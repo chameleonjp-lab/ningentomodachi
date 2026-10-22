@@ -35,6 +35,7 @@ export async function publicStack(
     },
   },
   rootDistance = 0.4,
+  deferredMountColor?: ActorColor,
 ) {
   const assets: MotionAsset[] = [];
   for (const category of ['punch', 'kick'] as const)
@@ -151,8 +152,22 @@ export async function publicStack(
       setSize() {},
     }),
   });
-  const animation = createActorAnimator(
-    { ...context, renderHost: scene.renderHost },
+  // Test-only unmounted resident: B still evaluates its source-fixture pose,
+  // while isolation tests explicitly exercise the real C host mount lifecycle.
+  const deferredActorId = core
+    .read()
+    .actors.find((a) => a.color === deferredMountColor)?.actorId;
+  const animation = createActorAnimator<Group>(
+    {
+      ...context,
+      renderHost: {
+        ...scene.renderHost,
+        mountActor(request) {
+          if (request.actorId === deferredActorId) return () => {};
+          return scene.renderHost.mountActor(request);
+        },
+      },
+    },
     {
       create(color) {
         const node = new Group();

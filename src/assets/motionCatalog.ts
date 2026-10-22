@@ -1,3 +1,4 @@
+import { upperBound, intervalKeyTimes } from './keyIndex';
 import {
   durationMs,
   MOTION_SPACE,
@@ -44,8 +45,9 @@ function between<T extends { readonly atMs: DurationMs }>(
   keys: readonly T[],
   time: number,
 ): [T, T, number] {
-  const a = [...keys].reverse().find((key) => key.atMs <= time) ?? keys[0];
-  const b = keys.find((key) => key.atMs > time) ?? a;
+  const index = upperBound(keys, time);
+  const a = keys[Math.max(0, index - 1)];
+  const b = keys[index] ?? a;
   if (!a || !b) throw new Error('Missing curve');
   return [a, b, a === b ? 0 : (time - a.atMs) / (b.atMs - a.atMs)];
 }
@@ -146,24 +148,15 @@ function sample(
     hitVolumeSegments: [],
   };
   if (fromMs === toMs) return freeze(result);
-  const boundaries = (from: number, to: number, keys: readonly number[]) =>
-    [...new Set([from, ...keys.filter((t) => t > from && t < to), to])].sort(
-      (a, b) => a - b,
-    );
   const roots: MotionRootSegment[] = [];
-  const times = boundaries(fromMs, toMs, [
-    ...d.rootCurve.map((k) => k.atMs),
-    ...asset.ownership.map((k) => k.atMs),
-  ]);
+  const times = intervalKeyTimes(fromMs, toMs, d.rootCurve, asset.ownership);
   for (let i = 1; i < times.length; i++) {
     const start = times[i - 1],
       end = times[i];
     if (start === undefined || end === undefined) continue;
     const from = rootAt(d.rootCurve, durationMs(start)),
       to = rootAt(d.rootCurve, durationMs(end));
-    const owner = [...asset.ownership]
-      .reverse()
-      .find((key) => key.atMs <= start);
+    const owner = asset.ownership[upperBound(asset.ownership, start) - 1];
     if (!owner) throw new Error('Missing owner');
     roots.push({
       from,
@@ -187,11 +180,7 @@ function sample(
       (shape) => shape.shapeId === impact.shapeId,
     );
     if (!curve) throw new Error('Missing shape');
-    const times = boundaries(
-      start,
-      end,
-      curve.keys.map((key) => key.atMs),
-    );
+    const times = intervalKeyTimes(start, end, curve.keys);
     for (let i = 1; i < times.length; i++) {
       const from = times[i - 1],
         to = times[i];

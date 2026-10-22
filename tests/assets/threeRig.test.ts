@@ -1,14 +1,15 @@
 import { readFileSync } from 'node:fs';
-import { expect, test, vi } from 'vitest';
 import {
-  Vector3,
-  SkinnedMesh,
-  MeshStandardMaterial,
   AnimationClip,
+  MeshStandardMaterial,
+  SkinnedMesh,
+  Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { clipId } from '../../src/contracts';
+import { expect, test, vi } from 'vitest';
 import { createThreeAssetPack } from '../../src/assets/threeAssetPack';
+import { clipId } from '../../src/contracts';
+
 const sources = ['movement', 'jump', 'punch', 'kick'].map(
   (category) =>
     new Uint8Array(
@@ -66,7 +67,7 @@ test('real four category GLBs yield one actor skeleton, independent clones/mater
   a.dispose();
   a.dispose();
   b.dispose();
-});
+}, 30000); // Cold source loading includes exact hull certification.
 
 test('all verified source palettes preserve red inlay base color, emission strength and isolated death state', async () => {
   const { SOURCE_PALETTES } = await import('../../src/assets/sourcePalettes');
@@ -162,7 +163,7 @@ test('all 42 actual source clips seek start/mid/end with finite bone matrices; t
     candidate.dispose();
   }
   derived.dispose();
-});
+}, 30000); // Offline full-mesh death authoring is intentionally not a frame-time operation.
 
 test('duplicate derived clips reject before any source scenes are allocated', async () => {
   const parse = vi.spyOn(GLTFLoader.prototype, 'parseAsync');

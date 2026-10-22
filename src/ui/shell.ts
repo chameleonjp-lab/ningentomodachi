@@ -66,7 +66,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   let counter = 0;
   let settingsOpen = false;
   let key = '';
+  let renderEpoch = 0;
   let layoutUsable = true;
+  let refreshSettingsPreview: (() => void) | null = null;
   const initial = readSettings(storage);
   let settings = initial.settings;
   let settingsWarning = initial.warning;
@@ -88,7 +90,21 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   const pause = (
     type: 'PauseRequested' | 'ResumeRequested',
     reason: PauseReason,
+    startupGeneration?: number,
   ) => {
+    if (startupGeneration !== undefined) {
+      if (state?.startup?.generation !== startupGeneration) return;
+      request({
+        type:
+          type === 'PauseRequested'
+            ? 'StartupPauseRequested'
+            : 'StartupResumeRequested',
+        startupGeneration,
+        reason,
+      });
+      return;
+    }
+    if (state?.startup) return;
     if (state?.game)
       request({
         type: 'CommandRequested',
@@ -118,6 +134,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     }
     controlsLayer.hidden =
       state?.phase !== 'playing' ||
+      Boolean(state?.startup) ||
       settingsOpen ||
       Boolean(state.game?.pauseReasons.length) ||
       !layoutUsable;
@@ -132,7 +149,11 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       : '変更はこのプレイに適用しましたが、端末内に保存できません。';
     layout();
   };
-  const renderSettings = (panel: HTMLElement) => {
+  const renderSettings = (
+    panel: HTMLElement,
+    isCurrent: () => boolean,
+    startupGeneration?: number,
+  ) => {
     panel.append(element(document, 'h2', '', '操作設定'));
     if (state?.game) {
       panel.append(
@@ -149,6 +170,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       ] as const)
         panel.append(
           button(document, label, () => {
+            if (!isCurrent()) return;
             if (state?.game)
               request({
                 type: 'CommandRequested',
@@ -190,6 +212,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         preview.append(dot);
       }
     };
+    refreshSettingsPreview = () => {
+      if (isCurrent()) updatePreview();
+    };
     updatePreview();
     for (const name of buttonNames) {
       const field = element(document, 'fieldset');
@@ -209,7 +234,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         input.value = String(settings.buttons[name][property]);
         input.setAttribute('aria-label', `${actionLabels[name]} ${label}`);
         input.addEventListener('input', () => {
-          if (disposed) return;
+          if (!isCurrent()) return;
           apply({
             ...settings,
             buttons: {
@@ -242,15 +267,20 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     }
     panel.append(
       button(document, '初期配置に戻す', () => {
-        if (disposed) return;
+        if (!isCurrent()) return;
         apply(defaultSettings);
         key = '';
         render();
       }),
       button(document, '設定を閉じる', () => {
-        if (disposed) return;
+        if (!isCurrent()) return;
+        if (
+          startupGeneration !== undefined &&
+          state?.startup?.generation !== startupGeneration
+        )
+          return;
         settingsOpen = false;
-        pause('ResumeRequested', 'settings');
+        pause('ResumeRequested', 'settings', startupGeneration);
         key = '';
         render();
       }),
@@ -260,18 +290,34 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     if (disposed || !state) return;
     layout();
     const nextKey = JSON.stringify([
-      state.phase,
+      settingsOpen && state.startup ? 'startup-settings' : state.phase,
       state.error,
+      state.runId,
+      state.game?.runId,
       state.game?.pauseReasons,
       state.game?.quality,
       state.game?.result,
+      settingsOpen && state.startup
+        ? { generation: state.startup.generation }
+        : state.startup,
       settingsOpen,
     ]);
     if (nextKey === key) return;
     key = nextKey;
+    const epoch = ++renderEpoch;
+    const generation = state.startup?.generation;
+    const isCurrent = () =>
+      !disposed &&
+      epoch === renderEpoch &&
+      generation === state?.startup?.generation;
+    refreshSettingsPreview = null;
     chrome.replaceChildren();
     tools.replaceChildren();
-    const playing = state.phase === 'playing';
+    const startup = !['error', 'results', 'disposed'].includes(state.phase)
+      ? state.startup
+      : null;
+    const startupGeneration = startup?.generation;
+    const playing = state.phase === 'playing' && !startup;
     controlsLayer.hidden =
       !playing ||
       settingsOpen ||
@@ -283,17 +329,24 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     }
     wrapper.hidden = false;
     const openSettings = () => {
-      if (disposed) return;
+      if (!isCurrent()) return;
+      if (
+        startupGeneration !== undefined &&
+        state?.startup?.generation !== startupGeneration
+      )
+        return;
       settingsOpen = true;
-      pause('PauseRequested', 'settings');
+      pause('PauseRequested', 'settings', startupGeneration);
       key = '';
       render();
     };
-    if (playing && !settingsOpen) {
+    if ((playing || startup) && !settingsOpen) {
       tools.append(button(document, '設定', openSettings));
-      if (!state.game?.pauseReasons.length)
+      if (!(startup?.pauseReasons ?? state.game?.pauseReasons)?.length)
         tools.append(
-          button(document, '一時停止', () => pause('PauseRequested', 'manual')),
+          button(document, '一時停止', () =>
+            pause('PauseRequested', 'manual', startupGeneration),
+          ),
         );
     }
     if (playing && !settingsOpen && !state.game?.pauseReasons.length) return;
@@ -303,11 +356,59 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       settingsOpen ? '操作設定' : 'ゲームメニュー',
     );
     if (settingsOpen) {
-      renderSettings(panel);
+      renderSettings(panel, isCurrent, startupGeneration);
       chrome.append(panel);
       return;
     }
     panel.append(element(document, 'h1', '', 'ニンゲントモダチ'));
+    if (startup) {
+      const countdown =
+        startup.countdown > 0
+          ? `開始まで ${startup.countdown}`
+          : startup.requiredAssetsReady
+            ? '開始を準備しています…'
+            : '読み込み完了を待っています…';
+      const loading = startup.requiredAssetsReady
+        ? '必要な素材の準備ができました。'
+        : '必要な素材を読込中…';
+      const status = element(
+        document,
+        'p',
+        'nt-startup-status',
+        `${countdown} ${loading}`,
+      );
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      status.setAttribute('aria-atomic', 'true');
+      panel.append(status);
+      if (startup.pauseReasons.length)
+        panel.append(element(document, 'h2', '', '開始前の一時停止中'));
+      const labels = {
+        settings: '設定を編集中',
+        background: '画面に戻ると再開を確認できます',
+        manual: '手動で一時停止',
+        interruption: '操作または描画が中断されました',
+      };
+      for (const reason of startup.pauseReasons) {
+        panel.append(element(document, 'p', '', labels[reason]));
+        if (reason === 'manual' || reason === 'interruption')
+          panel.append(
+            button(
+              document,
+              reason === 'manual' ? '再開' : '中断から再開',
+              () => pause('ResumeRequested', reason, startupGeneration),
+            ),
+          );
+      }
+      panel.append(
+        button(document, '読込を中止', () => {
+          if (state?.startup?.generation === startupGeneration)
+            request({ type: 'CancelLoadingRequested' });
+        }),
+      );
+      chrome.append(panel);
+      return;
+    }
     if (state.phase === 'title') {
       panel.append(
         element(document, 'p', '', '人間の友達として、街の暴動を止めよう。'),
@@ -391,7 +492,10 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     if (attached) throw Error('Interface host already attached');
     attached = true;
     viewport = reader;
-    unsubscribe = reader.subscribe(() => layout());
+    unsubscribe = reader.subscribe(() => {
+      layout();
+      refreshSettingsPreview?.();
+    });
     layout();
     return {
       subscribe(listener) {
@@ -400,7 +504,14 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       },
       render(next) {
         if (disposed) return;
-        if (next.phase !== 'playing' && next.phase !== 'title')
+        if (
+          (next.phase !== 'playing' &&
+            next.phase !== 'title' &&
+            !next.startup) ||
+          next.phase === 'error' ||
+          next.phase === 'disposed' ||
+          state?.startup?.generation !== next.startup?.generation
+        )
           settingsOpen = false;
         state = next;
         render();
@@ -408,6 +519,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       dispose() {
         if (disposed) return;
         disposed = true;
+        refreshSettingsPreview = null;
         unsubscribe();
         listeners.clear();
         wrapper.remove();

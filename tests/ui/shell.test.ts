@@ -190,3 +190,85 @@ test('authoritative quality change refreshes settings without changing pause rea
   s.host.dispose();
   s.root.remove();
 });
+test('open settings preview follows viewport changes without replacing focused controls or saving clamped values', () => {
+  const root = document.createElement('div');
+  document.body.append(root);
+  let current = viewport;
+  let onViewport: (value: typeof viewport) => void = () => {};
+  const writes: string[] = [];
+  const ui = createInterface(root, {
+    storage: {
+      getItem: () => null,
+      setItem: (_key, value) => {
+        writes.push(value);
+      },
+    },
+  });
+  const host = ui.host({
+    read: () => current,
+    subscribe: (listener) => {
+      onViewport = listener;
+      return () => {};
+    },
+  });
+  host.render(state('title'));
+  [...root.querySelectorAll('button')]
+    .find((button) => button.textContent === '設定')
+    ?.click();
+  const panel = root.querySelector('.nt-panel');
+  const preview = root.querySelector<HTMLElement>('.nt-preview');
+  const slider = root.querySelector<HTMLInputElement>(
+    '[aria-label="パンチ 不透明度"]',
+  );
+  if (!preview || !slider) throw Error('Expected settings preview and slider');
+  slider.value = '0.7';
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+  slider.focus();
+  const saved = writes.at(-1);
+  const count = writes.length;
+  expect(count).toBe(1);
+  expect(saved).toBeDefined();
+  for (const [widthCssPx, heightCssPx] of [
+    [844, 390],
+    [320, 568],
+    [390, 844],
+  ] as const) {
+    current = {
+      ...viewport,
+      widthCssPx,
+      heightCssPx,
+      revision: current.revision + 1,
+    };
+    onViewport(current);
+    expect(preview.style.aspectRatio).toBe(
+      `${current.widthCssPx} / ${current.heightCssPx}`,
+    );
+    const dots = [...preview.querySelectorAll('span')];
+    expect(dots).toHaveLength(3);
+    const controls = [...root.querySelectorAll<HTMLElement>('.nt-control')];
+    dots.forEach((dot, index) => {
+      const control = controls[index];
+      if (!control) throw Error('Expected live control');
+      expect(parseFloat(dot.style.left)).toBeCloseTo(
+        (100 * parseFloat(control.style.left)) / current.widthCssPx,
+      );
+      expect(parseFloat(dot.style.top)).toBeCloseTo(
+        (100 * parseFloat(control.style.top)) / current.heightCssPx,
+      );
+      expect(parseFloat(dot.style.width)).toBeCloseTo(
+        (100 * parseFloat(control.style.width)) / current.widthCssPx,
+      );
+      expect(parseFloat(dot.style.height)).toBeCloseTo(
+        (100 * parseFloat(control.style.height)) / current.heightCssPx,
+      );
+      expect(dot.style.opacity).toBe(control.style.opacity);
+    });
+    expect(root.querySelector('.nt-panel')).toBe(panel);
+    expect(document.activeElement).toBe(slider);
+    expect(slider.value).toBe('0.7');
+    expect(writes).toHaveLength(count);
+    expect(writes.at(-1)).toBe(saved);
+  }
+  host.dispose();
+  root.remove();
+});
