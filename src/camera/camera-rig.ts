@@ -13,7 +13,9 @@ import {
   v,
 } from '../world/math';
 import type { StreetLayout } from '../world/street-layout';
-import { type Box, sweepBox } from '../world/swept-shapes';
+import type { Box } from '../world/swept-shapes';
+import { cameraSphereBlocked } from './sphere-box';
+import { refineVerifiedRange } from './refine-fit';
 export interface CameraFrame {
   readonly position: Vector3;
   readonly target: Vector3;
@@ -36,6 +38,10 @@ export const CAMERA_FAR = 250;
 const MAX_DISTANCE = 180;
 const MIN_HORIZONTAL = 0.05;
 
+function eyeIsClear(focus: Vector3, eye: Vector3, boxes: readonly Box[]) {
+  return !boxes.some((box) => cameraSphereBlocked(focus, eye, box));
+}
+
 /** Search only the intended side, at a fixed bounded framing distance. Pulling
  * horizontally inward produces an overhead fallback without an unbounded roof
  * lift. No eye-coordinate clamp may cross the focus and reverse the view.
@@ -50,22 +56,16 @@ function unobstructedEye(
 ): { eye: Vector3; constrained: boolean } {
   const eyeAt = (h: number) =>
     add(sub(focus, mul(depth, h)), v(0, Math.sqrt(distance ** 2 - h ** 2), 0));
-  const clear = (eye: Vector3) =>
-    !boxes.some((box) =>
-      sweepBox(
-        { kind: 'sphere', center: focus, radiusM: 0.2 },
-        { kind: 'sphere', center: eye, radiusM: 0.2 },
-        box,
-      ),
-    );
+  const clear = (eye: Vector3) => eyeIsClear(focus, eye, boxes);
   let h = horizontal;
   let blocked = horizontal;
   while (true) {
     const eye = eyeAt(h);
     if (clear(eye)) {
       // Refine a clear/blocked bracket, never accept an unchecked endpoint.
+      // The 1cm bracket is search precision, never collision clearance.
       // This avoids a repeated halving sawtooth as the focus moves along a wall.
-      for (let i = 0; i < 16 && blocked - h > 1e-5; i++) {
+      for (let i = 0; i < 16 && blocked - h > 0.01; i++) {
         const mid = (h + blocked) / 2;
         if (clear(eyeAt(mid))) h = mid;
         else blocked = mid;
@@ -99,6 +99,59 @@ function horizontalBudget(
   }
   return Math.max(MIN_HORIZONTAL, h);
 }
+/** Exact view-axis inequalities, not an enclosing sphere that charges vertical
+ * focus lag against the narrower horizontal frustum. Every accepted eye is still
+ * checked after the obstruction solver changes its elevation. */
+function cornerConstraints(
+  eye: Vector3,
+  focus: Vector3,
+  points: readonly Vector3[],
+  aspect: number,
+  usableX: number,
+  usableY: number,
+) {
+  const forward = unit(sub(focus, eye)),
+    right = unit(v(-forward.z, 0, forward.x));
+  const up = v(
+    right.y * forward.z - right.z * forward.y,
+    right.z * forward.x - right.x * forward.z,
+    right.x * forward.y - right.y * forward.x,
+  );
+  const tx = Math.tan((25 * Math.PI) / 180) * aspect * usableX,
+    ty = Math.tan((25 * Math.PI) / 180) * usableY;
+  const distance = length(sub(eye, focus));
+  let required = 7,
+    contained = true;
+  for (const point of points) {
+    const delta = sub(point, focus),
+      depth = dot(delta, forward),
+      z = distance + depth;
+    const x = Math.abs(dot(delta, right)),
+      y = Math.abs(dot(delta, up));
+    required = Math.max(
+      required,
+      x / tx - depth,
+      y / ty - depth,
+      CAMERA_NEAR - depth,
+    );
+    if (
+      z < CAMERA_NEAR ||
+      z > CAMERA_FAR ||
+      x > z * tx + 1e-10 ||
+      y > z * ty + 1e-10
+    )
+      contained = false;
+  }
+  return { required, contained };
+}
+function bodyCorners(actor: SpatialActor): Vector3[] {
+  const result: Vector3[] = [];
+  for (const x of [-0.35, 0.35])
+    for (const y of [0, 1.85])
+      for (const z of [-0.35, 0.35])
+        result.push(add(actor.position, v(x, y, z)));
+  return result;
+}
 export function createCameraRig(layout: StreetLayout) {
   let current: CameraFrame | undefined,
     duelAxis = v(0, 0, 1);
@@ -111,6 +164,7 @@ export function createCameraRig(layout: StreetLayout) {
       b: SpatialActor | undefined,
       viewport: ViewportSnapshot,
       elapsedMs: number,
+      framingPoints: readonly Vector3[] = [],
     ): CameraFrame {
       if (!Number.isFinite(elapsedMs) || elapsedMs < 0)
         throw new RangeError('Invalid presentation elapsed');
@@ -144,7 +198,24 @@ export function createCameraRig(layout: StreetLayout) {
           (viewport.safeAreaCssPx.left + viewport.safeAreaCssPx.right + 40) /
             Math.max(1, viewport.widthCssPx),
       );
-      const radius = b ? length(sub(a.position, b.position)) * 0.5 + 1.9 : 2.5;
+      let radius = b ? length(sub(a.position, b.position)) * 0.5 + 1.9 : 2.5;
+      if (framingPoints.length) {
+        if (!framingPoints.every(finite))
+          throw new RangeError('Nonfinite display bounds');
+        const min = { x: Infinity, y: Infinity, z: Infinity },
+          max = { x: -Infinity, y: -Infinity, z: -Infinity };
+        for (const p of framingPoints) {
+          for (const axis of ['x', 'y', 'z'] as const) {
+            min[axis] = Math.min(min[axis], p[axis]);
+            max[axis] = Math.max(max[axis], p[axis]);
+          }
+        }
+        target = mul(add(min, max), 0.5);
+        radius = Math.max(
+          ...framingPoints.map((p) => length(sub(p, target))),
+          0.1,
+        );
+      }
       const framingScale =
         Math.sin((25 * Math.PI) / 180) * Math.min(usableY, aspect * usableX);
       const alpha = current
@@ -171,31 +242,139 @@ export function createCameraRig(layout: StreetLayout) {
         7,
         (radius + length(sub(target, focus))) / framingScale,
       );
-      const requestedDistance = Math.min(MAX_DISTANCE, distance * 1.06);
-      // Moving outward must immediately preserve framing. Inward relaxation is
-      // damped; neither branch can exceed the shared far-plane safety budget.
+      const fallbackDistance = Math.min(MAX_DISTANCE, distance * 1.06);
+      const points = framingPoints.length
+        ? framingPoints
+        : [...bodyCorners(a), ...(b ? bodyCorners(b) : [])];
+      // Each trial is immutable within this update. Reuse exact solved eyes,
+      // especially the accepted range when damping requests that same range.
+      const solvedRanges = new Map<
+        number,
+        ReturnType<typeof unobstructedEye>
+      >();
+      const solve = (d: number) => {
+        const prior = solvedRanges.get(d);
+        if (prior) return prior;
+        const result = unobstructedEye(
+          focus,
+          actualDepth,
+          d,
+          horizontalBudget(focus, actualDepth, layout, d),
+          opaqueBoxes,
+        );
+        solvedRanges.set(d, result);
+        return result;
+      };
+      const check = (eye: Vector3) =>
+        cornerConstraints(
+          eye,
+          focus,
+          points,
+          Math.max(
+            1e-6,
+            viewport.widthCssPx / Math.max(1, viewport.heightCssPx),
+          ),
+          usableX,
+          usableY,
+        );
       const priorDistance = current
         ? length(sub(current.position, current.target))
-        : requestedDistance;
-      const safeDistance = Math.max(
-        requestedDistance,
-        priorDistance + (requestedDistance - priorDistance) * alpha,
-      );
-      const solved = unobstructedEye(
-        focus,
-        actualDepth,
-        safeDistance,
-        horizontalBudget(focus, actualDepth, layout, safeDistance),
-        opaqueBoxes,
-      );
-      const eye = solved.eye;
+        : 7;
+      let trial = Math.min(MAX_DISTANCE, Math.max(7, priorDistance));
+      let best: { distance: number; eye: Vector3 } | undefined;
+      let failedRange: number | undefined;
+      // Rear bounds and obstacles can change the view basis, so an analytic
+      // suggestion is never accepted without re-solving and checking its eye.
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const candidate = solve(trial),
+          constraints = check(candidate.eye);
+        if (
+          !candidate.constrained &&
+          constraints.contained &&
+          (!best || trial < best.distance)
+        )
+          best = { distance: trial, eye: candidate.eye };
+        else if (candidate.constrained || !constraints.contained)
+          failedRange = trial;
+        const next = Math.min(
+          MAX_DISTANCE,
+          // An absolute 1mm reserve avoids discontinuous 6% range purchases
+          // when a previously valid eye first crosses the framing boundary.
+          // The candidate still needs every unchanged fit/obstruction check.
+          Math.max(7, constraints.required + 0.001),
+        );
+        // Stop analytic angle updates at a verified fit. Outward corrections
+        // get a separately bounded checked refinement below.
+        if (
+          (attempt > 0 && best?.distance === trial) ||
+          Math.abs(next - trial) < 1e-4 ||
+          (best && next >= best.distance)
+        )
+          break;
+        trial = next;
+      }
+      if (
+        best &&
+        best.distance > priorDistance &&
+        failedRange !== undefined &&
+        failedRange < best.distance
+      ) {
+        const refined = refineVerifiedRange(
+          failedRange,
+          { distance: best.distance, value: best.eye },
+          (range) => {
+            const candidate = solve(range);
+            return !candidate.constrained && check(candidate.eye).contained
+              ? candidate.eye
+              : undefined;
+          },
+        );
+        best = { distance: refined.distance, eye: refined.value };
+      }
+      let eye: Vector3, constrained: boolean;
+      if (best) {
+        // Preserve inward damping when safe. Obstacle-adjusted intermediate
+        // angles are checked too; otherwise keep the verified fit, never clip.
+        const damped = Math.min(
+          MAX_DISTANCE,
+          Math.max(
+            best.distance,
+            priorDistance + (best.distance - priorDistance) * alpha,
+          ),
+        );
+        if (damped - best.distance <= 1e-10) eye = best.eye;
+        else {
+          // Preserve the certified angle rather than running another wall
+          // search. Extending its ray still needs a fresh complete sweep: a
+          // farther obstacle may block it, in which case use the verified fit.
+          const horizontal = Math.min(
+            horizontalBudget(focus, actualDepth, layout, damped),
+            (Math.hypot(best.eye.x - focus.x, best.eye.z - focus.z) * damped) /
+              best.distance,
+          );
+          const candidate = add(
+            sub(focus, mul(actualDepth, horizontal)),
+            v(0, Math.sqrt(damped ** 2 - horizontal ** 2), 0),
+          );
+          eye =
+            check(candidate).contained &&
+            eyeIsClear(focus, candidate, opaqueBoxes)
+              ? candidate
+              : best.eye;
+        }
+        constrained = false;
+      } else {
+        const fallback = solve(fallbackDistance);
+        eye = fallback.eye;
+        constrained = fallback.constrained || !check(eye).contained;
+      }
       current = {
         position: eye,
         target: focus,
         right: v(-actualDepth.z, 0, actualDepth.x),
         depth: actualDepth,
         fovDegrees: 50,
-        constrained: solved.constrained || distance * 1.06 > MAX_DISTANCE,
+        constrained,
       };
       return current;
     },

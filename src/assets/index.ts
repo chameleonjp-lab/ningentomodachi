@@ -28,3 +28,7 @@ export { authorDeathClips, deathClipSeconds } from './deathAnimation';
 
 export { createSourceEvaluator } from './evaluateSource';
 export type { SourceStrikeShape } from './evaluateSource';
+
+export { copyRootPolicy, assertRootPolicyCompatibility } from './rootPolicy';
+export type { ClipRootPolicy } from './rootPolicy';
+export { PROVISIONAL_GROUNDED_REPRESENTATIVE_POLICIES } from './representativePolicies';

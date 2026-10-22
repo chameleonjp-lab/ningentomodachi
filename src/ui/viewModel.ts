@@ -82,7 +82,9 @@ export function resultLines(
 export function hudActors(snapshot: GameSnapshot): readonly ActorState[] {
   const stage = snapshot.presentation;
   const victim =
-    (stage.kind === 'opponent-defeat' || stage.kind === 'clear-slow') &&
+    (stage.kind === 'opponent-defeat' ||
+      stage.kind === 'opponent-defeat-finish' ||
+      stage.kind === 'clear-slow') &&
     snapshot.clocks.presentationTimeMs < stage.endsAt &&
     (snapshot.currentOpponentId === null ||
       snapshot.currentOpponentId === stage.actorId)

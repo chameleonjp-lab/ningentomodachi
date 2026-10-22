@@ -19,6 +19,8 @@ import {
 } from '../camera/camera-rig';
 import type {
   ActorId,
+  DefeatPoseSupportObservation,
+  Vector3,
   CommittedFrame,
   ModuleContext,
   GameSnapshot,
@@ -34,6 +36,7 @@ import {
 } from '../world/street-layout';
 import { createParisStreet } from './paris-street';
 import { createWorldImpactFx } from './world-impact-fx';
+import { validSupport, supportedPose } from './defeat-support';
 
 export type { StreetLayout } from '../world/street-layout';
 export { createParisStreetLayout } from '../world/street-layout';
@@ -77,7 +80,14 @@ export function createSceneAdapter(
   let committedAuthority: GameSnapshot | undefined;
   const mounts = new Map<
     ActorId,
-    { parent: Group; presentation: Group; node: Object3D }
+    {
+      parent: Group;
+      presentation: Group;
+      node: Object3D;
+      boundsQualified: boolean;
+      observation?: DefeatPoseSupportObservation;
+      entrySupport?: { startedAt: number; minY: number };
+    }
   >();
   const nodes = new Set<Object3D>();
   const onLost = (event: Event) => {
@@ -117,18 +127,32 @@ export function createSceneAdapter(
     spatial: SpatialSnapshot,
     authority?: GameSnapshot,
     onlyActorId?: ActorId,
+    offsets?: ReadonlyMap<ActorId, number>,
   ) {
     for (const [id, mount] of mounts) {
       if (onlyActorId !== undefined && id !== onlyActorId) continue;
       const actor = spatial.actors.find((a) => a.actorId === id);
       mount.parent.visible = !!actor;
+      if (!actor && engine.isRetired(id)) {
+        delete mount.observation;
+        delete mount.entrySupport;
+      }
       if (actor) {
         const visual = authority ? settledActor(actor, authority) : actor;
-        mount.presentation.position.set(
-          0,
-          visual.position.y - actor.position.y,
-          0,
-        );
+        const offset = offsets?.get(id);
+        if (offset !== undefined) mount.presentation.position.set(0, offset, 0);
+        else if (
+          !mount.boundsQualified ||
+          !authority?.actors.find((a) => a.actorId === id)?.defeated
+        )
+          mount.presentation.position.set(
+            0,
+            visual.position.y - actor.position.y,
+            0,
+          );
+        // An opted-in defeated mount is settled only after B supplies the exact
+        // displayed pose. Commit/mount must not reuse an old observation.
+
         mount.parent.position.set(
           actor.position.x,
           actor.position.y,
@@ -178,8 +202,40 @@ export function createSceneAdapter(
   return {
     renderHost: {
       runId: context.runId,
+      publishDefeatPoseSupport(observation) {
+        if (!observation || typeof observation !== 'object') return false;
+        // Wrong-run rejection does not mutate this run. The rejected producer
+        // must abort; false is never permission to draw using prior support.
+        const mount = mounts.get(observation.actorId);
+        if (
+          disposed ||
+          observation.runId !== context.runId ||
+          engine.isRetired(observation.actorId) ||
+          !mount?.boundsQualified
+        )
+          return false;
+        if (!validSupport(observation)) {
+          delete mount.observation;
+          return false;
+        }
+        mount.observation = {
+          ...observation,
+          currentLocalBounds: {
+            min: { ...observation.currentLocalBounds.min },
+            max: { ...observation.currentLocalBounds.max },
+          },
+        };
+        return true;
+      },
       mountActor(request) {
         alive();
+        if (engine.isRetired(request.actorId))
+          throw new Error('Cannot mount retired actor');
+        if (
+          committedAuthority?.residentActorIds &&
+          !committedAuthority.residentActorIds.includes(request.actorId)
+        )
+          throw new Error('Cannot mount nonresident actor');
         if (request.runId !== context.runId)
           throw new Error('Stale render run');
         if (
@@ -200,6 +256,7 @@ export function createSceneAdapter(
           parent,
           presentation,
           node: request.node,
+          boundsQualified: request.defeatPoseSupport === 'bounds-v1',
         });
         nodes.add(request.node);
         // Initialize only this mount. Existing anchors may display a replayed
@@ -245,11 +302,51 @@ export function createSceneAdapter(
         frame.spatial.runId !== context.runId
       )
         throw new Error('Stale render frame');
+      engine.assertReplayAllowed(frame.snapshot);
+      if (frame.spatial.actors.some((actor) => engine.isRetired(actor.actorId)))
+        throw new Error('Cannot render retired spatial actor');
+      // Validate every opted-in defeated mount before mutating presentation or drawing.
+      const offsets = new Map<ActorId, number>();
+      const framingPoints: Vector3[] = [];
+      for (const [id, mount] of mounts) {
+        const state = frame.snapshot.actors.find((a) => a.actorId === id);
+        if (
+          !mount.boundsQualified ||
+          !state?.defeated ||
+          (frame.snapshot.residentActorIds &&
+            !frame.snapshot.residentActorIds.includes(id))
+        )
+          continue;
+        const actor = frame.spatial.actors.find((a) => a.actorId === id);
+        if (!actor || frame.spatial.tick !== frame.snapshot.clocks.tick)
+          throw new Error('Missing defeated spatial frame');
+        const supported = supportedPose(
+          actor,
+          state,
+          frame.snapshot,
+          mount.observation,
+        );
+        const observed = mount.observation!;
+        if (
+          mount.entrySupport?.startedAt === observed.defeatStartedAt &&
+          mount.entrySupport.minY !== observed.entryLocalMinY
+        )
+          throw new Error('Defeat entry support changed within one activation');
+        mount.entrySupport = {
+          startedAt: observed.defeatStartedAt,
+          minY: observed.entryLocalMinY,
+        };
+        offsets.set(id, supported.offset);
+        framingPoints.push(...supported.corners);
+      }
       const displayActors = frame.spatial.actors.map((actor) =>
-        settledActor(actor, frame.snapshot),
+        offsets.has(actor.actorId)
+          ? actor
+          : settledActor(actor, frame.snapshot),
       );
       const stagedOpponent =
         frame.snapshot.presentation.kind === 'opponent-defeat' ||
+        frame.snapshot.presentation.kind === 'opponent-defeat-finish' ||
         frame.snapshot.presentation.kind === 'clear-slow'
           ? frame.snapshot.presentation.actorId
           : null;
@@ -267,8 +364,26 @@ export function createSceneAdapter(
             ? 0
             : Math.max(0, time - lastPresentation);
       lastPresentation = time;
+      if (framingPoints.length) {
+        for (const actor of [player, opponent])
+          if (actor && !offsets.has(actor.actorId))
+            for (const x of [-0.35, 0.35])
+              for (const y of [0, 1.85])
+                for (const z of [-0.35, 0.35])
+                  framingPoints.push({
+                    x: actor.position.x + x,
+                    y: actor.position.y + y,
+                    z: actor.position.z + z,
+                  });
+      }
       if (player)
-        frameCamera = rig.update(player, opponent, frame.viewport, elapsed);
+        frameCamera = rig.update(
+          player,
+          opponent,
+          frame.viewport,
+          elapsed,
+          framingPoints,
+        );
       camera.position.set(
         frameCamera.position.x,
         frameCamera.position.y,
@@ -298,7 +413,7 @@ export function createSceneAdapter(
         tick: frame.spatial.tick,
         viewport: frame.viewport.revision,
       };
-      applyPoses(frame.spatial, frame.snapshot);
+      applyPoses(frame.spatial, frame.snapshot, undefined, offsets);
       street.update(frame.snapshot, frame.spatial);
       fx.update(time);
       if (!contextLost) output.render(scene, camera);

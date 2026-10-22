@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
-import { clipId, durationMs } from '../../src/contracts';
 import { bakeMotion } from '../../src/assets/bakeMotion';
 import { createSourceEvaluator } from '../../src/assets/evaluateSource';
 import { inspectGlb } from '../../src/assets/source';
+import { clipId, durationMs } from '../../src/contracts';
+
 test('actual Jab accessor samples produce deterministic measured hand/root curves without modifying source bytes', async () => {
   const bytes = new Uint8Array(
     readFileSync(
@@ -137,4 +138,4 @@ test('actual source bake and runtime retain the same clip-zero root origin befor
     rig.dispose();
     pack.dispose();
   }
-});
+}, 30000); // Includes offline exact hull certification, not frame-time work.

@@ -1,4 +1,4 @@
-import type { GameCommand } from './commands';
+import type { GameCommand, PauseReason } from './commands';
 import type { RunId } from './ids';
 import type { Vector3 } from './motion';
 import type { GameSnapshot } from './snapshot';
@@ -58,6 +58,15 @@ export type HostPhase =
   | 'error'
   | 'results'
   | 'disposed';
+/** A-owned startup clock, independent of gameplay clocks and absent during ordinary play.
+ * Explicit Start/Retry only; required loading and countdown run concurrently. A publishes
+ * readiness AND countdown completion, then starts once, only with no pause reasons. */
+export interface StartupState {
+  readonly generation: number;
+  readonly countdown: 3 | 2 | 1 | 0;
+  readonly requiredAssetsReady: boolean;
+  readonly pauseReasons: readonly PauseReason[];
+}
 export interface HostSnapshot {
   readonly revision: number;
   readonly phase: HostPhase;
@@ -65,6 +74,8 @@ export interface HostSnapshot {
   readonly game: GameSnapshot | null;
   readonly error: string | null;
   readonly viewport: ViewportSnapshot;
+  /** Undefined preserves legacy host fixtures; null means no guarded startup is active. */
+  readonly startup?: StartupState | null;
 }
 /** App-lifetime requests survive run failure. IDs are unique for this host; repeats are ignored. */
 export type HostRequest = { readonly requestId: string } & (
@@ -75,6 +86,13 @@ export type HostRequest = { readonly requestId: string } & (
         | 'StartRequested'
         | 'ReturnToTitleRequested'
         | 'CancelLoadingRequested';
+    }
+  | {
+      readonly type: 'StartupPauseRequested' | 'StartupResumeRequested';
+      /** Reject a stale generation, including late UI callbacks after retry. */
+      readonly startupGeneration: number;
+      /** Resume removes this reason only; it never restarts countdown or clears others. */
+      readonly reason: PauseReason;
     }
   | { readonly type: 'CommandRequested'; readonly command: GameCommand }
 );

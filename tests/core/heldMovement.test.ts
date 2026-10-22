@@ -7,7 +7,7 @@ import {
   type CorePort,
   type GameplayCommand,
 } from '../../src/contracts';
-import { setup, run, hitOpponent } from './fixtures/scenarios';
+import { setup, run, hitOpponent, advanceCore } from './fixtures/scenarios';
 function commands(core: CorePort) {
   const actorId = core.read().actors[0]?.actorId;
   if (!actorId) throw new Error('Missing player');
@@ -131,4 +131,20 @@ test('opponent defeat clears held direction and cannot retain new movement throu
   expect(core.read().presentation.kind).toBe('opponent-defeat');
   batch(core, [c.move()]);
   expect(next(core).intents).toEqual([]);
+});
+
+test('normal-speed defeat finish transports movement and jump while combat stays gated', () => {
+  const core = setup();
+  for (let n = 0; n < 5; n++) hitOpponent(core);
+  advanceCore(core, 1500);
+  const c = commands(core),
+    move = c.move(),
+    jump = c.jump();
+  batch(core, [move, c.attack(), jump]);
+  const request = next(core);
+  expect(request.snapshot.presentation.kind).toBe('opponent-defeat-finish');
+  expect(request.intents).toContainEqual(move);
+  expect(request.intents).toContainEqual(jump);
+  expect(request.snapshot.actors[0]?.attack).toBeNull();
+  expect(request.snapshot.currentOpponentId).toBeNull();
 });

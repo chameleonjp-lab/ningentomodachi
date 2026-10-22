@@ -1,4 +1,4 @@
-# B asset/animation module: P1 review candidate
+# B asset/animation module
 
 All exports are in `index.ts`. The shared DTOs in `../contracts` are the authority. This module neither creates a renderer nor modifies HP, heat, spatial transforms, input, progression or results.
 
@@ -19,7 +19,13 @@ All exports are in `index.ts`. The shared DTOs in `../contracts` are the authori
 
 `inspectGlb` validates binary bounds, animation input/output accessors, clip uniqueness, hierarchy/bind signatures including non-joint ancestors, skin weights, joint/vertex/index bounds and finite rest transforms. `tools/assets/inventory.mts` emits a new source lock without overwriting an existing output. The lock covers original42 and retimed42, 9 movement + 1 jump + 13 punch + 19 kick, runtime rate 1. AcrobaticCombo remains in the source inventory.
 
-`authorDeathClips` creates two distinct half-second skeletal candidates from the supplied source guard pose. They preserve the rig and design and are CPU tested across all source colors. They are not final visual-quality approval, authored GLB delivery or completed collapse/fire/spark acceptance. Apply extra clips explicitly to `createThreeAssetPack`.
+`authorDeathClips` emits two distinct 0.5s articulated candidates, with no edits to original clips, meshes, skeleton or palettes. Prepare a detached white source actor, seek `Idle` at zero, then pass its node. Authoring clones the seed and samples the complete skinned mesh at 240Hz to create a defeated-only pelvis track with canonical local-ground clearance. It never adds a gameplay root-position track. This is an offline operation, not a per-frame or per-defeat operation.
+
+The Three driver captures the actual preceding displayed pose. Fixed entry-relative joint offsets decay over the first 0.1 clip seconds while the articulated canonical reaction starts immediately. It never repeatedly selects a shortest quaternion path to a moving target. The pelvis uses an entry-specific fixed swing/twist path to the terminal orientation over the full fall, composed with the canonical deviation from its own start-to-terminal path. A continuously lowered waypoint avoids an upward swing between opposing sideways body axes. This preserves canonical-start orientation without an upright/airborne classification threshold. Actor-local rotation is converted back through the current pelvis parent; no C node transform is written.
+
+The driver restores the unblended mixer pose before repeat/backward seeks, preventing unchanged-key caching from accumulating presentation edits. Complete skinned-surface support is measured during entry-aware death playback because inverted head/torso surfaces can be lowest. Correction changes only the defeated pelvis in actor-local coordinates under C's translated/rotated parent. It never reads or compensates for world ground height. Any inherited below-zero local source surface clears continuously over the first 0.1 clip seconds rather than snapping at entry. Actual world contact still depends on C applying source root displacement once and settling its airborne presentation child; local floor tests are not proof of world collision. C alone owns that descent and immutable physical placement. Full-surface runtime evaluation has a device-performance cost that remains to be measured.
+
+Numerical tests sample canonical geometry at 480Hz, entry rotations at 960Hz, and the independently found FrontKick wrist seam on fresh actors separated by 20ns. Reachable CartwheelKick, ChineseCartwheelKick, ButterflyKick and DivingLunge entries must not reset upright; tests also cover full-surface continuity, exact entry, canonical Idle orientation, terminal pose, repeat/backward seeks and translated-parent invariance. These samples do not prove every continuous-time surface or every possible entry. Articulated pose quality, actual-scene contact and device cost remain independent review gates. Apply the candidate clips explicitly to `createThreeAssetPack`; this is not an accepted production asset delivery.
 
 ## Not yet accepted
 

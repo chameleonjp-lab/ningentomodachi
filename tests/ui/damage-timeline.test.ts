@@ -215,3 +215,58 @@ test('replayed event identity cannot create a second effect even with a newer se
   t.update(frame({ events: [{ ...event, sequence: 2 }] }), []);
   expect(t.read(player)?.losses).toHaveLength(1);
 });
+
+test('finish stage retains same defeated HUD through1625 but never extends completed loss animation', () => {
+  const t = createDamageTimeline(run);
+  const event = loss(1, opponent, 50, 0, 700);
+  const initial = snapshot({
+    actors: [actor(), { ...actor(opponent, 0, 700), defeated: true }],
+    currentOpponentId: null,
+    presentation: {
+      kind: 'opponent-defeat',
+      actorId: opponent,
+      startedAt: presentationTimeMs(0),
+      endsAt: presentationTimeMs(1500),
+    },
+  });
+  t.update(frame({ snapshot: initial, events: [event] }), [projection(event)]);
+  expect(t.read(opponent)?.losses).toHaveLength(1);
+  for (const now of [1500, 1624]) {
+    const next = {
+      ...initial,
+      revision: now,
+      clocks: {
+        ...initial.clocks,
+        presentationTimeMs: presentationTimeMs(now),
+      },
+      presentation: {
+        kind: 'opponent-defeat-finish' as const,
+        actorId: opponent,
+        startedAt: presentationTimeMs(0),
+        endsAt: presentationTimeMs(1625),
+      },
+    };
+    t.update(frame({ snapshot: next }), []);
+    expect(t.read(opponent)).toMatchObject({ hp: 0, maxHp: 700, losses: [] });
+  }
+  t.update(
+    frame({
+      snapshot: {
+        ...initial,
+        revision: 1625,
+        clocks: {
+          ...initial.clocks,
+          presentationTimeMs: presentationTimeMs(1625),
+        },
+        presentation: {
+          kind: 'opponent-defeat-finish',
+          actorId: opponent,
+          startedAt: presentationTimeMs(0),
+          endsAt: presentationTimeMs(1625),
+        },
+      },
+    }),
+    [],
+  );
+  expect(t.read(opponent)).toBeNull();
+});

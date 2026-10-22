@@ -79,6 +79,7 @@ test('Start excludes the ready idle interval even without an intermediate RAF', 
   await binding.ready;
   browser.frame(0);
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   browser.frame(1000);
   expect(game.read()?.clocks.tick).toBe(0);
   expect(game.read()?.clocks.activeRealTimeMs).toBe(0);
@@ -99,6 +100,7 @@ test('active real elapsed is independent of sub-tick and capped fixed-step backl
   game.advance(500);
   expect(game.read()?.clocks.activeRealTimeMs).toBe(0);
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   game.advance(5);
   expect(game.read()?.clocks.activeRealTimeMs).toBe(5);
   game.advance(1000);
@@ -199,6 +201,10 @@ test('public input and host cannot assert AssetsReady while the current catalog 
   await pending;
   expect(game.read()?.phase).toBe('ready');
   game.request({ type: 'StartRequested', requestId: 'valid-start' });
+  await expect
+    .poll(() => game.hostState().startup?.requiredAssetsReady)
+    .toBe(true);
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   game.advance(10);
   expect(game.read()?.clocks.tick).toBe(1);
   game.dispose();
@@ -398,6 +404,7 @@ test('public generic model host binds B pose to C anchor/one draw and detaches b
   );
   await game.start();
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   trace.length = 0;
   game.advance(10);
   expect(trace).toEqual(['C.commit', 'B.pose', 'C.draw']);
@@ -428,6 +435,7 @@ test('accepted sweep backlog survives pause/resume without charging paused or ze
   const run = game.read();
   if (!run) throw new Error('Missing run');
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   browser.frame(0);
   browser.frame(100);
   expect(game.read()?.clocks).toMatchObject({
@@ -578,6 +586,7 @@ test('terminal display deadline also excludes a pause/resume hidden between RAF 
   const run = game.read();
   if (!run || !scripted) throw new Error('Missing run');
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   const { presentationTimeMs } = await import('../../src/contracts');
   scripted.script({
     phase: 'terminal',

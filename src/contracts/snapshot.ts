@@ -9,7 +9,12 @@ export type PresentationState =
   | { readonly kind: 'none' }
   | { readonly kind: 'results' }
   | {
-      readonly kind: 'opponent-defeat' | 'defeat-slow' | 'clear-slow' | 'fade';
+      readonly kind:
+        | 'opponent-defeat'
+        | 'opponent-defeat-finish'
+        | 'defeat-slow'
+        | 'clear-slow'
+        | 'fade';
       readonly actorId: ActorId | null;
       readonly startedAt: PresentationTimeMs;
       readonly endsAt: PresentationTimeMs;
@@ -25,6 +30,10 @@ export interface GameSnapshot {
   readonly pauseReasons: readonly PauseReason[];
   readonly quality: DisplayQuality;
   readonly actors: readonly ActorState[];
+  /** A-owned complete robot residency, separate from the retained logical roster.
+   * Production emits white plus current/dying opponent only. Undefined is legacy-only.
+   * Removal retires that ID for this run: no rig/pose resurrection by historical replay. */
+  readonly residentActorIds?: readonly ActorId[];
   readonly currentOpponentId: ActorId | null;
   readonly result: TerminalResult | null;
   readonly presentation: PresentationState;

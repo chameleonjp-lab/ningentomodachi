@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest';
-import { Group, Vector3 } from 'three';
+import { Vector3 } from 'three';
 import {
-  actorId,
   durationMs,
   type ActorColor,
   type CommittedFrame,
@@ -24,6 +23,7 @@ for (const victim of ['white', 'blue'] as const)
           },
         },
         0,
+        victim === 'white' ? 'blue' : 'white',
       );
     try {
       const attacker: ActorColor = victim === 'white' ? 'blue' : 'white';
@@ -121,17 +121,24 @@ for (const victim of ['white', 'blue'] as const)
         const y = visual?.position.y;
         if (y === undefined) throw Error('Missing visual anchor');
         savedFrames.push({ frame, offset: y });
-        const extra = new Group();
+        const extra = h.nodes.get(attacker);
+        const siblingId = h.core
+          .read()
+          .actors.find((a) => a.color === attacker)?.actorId;
+        if (!extra || !siblingId) throw Error('Missing resident sibling');
+        expect(h.core.read().residentActorIds).toContain(siblingId);
+        expect(h.core.read().residentActorIds).toContain(state.actorId);
         const detach = h.scene.renderHost.mountActor({
           runId: h.context.runId,
-          actorId: actorId(`test-extra:${elapsed}`),
+          actorId: siblingId,
           node: extra,
         });
         expect(visual?.position.y).toBe(y);
+        expect(extra.parent?.position.y).toBe(0);
         detach();
         expect(extra.parent).toBeNull();
         expect(visual?.position.y).toBe(y);
-        expect(h.nodes.get(attacker)?.parent?.position.y).toBe(0);
+        expect(extra.position.y).toBe(0);
         h.scene.render(frame);
         expect(visual?.position.y).toBe(y);
         h.core.handle({
@@ -156,13 +163,21 @@ for (const victim of ['white', 'blue'] as const)
         expect(visual?.position.y).toBe(saved.offset);
         // Cross-product: a later commit must not overwrite this replayed display
         // merely because an unrelated actor mounts or detaches.
-        const replaySibling = new Group();
+        const replaySibling = h.nodes.get(attacker);
+        const siblingId = h.core
+          .read()
+          .actors.find((a) => a.color === attacker)?.actorId;
+        if (!replaySibling || !siblingId)
+          throw Error('Missing replay resident sibling');
+        expect(h.core.read().residentActorIds).toContain(siblingId);
+        expect(h.core.read().residentActorIds).toContain(state.actorId);
         const detachReplaySibling = h.scene.renderHost.mountActor({
           runId: h.context.runId,
-          actorId: actorId(`replay-sibling:${saved.offset}`),
+          actorId: siblingId,
           node: replaySibling,
         });
         expect(visual?.position.y).toBe(saved.offset);
+        expect(replaySibling.parent?.position.y).toBe(0);
         detachReplaySibling();
         expect(visual?.position.y).toBe(saved.offset);
         expect(replaySibling.parent).toBeNull();

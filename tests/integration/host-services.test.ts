@@ -196,6 +196,7 @@ test('run UI routes lifecycle requests but a disposed UI cannot control its succ
   const first = requests[0];
   if (!first) throw new Error('Missing UI request path');
   first({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   expect(game.read()?.phase).toBe('running');
   first({ type: 'ReturnToTitleRequested', requestId: 'title' });
   expect(game.hostState().phase).toBe('title');
@@ -231,6 +232,7 @@ test('input arbitration may pause before simulation without starting a forbidden
   const run = game.read();
   if (!run) throw new Error('Missing run');
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   game.dispatch({
     type: 'JumpRequested',
     runId: run.runId,
@@ -272,6 +274,7 @@ test('one tick preserves competing actions while release/pause/stale packets can
   const run = game.read();
   if (!run || !context) throw new Error('Missing run');
   game.request({ type: 'StartRequested', requestId: 'start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   const basis = context.movement.begin('held');
   const attack: GameCommand = {
     type: 'AttackRequested',
@@ -356,6 +359,7 @@ test('one tick preserves competing actions while release/pause/stale packets can
   expect(() => old.movement.begin('after-restart')).toThrow();
   expect(old.readSnapshot()).toBeNull();
   game.request({ type: 'StartRequested', requestId: 'restart-start' });
+  game.advance(3000); // Explicit UI start finishes its host countdown before gameplay.
   game.advance(10);
   expect(batches).toHaveLength(1);
   game.dispose();

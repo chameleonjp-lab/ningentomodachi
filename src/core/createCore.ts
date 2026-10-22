@@ -1,37 +1,37 @@
-import { requireValue } from './invariant';
+import { immutableDto } from '../app/immutableDto';
 import {
+  type ActorColor,
+  type ActorId,
+  type ActorState,
   activeRealTimeMs,
   actorId,
   attackActivationId,
   batchId,
-  domainEventId,
-  durationMs,
-  gameTimeMs,
-  impactId,
-  presentationTimeMs,
-  tick,
-  validateMotionDefinition,
-  type ActorColor,
-  type ActorId,
-  type ActorState,
   type CoreCommand,
   type CoreOutput,
   type CorePort,
   type DamageCause,
   type DomainEvent,
-  type GameSnapshot,
+  domainEventId,
+  durationMs,
   type GameplayCommand,
+  type GameSnapshot,
+  gameTimeMs,
   type ImpactReference,
+  impactId,
   type MotionCatalogPort,
   type MotionDefinition,
   type MoveSet,
   type PauseReason,
+  type PresentationState,
+  presentationTimeMs,
   type RunContext,
   type SpatialCandidate,
   type SpatialSnapshot,
-  type PresentationState,
+  tick,
+  validateMotionDefinition,
 } from '../contracts';
-import { immutableDto } from '../app/immutableDto';
+import { requireValue } from './invariant';
 import {
   advanceHeat,
   calculateScore,
@@ -160,6 +160,7 @@ export function createCore(
     pauseReasons: [],
     quality: 'standard',
     actors,
+    residentActorIds: actors.slice(0, 2).map((actor) => actor.actorId),
     currentOpponentId: null,
     result: null,
     presentation: { kind: 'none' },
@@ -185,6 +186,7 @@ export function createCore(
     to: number;
   } | null = null;
   let pendingOpponent = false;
+  let opponentTransitionEndsAt: number | null = null;
   let acceptedRealSum = 0,
     realCompensation = 0,
     presentationSum = 0,
@@ -217,7 +219,7 @@ export function createCore(
       let reason: ReturnType<typeof denied> | typeof allowed = allowed;
       const canonical = requireValue(heat.get(a.actorId));
       const h =
-        snapshot.phase === 'terminal' || a.defeated
+        snapshot.phase === 'terminal' || a.defeated || !participant(a.actorId)
           ? canonical
           : advanceHeat(
               canonical,
@@ -228,14 +230,18 @@ export function createCore(
       else if (
         snapshot.phase !== 'running' ||
         !participant(a.actorId) ||
-        pendingOpponent ||
+        (pendingOpponent &&
+          (snapshot.presentation.kind !== 'opponent-defeat-finish' ||
+            !slowWindow ||
+            processedReal + 1e-7 < slowWindow.to)) ||
         snapshot.presentation.kind === 'opponent-defeat'
       )
         reason = denied('not-running');
       const movement = reason;
       let attack = reason;
       if (reason.allowed) {
-        if (a.attack) attack = denied('busy');
+        if (pendingOpponent) attack = denied('not-running');
+        else if (a.attack) attack = denied('busy');
         else if (h.lockedUntil !== null || h.pendingLock || h.amount >= 7)
           attack = denied('cooling-lock');
         else if (
@@ -264,6 +270,19 @@ export function createCore(
     snapshot = immutableDto({
       ...snapshot,
       actors,
+      residentActorIds: [
+        requireValue(actors[0]).actorId,
+        ...(snapshot.currentOpponentId
+          ? [snapshot.currentOpponentId]
+          : snapshot.presentation.kind === 'opponent-defeat' ||
+              snapshot.presentation.kind === 'opponent-defeat-finish'
+            ? snapshot.presentation.actorId
+              ? [snapshot.presentation.actorId]
+              : []
+            : (snapshot.residentActorIds ?? []).filter(
+                (id) => id !== requireValue(actors[0]).actorId,
+              )),
+      ],
       world: world.read(),
       revision: snapshot.revision + 1,
     });
@@ -287,9 +306,9 @@ export function createCore(
       pauseReasons: snapshot.pauseReasons,
     });
   }
-  function opponent(id: ActorId | null) {
+  function opponent(id: ActorId | null, change: Partial<GameSnapshot> = {}) {
     const previousActorId = snapshot.currentOpponentId;
-    publish({ currentOpponentId: id });
+    publish({ ...change, currentOpponentId: id });
     if (previousActorId !== id)
       emit({ type: 'OpponentChanged', previousActorId, currentActorId: id });
   }
@@ -386,7 +405,8 @@ export function createCore(
     }
     if (
       !a.defeated &&
-      !pendingOpponent &&
+      (!pendingOpponent ||
+        snapshot.presentation.kind === 'opponent-defeat-finish') &&
       snapshot.presentation.kind !== 'opponent-defeat' &&
       (a.actions.move.allowed || a.attack !== null) &&
       Number.isFinite(command.x) &&
@@ -599,7 +619,7 @@ export function createCore(
         eventReal,
     );
     for (const actor of actors)
-      if (!actor.defeated)
+      if (!actor.defeated && participant(actor.actorId))
         heat.set(
           actor.actorId,
           advanceHeat(
@@ -694,8 +714,8 @@ export function createCore(
       nextOpponent++;
       slowWindow = { from: eventReal, to: eventReal + 1500 };
       pendingOpponent = true;
-      opponent(null);
-      publish({
+      opponentTransitionEndsAt = eventReal + 1625;
+      opponent(null, {
         presentation: {
           kind: 'opponent-defeat',
           actorId: defeatedId,
@@ -1008,12 +1028,14 @@ export function createCore(
     if (
       snapshot.phase === 'running' &&
       pendingOpponent &&
-      slowWindow &&
-      processedReal + 1e-7 >= slowWindow.to
+      opponentTransitionEndsAt !== null &&
+      processedReal + 1e-7 >= opponentTransitionEndsAt
     ) {
       pendingOpponent = false;
-      publish({ presentation: { kind: 'none' } });
-      opponent(actors[nextOpponent]?.actorId ?? null);
+      opponentTransitionEndsAt = null;
+      opponent(actors[nextOpponent]?.actorId ?? null, {
+        presentation: { kind: 'none' },
+      });
     }
   }
   function advancePresentation() {
@@ -1021,7 +1043,16 @@ export function createCore(
     let stage: PresentationState = snapshot.presentation;
     if ('endsAt' in stage && now >= stage.endsAt) {
       if (stage.kind === 'opponent-defeat') {
-        publish({ presentation: { kind: 'none' } });
+        publish({
+          presentation: {
+            ...stage,
+            kind: 'opponent-defeat-finish',
+            endsAt: presentationTimeMs(stage.startedAt + 1625),
+          },
+        });
+      } else if (stage.kind === 'opponent-defeat-finish') {
+        // Retirement waits for processed simulation to reach the same transition deadline.
+        // Accepted presentation time may lead fixed-step backlog; never activate early.
       } else if (stage.kind === 'defeat-slow') {
         stage = {
           kind: 'fade',
@@ -1045,6 +1076,7 @@ export function createCore(
     read: () => snapshot,
     drain,
     handleInputBatch(input) {
+      if (disposed) return;
       if (
         input.runId !== context.runId ||
         input.tick !== snapshot.clocks.tick + 1
@@ -1157,6 +1189,13 @@ export function createCore(
       intents = [];
       progress('stopped');
       events = [];
+      consumed.clear();
+      hitTargets.clear();
+      seenContacts.clear();
+      seenCommands.clear();
+      metadata.clear();
+      heat.clear();
+      spatial = null;
     },
   };
 }
