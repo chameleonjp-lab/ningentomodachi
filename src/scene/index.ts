@@ -1,3 +1,4 @@
+import { deathClipSeconds } from '../assets';
 import {
   type Camera,
   Color,
@@ -20,6 +21,8 @@ import type {
   ActorId,
   CommittedFrame,
   ModuleContext,
+  GameSnapshot,
+  SpatialActor,
   Projection,
   SpatialModule,
   SpatialSnapshot,
@@ -71,7 +74,11 @@ export function createSceneAdapter(
     lastPresentation: number | undefined;
   let cameraStamp: { tick: number; viewport: number } | undefined;
   let committed: SpatialSnapshot | undefined;
-  const mounts = new Map<ActorId, { parent: Group; node: Object3D }>();
+  let committedAuthority: GameSnapshot | undefined;
+  const mounts = new Map<
+    ActorId,
+    { parent: Group; presentation: Group; node: Object3D }
+  >();
   const nodes = new Set<Object3D>();
   const onLost = (event: Event) => {
     event.preventDefault();
@@ -84,11 +91,44 @@ export function createSceneAdapter(
   const alive = () => {
     if (disposed) throw new Error('Scene disposed');
   };
-  function applyPoses(spatial: SpatialSnapshot) {
+  // C's current motor/scene uses the world plane Y=0. This offset is presentation
+  // only: never write it into SpatialSnapshot, contacts, or the B-owned node.
+  function settledActor(
+    actor: SpatialActor,
+    authority: GameSnapshot,
+  ): SpatialActor {
+    const state = authority.actors.find((a) => a.actorId === actor.actorId);
+    const progress =
+      state?.defeated && state.defeatPresentation
+        ? deathClipSeconds(
+            state.defeatPresentation,
+            authority.clocks.presentationTimeMs,
+          ) / 0.5
+        : 0;
+    return {
+      ...actor,
+      position: {
+        ...actor.position,
+        y: actor.position.y - Math.max(0, actor.position.y) * progress,
+      },
+    };
+  }
+  function applyPoses(
+    spatial: SpatialSnapshot,
+    authority?: GameSnapshot,
+    onlyActorId?: ActorId,
+  ) {
     for (const [id, mount] of mounts) {
+      if (onlyActorId !== undefined && id !== onlyActorId) continue;
       const actor = spatial.actors.find((a) => a.actorId === id);
       mount.parent.visible = !!actor;
       if (actor) {
+        const visual = authority ? settledActor(actor, authority) : actor;
+        mount.presentation.position.set(
+          0,
+          visual.position.y - actor.position.y,
+          0,
+        );
         mount.parent.position.set(
           actor.position.x,
           actor.position.y,
@@ -151,16 +191,27 @@ export function createSceneAdapter(
         const parent = new Group();
         parent.name = `actor-anchor:${request.actorId}`;
         parent.visible = false;
-        parent.add(request.node);
+        const presentation = new Group();
+        presentation.name = `actor-presentation:${request.actorId}`;
+        presentation.add(request.node);
+        parent.add(presentation);
         scene.add(parent);
-        mounts.set(request.actorId, { parent, node: request.node });
+        mounts.set(request.actorId, {
+          parent,
+          presentation,
+          node: request.node,
+        });
         nodes.add(request.node);
-        if (committed) applyPoses(committed);
+        // Initialize only this mount. Existing anchors may display a replayed
+        // frame rather than the latest commit, and mounting is not a render.
+        if (committed)
+          applyPoses(committed, committedAuthority, request.actorId);
         let detached = false;
         return () => {
           if (detached) return;
           detached = true;
-          parent.remove(request.node);
+          presentation.remove(request.node);
+          parent.remove(presentation);
           scene.remove(parent);
           mounts.delete(request.actorId);
           nodes.delete(request.node);
@@ -175,8 +226,9 @@ export function createSceneAdapter(
       alive();
       if (viewport.revision < 0) throw new RangeError('Invalid viewport');
       committed = engine.commit(authority);
+      committedAuthority = authority.snapshot;
       fx.consume(authority);
-      applyPoses(committed);
+      applyPoses(committed, authority.snapshot);
       return committed;
     },
     beginMovementSession(sessionId) {
@@ -193,12 +245,21 @@ export function createSceneAdapter(
         frame.spatial.runId !== context.runId
       )
         throw new Error('Stale render frame');
+      const displayActors = frame.spatial.actors.map((actor) =>
+        settledActor(actor, frame.snapshot),
+      );
+      const stagedOpponent =
+        frame.snapshot.presentation.kind === 'opponent-defeat' ||
+        frame.snapshot.presentation.kind === 'clear-slow'
+          ? frame.snapshot.presentation.actorId
+          : null;
       const playerId = frame.snapshot.actors.find(
           (a) => a.color === 'white',
         )?.actorId,
-        player = frame.spatial.actors.find((a) => a.actorId === playerId),
-        opponent = frame.spatial.actors.find(
-          (a) => a.actorId === frame.snapshot.currentOpponentId,
+        player = displayActors.find((a) => a.actorId === playerId),
+        opponent = displayActors.find(
+          (a) =>
+            a.actorId === (frame.snapshot.currentOpponentId ?? stagedOpponent),
         );
       const time = frame.snapshot.clocks.presentationTimeMs,
         elapsed =
@@ -237,7 +298,7 @@ export function createSceneAdapter(
         tick: frame.spatial.tick,
         viewport: frame.viewport.revision,
       };
-      applyPoses(frame.spatial);
+      applyPoses(frame.spatial, frame.snapshot);
       street.update(frame.snapshot, frame.spatial);
       fx.update(time);
       if (!contextLost) output.render(scene, camera);
@@ -286,9 +347,10 @@ export function createSceneAdapter(
           onRestored,
         ),
       );
-      for (const { parent, node } of mounts.values())
+      for (const { parent, presentation, node } of mounts.values())
         safely(() => {
-          parent.remove(node);
+          presentation.remove(node);
+          parent.remove(presentation);
           scene.remove(parent);
         });
       mounts.clear();

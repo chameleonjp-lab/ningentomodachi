@@ -73,6 +73,15 @@ test('actual workflow programs require complete meaningful reports and exact art
   }).trim();
   const directory = mkdtempSync(join(tmpdir(), 'p0-evidence-'));
   const lock = readFileSync('package-lock.json');
+  // Keep the real unit-script selection while avoiding package-manager startup
+  // (and its possible registry/update checks) in these nested reporter fixtures.
+  expect(
+    JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:unit'],
+  ).toBe(
+    "vitest run --exclude 'tests/contracts/**' --exclude 'tests/integration/**'",
+  );
+  const vitestCli = join(root, 'node_modules', 'vitest', 'vitest.mjs');
+  expect(existsSync(vitestCli)).toBe(true);
   const environment = {
     ...process.env,
     GITHUB_WORKSPACE: root,
@@ -111,9 +120,12 @@ test('actual workflow programs require complete meaningful reports and exact art
       `import { test, expect } from '${root}/node_modules/vitest/dist/index.js';\n${body}\n`,
     );
     const args = [
+      vitestCli,
       'run',
-      'test:unit',
-      '--',
+      '--exclude',
+      'tests/contracts/**',
+      '--exclude',
+      'tests/integration/**',
       '--root',
       suite,
       '--config',
@@ -123,13 +135,13 @@ test('actual workflow programs require complete meaningful reports and exact art
       `--outputFile.json=${join(suite, 'report.json')}`,
       `--outputFile.junit=${join(suite, 'report.xml')}`,
     ];
-    const result = spawnSync('npm', args, {
+    const result = spawnSync(process.execPath, args, {
       cwd: root,
       env: environment,
       encoding: 'utf8',
     });
     console.info(
-      `$ npm ${args.join(' ')}\n${result.stdout}${result.stderr}\nEXIT CODE: ${result.status}`,
+      `$ ${process.execPath} ${args.join(' ')}\n${result.stdout}${result.stderr}\nEXIT CODE: ${result.status}`,
     );
     expect(result.status, result.stderr).toBe(0);
     const report = JSON.parse(readFileSync(join(suite, 'report.json'), 'utf8'));

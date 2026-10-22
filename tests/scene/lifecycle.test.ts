@@ -71,7 +71,7 @@ test('one shared scene draw and committed physical parent preserve B node spin',
   h.adapter.render(frame);
   expect(h.read().draws).toBe(2);
   expect(node.rotation.y).toBe(2);
-  expect(node.parent?.position.z).toBe(0);
+  expect(node.parent?.parent?.position.z).toBe(0);
   expect(() =>
     h.adapter.renderHost.mountActor({
       runId: run,
@@ -169,9 +169,9 @@ test('a mounted actor stays hidden until its committed pose exists', () => {
     actorId: actorId('white'),
     node,
   });
-  expect(node.parent?.visible).toBe(false);
+  expect(node.parent?.parent?.visible).toBe(false);
   h.commit();
-  expect(node.parent?.visible).toBe(true);
+  expect(node.parent?.parent?.visible).toBe(true);
   h.adapter.dispose();
 });
 test('an unrendered viewport cannot fabricate a screen projection', () => {
