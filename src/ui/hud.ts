@@ -3,7 +3,12 @@ import type { ControlElements } from '../input';
 import { createDamageTimeline } from './damageTimeline';
 import { element } from './elements';
 import { buttonNames } from './settings';
-import { actorSummary, actionLabels, reasonLabels } from './viewModel';
+import {
+  actorSummary,
+  actionLabels,
+  reasonLabels,
+  hudActors,
+} from './viewModel';
 interface HudElements {
   readonly hud: HTMLElement;
   readonly effects: HTMLElement;
@@ -49,11 +54,7 @@ export function createHud(
         context.viewport.read().revision === frame.viewport.revision;
       timeline.update(frame, viewportMatches ? projections : []);
       let particleIndex = 0;
-      const current = frame.snapshot.actors.filter(
-        (actor) =>
-          actor.color === 'white' ||
-          actor.actorId === frame.snapshot.currentOpponentId,
-      );
+      const current = hudActors(frame.snapshot);
       for (const [id, bar] of bars)
         if (!current.some((a) => a.actorId === id)) {
           bar.root.remove();

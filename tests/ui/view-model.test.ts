@@ -1,7 +1,12 @@
 import { expect, test } from 'vitest';
-import { actorSummary, resultLines } from '../../src/ui/viewModel';
-import { actor, snapshot } from './fixtures/core';
-import { activeRealTimeMs, gameTimeMs } from '../../src/contracts';
+import { actorSummary, resultLines, hudActors } from '../../src/ui/viewModel';
+import { actor, snapshot, player, opponent } from './fixtures/core';
+import {
+  activeRealTimeMs,
+  gameTimeMs,
+  presentationTimeMs,
+  actorId,
+} from '../../src/contracts';
 test('authoritative permissions win over heat thresholds and remaining lock uses active clock', () => {
   const allowed = actorSummary(
     { ...actor(), heat: { amount: 6.5, capacity: 7, lockedUntil: null } },
@@ -89,4 +94,109 @@ test('player attribution displays supplied rate without combining street and car
     },
   });
   expect(lines).toContainEqual(['プレイヤー起因の損壊率', '12.5%']);
+});
+
+test.each(['opponent-defeat', 'clear-slow'] as const)(
+  'HUD retains %s victim only before A deadline and never over a replacement',
+  (kind) => {
+    const defeated = { ...actor(opponent, 0, 700), defeated: true };
+    const state = snapshot({
+      actors: [actor(), defeated],
+      currentOpponentId: null,
+      presentation: {
+        kind,
+        actorId: opponent,
+        startedAt: presentationTimeMs(0),
+        endsAt: presentationTimeMs(1500),
+      },
+      clocks: {
+        ...snapshot().clocks,
+        presentationTimeMs: presentationTimeMs(1499),
+      },
+    });
+    expect(hudActors(state).map((a) => a.actorId)).toEqual([player, opponent]);
+    // No transition frame is required: expired durable stage cannot retain/replay a victim.
+    for (const time of [1500, 9000])
+      expect(
+        hudActors({
+          ...state,
+          currentOpponentId: opponent,
+          clocks: {
+            ...state.clocks,
+            presentationTimeMs: presentationTimeMs(time),
+          },
+        }).map((a) => a.actorId),
+      ).toEqual([player]);
+    const next = { ...actor(actorId('green')), color: 'green' as const };
+    expect(
+      hudActors({
+        ...state,
+        currentOpponentId: next.actorId,
+        actors: [...state.actors, next],
+      }).map((a) => a.actorId),
+    ).toEqual([player, next.actorId]);
+    expect(
+      hudActors({ ...state, presentation: { kind: 'results' } }).map(
+        (a) => a.actorId,
+      ),
+    ).toEqual([player]);
+    expect(state.currentOpponentId).toBeNull();
+    expect(defeated.hp).toBe(0);
+  },
+);
+
+test('simultaneous lethal participant retention uses player defeat identity and exact authoritative deadline', () => {
+  const state = snapshot({
+    actors: [
+      { ...actor(player, 0), defeated: true },
+      { ...actor(opponent, 0, 700), defeated: true },
+    ],
+    presentation: {
+      kind: 'defeat-slow',
+      actorId: player,
+      startedAt: presentationTimeMs(0),
+      endsAt: presentationTimeMs(2000),
+    },
+  });
+  expect(hudActors(state).map((a) => a.actorId)).toEqual([player, opponent]);
+  for (const now of [2000, 9000])
+    expect(
+      hudActors({
+        ...state,
+        clocks: {
+          ...state.clocks,
+          presentationTimeMs: presentationTimeMs(now),
+        },
+      }).map((a) => a.actorId),
+    ).toEqual([player]);
+  expect(
+    hudActors({
+      ...state,
+      presentation: {
+        kind: 'fade',
+        actorId: player,
+        startedAt: presentationTimeMs(2000),
+        endsAt: presentationTimeMs(2400),
+      },
+    }).map((a) => a.actorId),
+  ).toEqual([player]);
+  const next = { ...actor(actorId('green')), color: 'green' as const };
+  expect(
+    hudActors({
+      ...state,
+      currentOpponentId: next.actorId,
+      actors: [...state.actors, next],
+    }).map((a) => a.actorId),
+  ).toEqual([player, next.actorId]);
+  expect(
+    hudActors({
+      ...state,
+      presentation: {
+        kind: 'defeat-slow',
+        actorId: opponent,
+        startedAt: presentationTimeMs(0),
+        endsAt: presentationTimeMs(2000),
+      },
+    }).map((a) => a.actorId),
+  ).toEqual([player]);
 });

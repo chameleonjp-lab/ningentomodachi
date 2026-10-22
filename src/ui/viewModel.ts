@@ -1,4 +1,9 @@
-import type { ActorState, GameClocks, TerminalResult } from '../contracts';
+import type {
+  ActorState,
+  GameClocks,
+  GameSnapshot,
+  TerminalResult,
+} from '../contracts';
 export const actionLabels = {
   punch: 'パンチ',
   kick: 'キック',
@@ -69,4 +74,34 @@ export function resultLines(
         ]),
     ...points,
   ];
+}
+
+/** Display-only identity. A's combat target stays cleared throughout defeat.
+ * A replacement opponent wins over historical presentation, and the authoritative
+ * presentation clock bounds retention even if intermediate frames were skipped. */
+export function hudActors(snapshot: GameSnapshot): readonly ActorState[] {
+  const stage = snapshot.presentation;
+  const victim =
+    (stage.kind === 'opponent-defeat' || stage.kind === 'clear-slow') &&
+    snapshot.clocks.presentationTimeMs < stage.endsAt &&
+    (snapshot.currentOpponentId === null ||
+      snapshot.currentOpponentId === stage.actorId)
+      ? stage.actorId
+      : null;
+  // Simultaneous lethal keeps the authoritative current enemy as a terminal
+  // participant even though the presentation victim is white. This is display
+  // retention, not combat participation or a change to defeat-over-clear priority.
+  const playerDefeatActive =
+    stage.kind === 'defeat-slow' &&
+    snapshot.clocks.presentationTimeMs < stage.endsAt &&
+    snapshot.actors.some(
+      (actor) => actor.color === 'white' && actor.actorId === stage.actorId,
+    );
+  return snapshot.actors.filter(
+    (actor) =>
+      actor.color === 'white' ||
+      actor.actorId === victim ||
+      (actor.actorId === snapshot.currentOpponentId &&
+        (!actor.defeated || playerDefeatActive)),
+  );
 }
