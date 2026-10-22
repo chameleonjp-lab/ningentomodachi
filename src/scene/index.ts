@@ -58,7 +58,7 @@ export function createSceneAdapter(
   options: SceneOptions,
 ): SpatialModule<Object3D> {
   const layout = options.layout ?? createParisStreetLayout(),
-    engine = createSpatialEngine(context.runId, layout);
+    engine = createSpatialEngine(context.runId, layout, context.posePolicy);
   const scene = new Scene();
   scene.background = new Color(0xc9d5dc);
   const camera = new PerspectiveCamera(50, 1, CAMERA_NEAR, CAMERA_FAR);
@@ -275,6 +275,7 @@ export function createSceneAdapter(
         };
       },
     },
+    ...(engine.poseProtocol ? { poseProtocol: engine.poseProtocol } : {}),
     step: (request, catalog) => {
       alive();
       return engine.step(request, catalog);

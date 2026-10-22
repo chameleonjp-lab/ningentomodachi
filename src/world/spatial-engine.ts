@@ -1,5 +1,7 @@
 import {
   type ActorId,
+  capturePoseRunPolicy,
+  type PoseRunPolicy,
   type CoreOutput,
   durationMs,
   type GameSnapshot,
@@ -26,7 +28,15 @@ import {
 import { add, dot, finite, length, mul, sub, unit, v } from './math';
 import type { StreetLayout } from './street-layout';
 import { createVehicleSystem } from './vehicle-system';
-export function createSpatialEngine(run: RunId, layout: StreetLayout) {
+import { createPoseTimeline } from './pose-timeline';
+export function createSpatialEngine(
+  run: RunId,
+  layout: StreetLayout,
+  policy?: PoseRunPolicy,
+) {
+  const mode = capturePoseRunPolicy(policy);
+  const timeline =
+    mode.mode === 'deterministic-pose-v1' ? createPoseTimeline(run) : undefined;
   const vehicles = createVehicleSystem(run, layout);
   const poses = new Map<ActorId, SpatialActor>();
   const attacks = new Map<ActorId, string>();
@@ -130,6 +140,9 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
       tick,
       actors: [...poses.values()].map((a) => ({
         ...a,
+        ...(timeline?.read(a.actorId)
+          ? { pose: timeline.read(a.actorId)! }
+          : {}),
         position: { ...a.position },
         facing: { ...a.facing },
         velocity: { ...a.velocity },
@@ -138,11 +151,23 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
     };
   }
   return {
+    poseProtocol: timeline
+      ? Object.freeze({
+          version: 1 as const,
+          protocol: 'deterministic-pose-v1' as const,
+          bindPreparedCatalog: timeline.bindPreparedCatalog,
+        })
+      : undefined,
     isRetired: (id: ActorId) => retired.has(id),
     assertReplayAllowed,
     commit(output: CoreOutput): SpatialSnapshot {
+      const applyPose = timeline?.prepareCommit(
+        output,
+        output.snapshot.clocks.gameTimeMs,
+      );
       sync(output);
       vehicles.commit(output, poses);
+      applyPose?.();
       return snapshot(output.snapshot.clocks.tick);
     },
     begin(
@@ -178,6 +203,7 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
       bases.delete(sessionId);
     },
     dispose() {
+      timeline?.dispose();
       vehicles.dispose();
       disposed = true;
       poses.clear();
@@ -211,141 +237,182 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
           1e-7
       )
         throw new Error('Noncontiguous spatial interval');
-      sync({ snapshot: state, events: [] });
-      lastTick = state.clocks.tick;
-      lastTime = state.clocks.gameTimeMs;
-      if (
-        state.phase !== 'running' ||
-        state.result ||
-        state.pauseReasons.length
-      )
-        return { snapshot: snapshot(state.clocks.tick), candidates: [] };
-
-      if (from < 0) throw new RangeError('Invalid spatial time interval');
-      const player = state.actors.find((a) => a.color === 'white');
-      const active = state.actors.filter(
-        (a) =>
-          !a.defeated &&
-          poses.has(a.actorId) &&
-          (a.actorId === player?.actorId ||
-            a.actorId === state.currentOpponentId),
-      );
-      const trajectories: ActorTrajectory[] = [];
-      const previousPoses = new Map(poses);
-      const obstacles = [
-        ...layout.objects.map((o) => toBox(o.position, o.halfExtents)),
-        ...vehicles.read().map((p) => {
-          const item = layout.vehicles.find(
-            (v) => v.vehicleId === p.vehicleId,
-          )!;
-          return toBox(
-            add(p.position, v(0, item.halfExtents.y, 0)),
-            item.halfExtents,
-          );
-        }),
-      ];
-      for (const actor of active) {
-        let old = poses.get(actor.actorId)!;
-        const target = active.find((a) => a.actorId !== actor.actorId);
-        const targetPose = target
-          ? previousPoses.get(target.actorId)
-          : undefined;
-        if (
-          targetPose &&
-          (!actor.attack ||
-            attacks.get(actor.actorId) !== actor.attack.activationId)
-        )
-          old = {
-            ...old,
-            facing: actor.attack
-              ? unit(
-                  v(
-                    targetPose.position.x - old.position.x,
-                    0,
-                    targetPose.position.z - old.position.z,
-                  ),
-                  old.facing,
-                )
-              : faceToward(
-                  old.facing,
-                  sub(targetPose.position, old.position),
-                  (8 * request.step.durationMs) / 1000,
-                ),
-          };
-        if (actor.attack) attacks.set(actor.actorId, actor.attack.activationId);
-        else attacks.delete(actor.actorId);
-        let movement = v(),
-          jump = false;
-        for (const intent of request.intents) {
-          if (intent.runId !== run || intent.actorId !== actor.actorId)
-            continue;
-          if (intent.type === 'MoveRequested') {
-            const basis = bases.get(intent.movementSessionId);
-            if (
-              basis?.revision === intent.basisRevision &&
-              Number.isFinite(intent.x) &&
-              Number.isFinite(intent.z) &&
-              Math.hypot(intent.x, intent.z) <= 1 + 1e-9
-            )
-              movement = add(
-                mul(basis.right, intent.x),
-                mul(basis.depth, intent.z),
-              );
+      // Validate descriptor/authority before any live motor or residency changes.
+      timeline?.prepareStep(request, new Map());
+      timeline?.validateAttackCatalog(state, catalog);
+      const checkpoint = timeline
+        ? {
+            poses: new Map(poses),
+            attacks: new Map(attacks),
+            retired: new Set(retired),
+            explicitResidency,
+            latestAuthority,
+            lastTick,
+            lastTime,
           }
-          if (intent.type === 'JumpRequested') jump = true;
-        }
-        const attack = actor.attack,
-          definition = attack ? catalog.get(attack.clipId) : undefined;
-        if (attack && !definition)
-          throw new Error('Active attack clip missing');
-        const sample =
-          attack && definition
-            ? catalog.sampleMotion(
-                attack.clipId,
-                durationMs(
-                  Math.min(
-                    definition.durationMs,
-                    Math.max(0, from - attack.startedAt),
-                  ),
-                ),
-                durationMs(
-                  Math.min(
-                    definition.durationMs,
-                    Math.max(0, to - attack.startedAt),
-                  ),
-                ),
-              )
-            : undefined;
-        const result = stepCharacter(
-          old,
-          actor,
-          from,
-          to,
-          movement,
-          jump,
-          sample,
-          attack?.startedAt ?? 0,
-          layout,
-          obstacles,
+        : undefined;
+      try {
+        sync({ snapshot: state, events: [] });
+        lastTick = state.clocks.tick;
+        lastTime = state.clocks.gameTimeMs;
+        if (
+          state.phase !== 'running' ||
+          state.result ||
+          state.pauseReasons.length
+        )
+          return { snapshot: snapshot(state.clocks.tick), candidates: [] };
+
+        if (from < 0) throw new RangeError('Invalid spatial time interval');
+        const player = state.actors.find((a) => a.color === 'white');
+        const active = state.actors.filter(
+          (a) =>
+            !a.defeated &&
+            poses.has(a.actorId) &&
+            (a.actorId === player?.actorId ||
+              a.actorId === state.currentOpponentId),
         );
-        poses.set(actor.actorId, result.actor);
-        trajectories.push({
-          state: actor,
-          actor: result.actor,
-          path: result.path,
-          sample,
-        });
+        const trajectories: ActorTrajectory[] = [];
+        const previousPoses = new Map(poses);
+        const obstacles = [
+          ...layout.objects.map((o) => toBox(o.position, o.halfExtents)),
+          ...vehicles.read().map((p) => {
+            const item = layout.vehicles.find(
+              (v) => v.vehicleId === p.vehicleId,
+            )!;
+            return toBox(
+              add(p.position, v(0, item.halfExtents.y, 0)),
+              item.halfExtents,
+            );
+          }),
+        ];
+        for (const actor of active) {
+          let old = poses.get(actor.actorId)!;
+          const target = active.find((a) => a.actorId !== actor.actorId);
+          const targetPose = target
+            ? previousPoses.get(target.actorId)
+            : undefined;
+          if (
+            targetPose &&
+            (!actor.attack ||
+              attacks.get(actor.actorId) !== actor.attack.activationId)
+          )
+            old = {
+              ...old,
+              facing: actor.attack
+                ? unit(
+                    v(
+                      targetPose.position.x - old.position.x,
+                      0,
+                      targetPose.position.z - old.position.z,
+                    ),
+                    old.facing,
+                  )
+                : faceToward(
+                    old.facing,
+                    sub(targetPose.position, old.position),
+                    (8 * request.step.durationMs) / 1000,
+                  ),
+            };
+          if (actor.attack)
+            attacks.set(actor.actorId, actor.attack.activationId);
+          else attacks.delete(actor.actorId);
+          let movement = v(),
+            jump = false;
+          for (const intent of request.intents) {
+            if (intent.runId !== run || intent.actorId !== actor.actorId)
+              continue;
+            if (intent.type === 'MoveRequested') {
+              const basis = bases.get(intent.movementSessionId);
+              if (
+                basis?.revision === intent.basisRevision &&
+                Number.isFinite(intent.x) &&
+                Number.isFinite(intent.z) &&
+                Math.hypot(intent.x, intent.z) <= 1 + 1e-9
+              )
+                movement = add(
+                  mul(basis.right, intent.x),
+                  mul(basis.depth, intent.z),
+                );
+            }
+            if (intent.type === 'JumpRequested') jump = true;
+          }
+          const attack = actor.attack,
+            definition = attack ? catalog.get(attack.clipId) : undefined;
+          if (attack && !definition)
+            throw new Error('Active attack clip missing');
+          const sample =
+            attack && definition
+              ? catalog.sampleMotion(
+                  attack.clipId,
+                  durationMs(
+                    Math.min(
+                      definition.durationMs,
+                      Math.max(0, from - attack.startedAt),
+                    ),
+                  ),
+                  durationMs(
+                    Math.min(
+                      definition.durationMs,
+                      Math.max(0, to - attack.startedAt),
+                    ),
+                  ),
+                )
+              : undefined;
+          const result = stepCharacter(
+            old,
+            actor,
+            from,
+            to,
+            movement,
+            jump,
+            sample,
+            attack?.startedAt ?? 0,
+            layout,
+            obstacles,
+          );
+          poses.set(actor.actorId, result.actor);
+          trajectories.push({
+            state: actor,
+            actor: result.actor,
+            path: result.path,
+            sample,
+          });
+        }
+        const applyPose = timeline?.prepareStep(
+          request,
+          new Map([...poses].map(([id, pose]) => [id, pose.locomotion])),
+        );
+        const candidates = [
+          ...combatContacts(run, trajectories),
+          ...streetContacts(run, state, trajectories, layout.objects),
+          ...vehicles.step(state, from, to, trajectories),
+        ].sort(
+          (a, b) =>
+            a.at - b.at ||
+            (a.contactId < b.contactId
+              ? -1
+              : a.contactId > b.contactId
+                ? 1
+                : 0),
+        );
+        applyPose?.();
+        return { snapshot: snapshot(state.clocks.tick), candidates };
+      } catch (error) {
+        if (checkpoint) {
+          poses.clear();
+          for (const [id, pose] of checkpoint.poses) poses.set(id, pose);
+          attacks.clear();
+          for (const [id, attack] of checkpoint.attacks)
+            attacks.set(id, attack);
+          retired.clear();
+          for (const id of checkpoint.retired) retired.add(id);
+          explicitResidency = checkpoint.explicitResidency;
+          latestAuthority = checkpoint.latestAuthority;
+          lastTick = checkpoint.lastTick;
+          lastTime = checkpoint.lastTime;
+        }
+        throw error;
       }
-      const candidates = [
-        ...combatContacts(run, trajectories),
-        ...streetContacts(run, state, trajectories, layout.objects),
-        ...vehicles.step(state, from, to, trajectories),
-      ].sort(
-        (a, b) =>
-          a.at - b.at ||
-          (a.contactId < b.contactId ? -1 : a.contactId > b.contactId ? 1 : 0),
-      );
-      return { snapshot: snapshot(state.clocks.tick), candidates };
     },
   };
 }

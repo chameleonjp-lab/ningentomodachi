@@ -18,8 +18,13 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import {
   type ActorColor,
   type ClipId,
+  clipId,
   durationMs,
   type PresentationTimeMs,
+  type PoseCatalogBindings,
+  type PoseClipBinding,
+  type DurationMs,
+  type StampedDefeatSeek,
 } from '../contracts';
 import type { ActorRig, AnimatorAssets } from './actorAnimator';
 import { fixedSwingTwistPath } from './entryRotation';
@@ -35,6 +40,7 @@ import {
   type SkinBoundsPlan,
 } from './skinBounds';
 import { inspectGlb } from './source';
+import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
 
 // Bounded immutable numeric plans only. No actor, scene, GPU or skeleton resources.
 const supportPlans = new Map<string, SkinBoundsPlan>();
@@ -46,7 +52,10 @@ export interface VerifiedPalette {
   readonly sourceSha256: string;
 }
 export interface ThreeAssetPack
-  extends Pick<AnimatorAssets<Object3D>, 'create' | 'clipDuration'> {
+  extends Pick<
+    AnimatorAssets<Object3D>,
+    'create' | 'clipDuration' | 'poseBindings'
+  > {
   clipNames(): readonly string[];
   rootPolicy(id: ClipId): ClipRootPolicy | undefined;
   dispose(): void;
@@ -74,6 +83,15 @@ export async function prepareThreeAssetPack(
     /** Trusted derived factory binds original policy provenance to its pinned
      * lossless source map; legacy callers still hash original source bytes. */
     readonly verifyPolicy?: (policy: ClipRootPolicy) => Promise<void>;
+    /** Internal only: the built-in verified lossless manifest retains original source identity. */
+    readonly poseOrigin?: (
+      name: string,
+      sourceIndex: number,
+      sourceClipIndex: number,
+    ) => {
+      readonly sourceSha256: string;
+      readonly sourceClipIndex: number;
+    };
     /** Trusted preparation strategy only; source authorization remains in the factory. */
     readonly inspect?: (
       bytes: Uint8Array,
@@ -191,6 +209,60 @@ export async function prepareThreeAssetPack(
   for (const clip of derived) {
     animations.set(clip.name, clip);
   }
+  let poseBindings: PoseCatalogBindings | undefined;
+  const originalNames = new Set(
+    receipts.flatMap((receipt) => receipt.clips.map((clip) => clip.name)),
+  );
+  try {
+    if (
+      ['Idle', 'Walk', 'Run', 'Jump'].every((name) => originalNames.has(name))
+    ) {
+      const origins: PoseBindingSource[] = [];
+      for (let sourceIndex = 0; sourceIndex < receipts.length; sourceIndex++) {
+        const receipt = receipts[sourceIndex],
+          bytes = captured[sourceIndex];
+        if (!receipt || !bytes) throw new Error('Missing pose source');
+        const sourceHash = preparation?.poseOrigin
+          ? undefined
+          : sourceIndex === 0
+            ? sourceKey
+            : [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+                .map((value) => value.toString(16).padStart(2, '0'))
+                .join('');
+        for (let index = 0; index < receipt.clips.length; index++) {
+          const sourceClip = receipt.clips[index];
+          if (!sourceClip) throw new Error('Missing pose source clip');
+          const clip = animations.get(sourceClip.name);
+          if (!clip) throw new Error('Missing loaded pose clip');
+          const origin = preparation?.poseOrigin?.(
+            sourceClip.name,
+            sourceIndex,
+            index,
+          );
+          const sourceSha256 = origin?.sourceSha256 ?? sourceHash;
+          if (!sourceSha256) throw new Error('Missing original pose hash');
+          const policy = policyMap.get(clipId(sourceClip.name));
+          origins.push({
+            clipId: clipId(clip.name),
+            durationMs: durationMs(clip.duration * 1000),
+            sourceSha256,
+            sourceClipIndex: origin?.sourceClipIndex ?? index,
+            ...(policy ? { rootPolicy: policy } : {}),
+          });
+        }
+      }
+      poseBindings = await buildPoseBindings(
+        origins,
+        preparation ? () => preparation.checkpoint('pose:binding') : undefined,
+      );
+    }
+  } catch (error) {
+    for (const item of loaded) releaseScene(item.scene);
+    throw error;
+  }
+  const poseById = new Map(
+    poseBindings?.clips.map((binding) => [binding.clipId, binding]),
+  );
   // Other category meshes never enter the scene. Their clips are compatible by validated signature.
   for (const item of loaded.slice(1)) releaseScene(item.scene);
   let disposed = false,
@@ -202,6 +274,7 @@ export async function prepareThreeAssetPack(
     supportPlan = undefined;
     animations.clear();
     policyMap.clear();
+    poseById.clear();
     const textures = new Set<Texture>();
     template.traverse((node) => {
       if (node instanceof Mesh)
@@ -223,6 +296,7 @@ export async function prepareThreeAssetPack(
     for (const texture of textures) texture.dispose();
   };
   return {
+    ...(poseBindings ? { poseBindings } : {}),
     rootPolicy: (id) => policyMap.get(id),
     clipNames: () => Object.freeze([...animations.keys()]),
     clipDuration: (id) => {
@@ -285,10 +359,10 @@ export async function prepareThreeAssetPack(
       let current: ClipId | undefined;
       let actorDisposed = false;
       let defeatEntry: {
-        bone: Bone;
-        position: Bone['position'];
-        rotation: Bone['quaternion'];
-        scale: Bone['scale'];
+        bone: Object3D;
+        position: Object3D['position'];
+        rotation: Object3D['quaternion'];
+        scale: Object3D['scale'];
       }[] = [];
 
       let unblendedPose: typeof defeatEntry = [];
@@ -337,10 +411,44 @@ export async function prepareThreeAssetPack(
             : new Matrix4(),
         );
       };
-      references++;
-      return {
-        node,
-        defeatPoseSupport: () => observation,
+      const baseline: typeof defeatEntry = [];
+      node.traverse((part) => {
+        // The outer actor container is not a glTF animation target. C parents are never captured.
+        if (part !== node)
+          baseline.push({
+            bone: part,
+            position: part.position.clone(),
+            rotation: part.quaternion.clone(),
+            scale: part.scale.clone(),
+          });
+      });
+      let qualifiedUsed = false;
+      let stampedIdentity: string | undefined;
+      const resetSource = (switchClip: boolean) => {
+        mixer.stopAllAction();
+        for (const pose of baseline) {
+          pose.bone.position.copy(pose.position);
+          pose.bone.quaternion.copy(pose.rotation);
+          pose.bone.scale.copy(pose.scale);
+        }
+        unblendedPose = [];
+        if (switchClip) current = undefined;
+      };
+      const validatePose = (binding: PoseClipBinding, time: DurationMs) => {
+        if (actorDisposed) throw new Error('Actor disposed');
+        const known = binding && poseById.get(binding.clipId);
+        if (
+          !known ||
+          binding.sourceBindingId !== known.sourceBindingId ||
+          binding.durationMs !== known.durationMs ||
+          !Number.isFinite(time) ||
+          time < 0 ||
+          time > known.durationMs
+        )
+          throw new Error('Invalid or mismatched source pose binding/time');
+        return known;
+      };
+      const driver: Pick<ActorRig<Object3D>, 'seek'> = {
         seek(id, seconds, defeatStartedAt) {
           observation = undefined;
           if (actorDisposed) throw new Error('Actor disposed');
@@ -588,6 +696,114 @@ export async function prepareThreeAssetPack(
               currentLocalBounds: displayedBounds(),
             };
         },
+      };
+      const evaluate = driver.seek;
+      const sampleCanonical = (binding: PoseClipBinding, time: DurationMs) => {
+        resetSource(true);
+        const clip = animations.get(binding.clipId);
+        if (!clip) throw new Error('Missing prepared source clip');
+        evaluate(
+          binding.clipId,
+          time === binding.durationMs ? clip.duration : time / 1000,
+        );
+      };
+      const beginQualified = () => {
+        if (!qualifiedUsed) capturedEntries.clear();
+        qualifiedUsed = true;
+      };
+      references++;
+      return {
+        node,
+        defeatPoseSupport: () => observation,
+        seek(id, seconds, defeatStartedAt) {
+          if (qualifiedUsed)
+            throw new Error('Cannot mix legacy seek into a stamped rig');
+          evaluate(id, seconds, defeatStartedAt);
+        },
+        seekPose(binding, time) {
+          const known = validatePose(binding, time);
+          beginQualified();
+          sampleCanonical(known, time);
+        },
+        seekDefeat(request: StampedDefeatSeek) {
+          const entry = request?.entry;
+          if (!entry) throw new Error('Missing stamped entry');
+          const input = {
+            runId: request.runId,
+            actorId: request.actorId,
+            defeatStartedAt: request.defeatStartedAt,
+            deathClipId: request.deathClipId,
+            deathClipTime: request.deathClipTime,
+            entry: {
+              binding: entry.binding,
+              clipTime: entry.clipTime,
+              sampleSide: entry.sampleSide,
+            },
+          };
+          if (actorDisposed) throw new Error('Actor disposed');
+          if (
+            typeof input.runId !== 'string' ||
+            !input.runId.trim() ||
+            typeof input.actorId !== 'string' ||
+            !input.actorId.trim() ||
+            !Number.isFinite(input.defeatStartedAt) ||
+            input.defeatStartedAt < 0 ||
+            (input.deathClipId !== 'DefeatPunch' &&
+              input.deathClipId !== 'DefeatKick') ||
+            !Number.isFinite(input.deathClipTime) ||
+            input.deathClipTime < 0 ||
+            input.deathClipTime > 500 ||
+            input.entry.sampleSide !== 'left' ||
+            !pelvis ||
+            animations.get(input.deathClipId)?.duration !== 0.5
+          )
+            throw new Error('Invalid stamped defeat input');
+          const binding = validatePose(
+            input.entry.binding,
+            input.entry.clipTime,
+          );
+          const identity = JSON.stringify([
+            input.runId,
+            input.actorId,
+            input.defeatStartedAt,
+            input.deathClipId,
+            binding.clipId,
+            binding.durationMs,
+            binding.sourceBindingId,
+            input.entry.clipTime,
+            input.entry.sampleSide,
+          ]);
+          if (stampedIdentity !== undefined && stampedIdentity !== identity)
+            throw new Error('Conflicting stamped defeat provenance');
+          beginQualified();
+          if (stampedIdentity === undefined) {
+            sampleCanonical(binding, input.entry.clipTime);
+            const floor = Math.min(0, measureSupport().floor);
+            const minY = displayedBounds().min.y;
+            const poses = baseline.map(({ bone }) => ({
+              bone,
+              position: bone.position.clone(),
+              rotation: bone.quaternion.clone(),
+              scale: bone.scale.clone(),
+            }));
+            capturedEntries.set(input.defeatStartedAt, {
+              poses,
+              floor,
+              minY,
+              pelvis: actorRotation(pelvis),
+            });
+            stampedIdentity = identity;
+          }
+          resetSource(
+            current !== input.deathClipId ||
+              activation !== input.defeatStartedAt,
+          );
+          evaluate(
+            input.deathClipId,
+            input.deathClipTime / 1000,
+            input.defeatStartedAt,
+          );
+        },
         setEmissiveEnabled(enabled) {
           if (actorDisposed) return;
           for (const [material, original] of emission)
@@ -598,6 +814,13 @@ export async function prepareThreeAssetPack(
           actorDisposed = true;
           observation = undefined;
           capturedEntries.clear();
+          baseline.length = 0;
+          defeatEntry = [];
+          defeatBase = [];
+          unblendedPose = [];
+          canonicalFall = undefined;
+          entryFall = undefined;
+          stampedIdentity = undefined;
           mixer.stopAllAction();
           mixer.uncacheRoot(node);
           const skeletons = new Set<SkinnedMesh['skeleton']>();

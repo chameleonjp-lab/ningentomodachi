@@ -1,5 +1,12 @@
-import type { ActorColor, ActorId, GameSnapshot } from '../contracts';
+import {
+  capturePoseRunPolicy,
+  type PoseRunPolicy,
+  type ActorColor,
+  type ActorId,
+  type GameSnapshot,
+} from '../contracts';
 import type { ActorRig, AnimatorAssets } from '../assets';
+import { immutableDto } from './immutableDto';
 
 /** Per-run resource ownership, not a replacement for B/C retirement guards.
  * The loading Core snapshot is the only authority for IDs and initial residency. */
@@ -8,7 +15,14 @@ export function createResidentAssetStage<Node>(
   source: AnimatorAssets<Node>,
   yieldTask: () => Promise<void> = () =>
     new Promise((resolve) => setTimeout(resolve, 0)),
+  posePolicy?: PoseRunPolicy,
 ) {
+  const policy = capturePoseRunPolicy(posePolicy);
+  // Read once before any allocation/yield. Both consumers receive this captured DTO.
+  const suppliedPoseBindings = source.poseBindings;
+  const poseBindings = suppliedPoseBindings
+    ? immutableDto(suppliedPoseBindings)
+    : undefined;
   const run = initial.runId;
   const roster = new Map<ActorId, ActorColor>();
   const colors = new Set<ActorColor>();
@@ -35,14 +49,30 @@ export function createResidentAssetStage<Node>(
     if (disposed || signal.aborted) throw new Error('Run assets cancelled');
   };
   const acceptCreated = (rig: ActorRig<Node>) => {
-    // A provider can synchronously trigger disposal before returning ownership.
-    if (!disposed) return rig;
+    // Ownership begins when create returns, before inspecting provider properties.
+    // Inspection may throw or synchronously dispose the stage via an accessor.
     try {
-      rig.dispose();
-    } catch {
-      /* Cancellation remains the original failure. */
+      if (disposed) throw new Error('Run assets cancelled');
+      if (
+        policy.mode === 'deterministic-pose-v1' &&
+        (!('seekPose' in rig) ||
+          typeof rig.seekPose !== 'function' ||
+          !('seekDefeat' in rig) ||
+          typeof rig.seekDefeat !== 'function')
+      )
+        throw new Error(
+          'Required rig lacks deterministic pose driver capability',
+        );
+      if (disposed) throw new Error('Run assets cancelled');
+      return rig;
+    } catch (error) {
+      try {
+        rig.dispose();
+      } catch {
+        /* Preserve the original inspection failure. */
+      }
+      throw error;
     }
-    throw new Error('Run assets cancelled');
   };
   const dispose = () => {
     if (disposed) return;
@@ -63,6 +93,7 @@ export function createResidentAssetStage<Node>(
       throw new AggregateError(errors, 'Pending rig cleanup failed');
   };
   const assets: AnimatorAssets<Node> = {
+    ...(poseBindings ? { poseBindings } : {}),
     locomotionClips: source.locomotionClips,
     clipDuration: (id) => source.clipDuration(id),
     create(color) {

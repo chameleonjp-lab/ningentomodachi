@@ -88,7 +88,10 @@ export async function prepareAndroidVisualAssets(input: {
     });
     check();
     const owned = pack;
+    // The verified factory resolves with a final immutable descriptor.
+    const poseBindings = owned.poseBindings;
     return {
+      ...(poseBindings ? { poseBindings } : {}),
       create(color) {
         const rig = owned.create(color);
         if (typeof rig.defeatPoseSupport !== 'function') {

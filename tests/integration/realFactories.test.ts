@@ -9,6 +9,7 @@ import {
 } from '../../src/contracts';
 import { createParisStreetLayout } from '../../src/scene';
 import type { MotionAsset } from '../../src/assets';
+import * as AssetModule from '../../src/assets';
 import {
   createIntegratedGame,
   type AcceptedGameConfiguration,
@@ -1220,3 +1221,197 @@ test('retry between staged rig creations releases the old run and ignores stale 
   expect(f.dispose).toHaveBeenCalledTimes(2);
   expect(f.rigDispose).toHaveBeenCalledTimes(3);
 });
+
+test('composition forwards one captured descriptor before rejecting an explicitly unqualified display', async () => {
+  const f = fixture(),
+    node = root();
+  const originalCatalog = AssetModule.createMotionCatalog;
+  const originalAnimator = AssetModule.createActorAnimator;
+  const preparedBindings: Array<
+    import('../../src/contracts').PoseCatalogBindings | undefined
+  > = [];
+  const animatorInputs: Array<
+    AssetModule.AnimatorAssets<import('three').Object3D>
+  > = [];
+  const catalogSpy = vi
+    .spyOn(AssetModule, 'createMotionCatalog')
+    .mockImplementation((loader, options) => {
+      const catalog = originalCatalog(loader, options);
+      return {
+        ...catalog,
+        get pose() {
+          return catalog.pose;
+        },
+        async prepare(signal) {
+          await catalog.prepare(signal);
+          preparedBindings.push(catalog.pose);
+        },
+      };
+    });
+  const animatorSpy = vi
+    .spyOn(AssetModule, 'createActorAnimator')
+    .mockImplementation((context, assets) => {
+      animatorInputs.push(
+        assets as AssetModule.AnimatorAssets<import('three').Object3D>,
+      );
+      // Deliberately unqualified display double, even after the real consumer exists.
+      return { ...originalAnimator(context, assets), poseProtocol: undefined };
+    });
+  let descriptorReads = 0;
+  const loadAssets: AcceptedGameConfiguration['loadAssets'] = async (
+    context,
+    signal,
+  ) => {
+    const prepared = await f.config.loadAssets(context, signal);
+    const descriptor = {
+      version: 1 as const,
+      bindingSetId: 'original-captured',
+      clips: [
+        ...['idle', 'walk', 'run', 'jump'].map((id) => ({
+          clipId: clipId(id),
+          durationMs: durationMs(100),
+          sourceBindingId: `fixture:${id}`,
+        })),
+        ...prepared.motions.map(({ definition }) => ({
+          clipId: definition.clipId,
+          durationMs: definition.durationMs,
+          sourceBindingId: `fixture:${definition.clipId}`,
+        })),
+      ],
+      locomotion: prepared.animator.locomotionClips,
+    };
+    return {
+      ...prepared,
+      animator: {
+        ...prepared.animator,
+        get poseBindings() {
+          descriptorReads++;
+          return descriptor;
+        },
+        create(color) {
+          descriptor.bindingSetId = 'caller-mutated-during-create';
+          descriptor.clips[0]!.sourceBindingId = 'caller-mutated';
+          return {
+            ...prepared.animator.create(color),
+            seekPose() {},
+            seekDefeat() {},
+          };
+        },
+      },
+    };
+  };
+  const game = createIntegratedGame(node, {
+    posePolicy: { version: 1, mode: 'deterministic-pose-v1' },
+    sessionId: 'descriptor-forward',
+    seed: 1,
+    viewport,
+    createRenderer: renderer,
+    configuration: { ...f.config, loadAssets },
+  });
+  try {
+    await expect(game.start()).rejects.toThrow(/pose/i);
+    expect(game.hostState().phase).toBe('error');
+    expect(descriptorReads).toBe(1);
+    expect(preparedBindings[0]?.bindingSetId).toBe('original-captured');
+    expect(animatorInputs).toHaveLength(1);
+    expect(animatorInputs[0]!.poseBindings).toEqual(preparedBindings[0]);
+    expect(animatorInputs[0]!.poseBindings!.clips[0]!.sourceBindingId).toBe(
+      'fixture:idle',
+    );
+    expect([...f.rigs.keys()]).toEqual(['white', 'blue']);
+  } finally {
+    game.dispose();
+    node.remove();
+    catalogSpy.mockRestore();
+    animatorSpy.mockRestore();
+  }
+});
+
+test.each([
+  'missing-descriptor',
+  'missing-attack',
+  'duration',
+  'no-stamped-consumer',
+] as const)(
+  'prospective pose forwarding rejects %s before ready and releases the actual staged residents',
+  async (failure) => {
+    const f = fixture(),
+      node = root();
+    const originalAnimator = AssetModule.createActorAnimator;
+    const displaySpy = vi
+      .spyOn(AssetModule, 'createActorAnimator')
+      .mockImplementation((context, assets) => ({
+        ...originalAnimator(context, assets),
+        poseProtocol: undefined,
+      }));
+    const loadAssets: AcceptedGameConfiguration['loadAssets'] = async (
+      context,
+      signal,
+    ) => {
+      const prepared = await f.config.loadAssets(context, signal);
+      const bindings = {
+        version: 1 as const,
+        bindingSetId: 'negative-forwarding',
+        clips: [
+          ...['idle', 'walk', 'run', 'jump'].map((id) => ({
+            clipId: clipId(id),
+            durationMs: durationMs(100),
+            sourceBindingId: `fixture:${id}`,
+          })),
+          ...prepared.motions.map(({ definition }) => ({
+            clipId: definition.clipId,
+            durationMs: definition.durationMs,
+            sourceBindingId: `fixture:${definition.clipId}`,
+          })),
+        ],
+        locomotion: prepared.animator.locomotionClips,
+      };
+      if (failure === 'missing-attack') bindings.clips.pop();
+      if (failure === 'duration')
+        bindings.clips.at(-1)!.durationMs = durationMs(101);
+      return {
+        ...prepared,
+        animator: {
+          ...prepared.animator,
+          ...(failure === 'missing-descriptor'
+            ? {}
+            : { poseBindings: bindings }),
+          create(color) {
+            return {
+              ...prepared.animator.create(color),
+              seekPose() {},
+              seekDefeat() {},
+            };
+          },
+        },
+      };
+    };
+    const game = createIntegratedGame(node, {
+      sessionId: `negative-${failure}`,
+      seed: 1,
+      viewport,
+      createRenderer: renderer,
+      configuration: { ...f.config, loadAssets },
+      // Deliberately no advertised display consumer; catalog failures must still
+      // surface before the host can qualify readiness.
+      posePolicy: { version: 1, mode: 'deterministic-pose-v1' },
+    });
+    try {
+      await expect(game.start()).rejects.toThrow(/pose/i);
+      expect(game.hostState().phase).toBe('error');
+      expect(f.seek).not.toHaveBeenCalled();
+      expect(f.rigDispose).toHaveBeenCalledTimes(2);
+      expect(f.dispose).toHaveBeenCalledTimes(1);
+      expect(f.lifecycle).toEqual([
+        'create:white',
+        'create:blue',
+        'dispose:white:detached',
+        'dispose:blue:detached',
+      ]);
+    } finally {
+      game.dispose();
+      node.remove();
+      displaySpy.mockRestore();
+    }
+  },
+);
