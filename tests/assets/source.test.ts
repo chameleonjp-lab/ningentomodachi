@@ -1,6 +1,40 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from 'vitest';
-import { inspectGlb } from '../../src/assets/source';
+import { afterEach, expect, test } from 'vitest';
+import {
+  inspectGlb as inspectSync,
+  inspectGlbYielding,
+  type SourceInspection,
+} from '../../src/assets/source';
+// Every existing original/malformed/optional source control is replayed through
+// the cooperative driver as well, without changing its original assertion.
+let inspected: {
+  bytes: Uint8Array;
+  receipt?: SourceInspection;
+  error?: Error;
+}[] = [];
+function inspectGlb(bytes: Uint8Array): SourceInspection {
+  const captured = new Uint8Array(bytes);
+  try {
+    const receipt = inspectSync(bytes);
+    inspected.push({ bytes: captured, receipt });
+    return receipt;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    inspected.push({ bytes: captured, error });
+    throw error;
+  }
+}
+afterEach(async () => {
+  const cases = inspected;
+  inspected = [];
+  for (const candidate of cases) {
+    // Scheduling behavior is tested separately with actual timer tasks.
+    const result = inspectGlbYielding(candidate.bytes, async () => {});
+    if (candidate.error)
+      await expect(result).rejects.toThrow(candidate.error.message);
+    else expect(await result).toEqual(candidate.receipt);
+  }
+});
 
 const base = 'assets/android/motions/';
 const categories = { movement: 9, jump: 1, punch: 13, kick: 19 };

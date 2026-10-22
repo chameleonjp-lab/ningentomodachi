@@ -1,8 +1,8 @@
 import {
   type ActorId,
   type CoreOutput,
-  type GameSnapshot,
   durationMs,
+  type GameSnapshot,
   type MotionCatalogPort,
   type MovementBasisSnapshot,
   type RunId,
@@ -12,7 +12,12 @@ import {
   type SpatialStepResult,
   type Vector3,
 } from '../contracts';
-import { faceToward, stepCharacter, toBox } from './character-motor';
+import {
+  assertFiniteMotorInterval,
+  faceToward,
+  stepCharacter,
+  toBox,
+} from './character-motor';
 import {
   type ActorTrajectory,
   combatContacts,
@@ -197,6 +202,9 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
         request.step.durationMs <= 0
       )
         throw new RangeError('Invalid spatial step');
+      const to = state.clocks.gameTimeMs,
+        from = to - request.step.durationMs;
+      assertFiniteMotorInterval(from, to);
       if (
         state.phase === 'running' &&
         Math.abs(state.clocks.gameTimeMs - request.step.durationMs - lastTime) >
@@ -212,8 +220,7 @@ export function createSpatialEngine(run: RunId, layout: StreetLayout) {
         state.pauseReasons.length
       )
         return { snapshot: snapshot(state.clocks.tick), candidates: [] };
-      const to = state.clocks.gameTimeMs,
-        from = to - request.step.durationMs;
+
       if (from < 0) throw new RangeError('Invalid spatial time interval');
       const player = state.actors.find((a) => a.color === 'white');
       const active = state.actors.filter(

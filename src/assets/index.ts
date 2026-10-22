@@ -32,3 +32,11 @@ export type { SourceStrikeShape } from './evaluateSource';
 export { copyRootPolicy, assertRootPolicyCompatibility } from './rootPolicy';
 export type { ClipRootPolicy } from './rootPolicy';
 export { PROVISIONAL_GROUNDED_REPRESENTATIVE_POLICIES } from './representativePolicies';
+
+export { createPinnedThreeAssetPack } from './runtimeArtifacts';
+export type { PinnedAssetPackInput } from './runtimeArtifacts';
+export { ANDROID_RUNTIME_ARTIFACT_V1 } from './runtimeArtifactManifest';
+
+export { createPinnedDerivedThreeAssetPack } from './derivedAssetPack';
+export type { PinnedDerivedAssetPackInput } from './derivedAssetPack';
+export { ANDROID_DERIVED_PACK_V1 } from './derivedPackManifest';
