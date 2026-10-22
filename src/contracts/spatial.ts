@@ -72,6 +72,8 @@ export type SpatialCandidate = ContactEnvelope &
     | {
         readonly kind: 'destruction';
         readonly sourceActorId: ActorId;
+        /** Required by Core for direct (launchId:null) strike validation; no trusted damage. */
+        readonly source?: ImpactReference;
         readonly targetId: VehicleId | WorldObjectId;
         readonly launchId: LaunchId | null;
         readonly contactSpeedMps: number;

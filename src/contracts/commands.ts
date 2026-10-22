@@ -14,7 +14,8 @@ export interface InputPacket {
   readonly commandId: CommandId;
   readonly sequence: number;
 }
-/** x/z are normalized screen-right/street-depth components, each [-1,1], length <= 1.
+/** x/z are normalized held-basis components, each [-1,1], length <= 1.
+ * Positive x is screen-right; positive z is screen-up/away-from-camera, not world axes.
  * C uses the acquired basis for the whole session, not the current camera. */
 export type GameplayCommand = Envelope & {
   readonly input: InputPacket;
