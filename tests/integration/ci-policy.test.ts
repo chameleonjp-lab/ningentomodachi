@@ -9,7 +9,7 @@ const expected = [
   'ci-integration',
   'ci-build',
 ];
-test('CI has stable fail-closed checks, isolated concurrency, evidence and no deployment', () => {
+test('CI has stable fail-closed checks and gated exact-main Pages deployment', () => {
   expect(existsSync(ciPath), 'P0 CI workflow must exist').toBe(true);
   const source = readFileSync(ciPath, 'utf8');
   const workflow = parse(source);
@@ -21,7 +21,9 @@ test('CI has stable fail-closed checks, isolated concurrency, evidence and no de
     'github.event.pull_request.number',
   );
   expect(workflow.concurrency.group).toContain('github.ref');
-  expect(workflow.concurrency['cancel-in-progress']).toBe(true);
+  expect(workflow.concurrency['cancel-in-progress']).toContain(
+    "github.event_name == 'pull_request'",
+  );
   for (const name of expected) {
     expect(workflow.jobs[name].name).toBe(name);
     expect(
@@ -39,9 +41,83 @@ test('CI has stable fail-closed checks, isolated concurrency, evidence and no de
   expect(workflow.jobs['ci-required'].name).toBe('ci-required');
   expect(workflow.jobs['ci-required'].needs).toEqual(expected);
   expect(workflow.jobs['ci-required'].if).toContain('always()');
-  expect(source).not.toMatch(
-    /secrets\.|deploy-pages|upload-pages-artifact|pages: write|id-token: write/,
+  expect(source).not.toMatch(/secrets\.|pull_request_target|workflow_run/);
+  expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'push']);
+  for (const name of [...expected, 'ci-required']) {
+    expect(workflow.jobs[name].permissions).toBeUndefined();
+  }
+  const packageJob = workflow.jobs['pages-package'];
+  expect(packageJob.needs).toEqual(['ci-required']);
+  expect(packageJob.permissions).toEqual({
+    contents: 'read',
+    'pull-requests': 'read',
+  });
+  for (const condition of [
+    "github.event_name == 'push'",
+    "github.ref == 'refs/heads/main'",
+    "github.repository == 'chameleonjp-lab/ningentomodachi'",
+    "needs.ci-required.result == 'success'",
+    "vars.PAGES_DEPLOY_ENABLED == 'true'",
+  ]) {
+    expect(packageJob.if).toContain(condition);
+  }
+  const download = packageJob.steps.find((step: { uses?: string }) =>
+    step.uses?.startsWith('actions/download-artifact@'),
   );
+  expect(download.with.pattern).toContain('ci-build-');
+  expect(download.with.pattern).toContain('github.sha');
+  expect(download.with.pattern).toContain('github.run_id');
+  expect(download.with['run-id']).toBeUndefined();
+  expect(download.with['github-token']).toBeUndefined();
+  expect(
+    packageJob.steps.some(
+      (step: { run?: string }) =>
+        step.run === 'node deployment/validate-pages-artifact.mjs',
+    ),
+  ).toBe(true);
+  const deploy = workflow.jobs['pages-deploy'];
+  expect(deploy.needs).toEqual(['pages-package']);
+  expect(deploy.permissions).toEqual({
+    contents: 'read',
+    pages: 'write',
+    'id-token': 'write',
+  });
+  expect(deploy.environment.name).toBe('github-pages');
+  expect(deploy.concurrency['cancel-in-progress']).toBe(false);
+  for (const step of deploy.steps) {
+    expect(step.run).toBeUndefined();
+    expect(step.uses).not.toMatch(/checkout|setup-node/);
+    expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
+  }
+  expect(deploy.steps[0].with.script).toContain(
+    'GET /repos/{owner}/{repo}/pages',
+  );
+  expect(deploy.steps[0].with.script).toContain(
+    "data.build_type !== 'workflow'",
+  );
+  expect(deploy.steps[1].with.script).toContain(
+    'data.commit.sha !== context.sha',
+  );
+  expect(deploy.steps.at(-1).with.artifact_name).toContain(
+    'needs.pages-package.outputs.artifact-name',
+  );
+  expect(packageJob.outputs['artifact-name']).toContain(
+    'steps.package.outputs.artifact-name',
+  );
+  expect(packageJob.outputs['package-attempt']).toContain(
+    'steps.package.outputs.package-attempt',
+  );
+  expect(workflow.jobs['pages-verify'].permissions).toEqual({});
+  const readiness = JSON.parse(
+    readFileSync('deployment/release-readiness.json', 'utf8'),
+  );
+  expect(readiness.schemaVersion).toBe(1);
+  expect(typeof readiness.enabled).toBe('boolean');
+  if (readiness.enabled) {
+    expect(readiness.acceptedCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(readiness.publicInventorySha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(readiness.acceptanceEvidence).toMatch(/^docs\/deployment\//);
+  }
 });
 test('publish boundary cannot deploy or run from push, PR, or CI completion', () => {
   const path = '.github/workflows/publish.yml';
