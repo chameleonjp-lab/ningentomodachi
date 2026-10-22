@@ -222,3 +222,62 @@ for (const field of [
     ).toThrow(/hash mismatch/);
   });
 }
+
+test('shared source geometry retains exact clipping order and posed barycentric arithmetic', async () => {
+  const { clipBarycentricTriangle, interpolateFace } = await import(
+    '../../tools/assets/sourceContactGeometry'
+  );
+  expect(clipBarycentricTriangle([[1, -1, 1]])).toEqual([
+    [1, 0, 0],
+    [0.5, 0.5, 0],
+    [0, 0.5, 0.5],
+    [0, 0, 1],
+  ]);
+  expect(
+    interpolateFace(
+      [
+        { x: 1, y: 2, z: 3 },
+        { x: 3, y: 4, z: 5 },
+        { x: 5, y: 6, z: 7 },
+      ],
+      [0.25, 0.5, 0.25],
+    ),
+  ).toEqual({ x: 3, y: 4, z: 5 });
+});
+
+test('shared source geometry retains empty, boundary and invalid half-space behavior', async () => {
+  const { clipBarycentricTriangle, positiveArea, stretchBound } = await import(
+    '../../tools/assets/sourceContactGeometry'
+  );
+  const { Matrix4 } = await import('three');
+  const original = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  expect(clipBarycentricTriangle([])).toEqual(original);
+  expect(clipBarycentricTriangle([[0, 0, 0]])).toEqual(original);
+  expect(clipBarycentricTriangle([[-1, -1, -1]])).toEqual([]);
+  expect(() => clipBarycentricTriangle([[NaN, 0, 1]])).toThrow('Finite');
+  expect(
+    positiveArea([
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 0 },
+    ]),
+  ).toBe(false);
+  expect(stretchBound(new Matrix4().makeScale(2, 3, 4))).toBe(4);
+});
+
+test('shared extraction regenerates frozen kick candidates byte for byte', async () => {
+  const { bakeGroundedKickDiagnostics } = await import(
+    '../../tools/assets/bakeGroundedKickDiagnostics'
+  );
+  const result = await bakeGroundedKickDiagnostics(source());
+  const actual = Buffer.from(`${JSON.stringify(result, null, 2)}\n`);
+  const expected = readFileSync(
+    'tests/assets/fixtures/grounded-kicks-v1/candidate.json.fixture',
+  );
+  expect(actual.length).toBe(expected.length);
+  expect(actual.equals(expected)).toBe(true);
+}, 30_000);

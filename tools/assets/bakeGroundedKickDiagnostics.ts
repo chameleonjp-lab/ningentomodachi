@@ -3,14 +3,13 @@ import {
   AnimationMixer,
   Euler,
   LoopOnce,
-  Matrix4,
   Mesh,
   Quaternion,
   SkinnedMesh,
   Vector3 as ThreeVector3,
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { durationMs, type HitVolume, type Vector3 } from '../../src/contracts';
+import { durationMs, type Vector3 } from '../../src/contracts';
 import { bakeMotion } from '../../src/assets/bakeMotion';
 import { extractedTranslation } from '../../src/assets/rootPolicy';
 import {
@@ -19,55 +18,15 @@ import {
   type GroundedKickSourceInput,
 } from './groundedKickDiagnostic';
 
-/** Mesh-bind +Z axis in the foot's bind-reference frame, fixed before target tests.
- * Radial center is the source XY bounds midpoint; radius encloses all source points.
- * At that fixed radius, shorten the axis interval only as point containment permits.
- * The 1e-7m arithmetic guard is separate from any interpolation/gameplay allowance. */
-export function fitSourceAxisCapsule(
-  points: readonly Vector3[],
-): Extract<HitVolume, { readonly kind: 'capsule' }> {
-  if (
-    !points.length ||
-    points.some((p) => ![p.x, p.y, p.z].every(Number.isFinite))
-  )
-    throw new Error('Finite nonempty source surface required');
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y);
-    maxY = Math.max(maxY, p.y);
-  }
-  const x = (minX + maxX) / 2,
-    y = (minY + maxY) / 2;
-  let radialSquared = 0;
-  for (const p of points)
-    radialSquared = Math.max(radialSquared, (p.x - x) ** 2 + (p.y - y) ** 2);
-  if (!(radialSquared > 0) || !Number.isFinite(radialSquared))
-    throw new Error('Nondegenerate finite source surface required');
-  const radiusM = Math.sqrt(radialSquared) + 1e-7;
-  let startZ = Infinity,
-    endZ = -Infinity;
-  for (const p of points) {
-    const remaining = Math.sqrt(
-      Math.max(0, radialSquared - (p.x - x) ** 2 - (p.y - y) ** 2),
-    );
-    startZ = Math.min(startZ, p.z + remaining);
-    endZ = Math.max(endZ, p.z - remaining);
-  }
-  if (startZ > endZ) startZ = endZ = (startZ + endZ) / 2;
-  if (![x, y, startZ, endZ, radiusM].every(Number.isFinite))
-    throw new Error('Nonfinite capsule fit');
-  return {
-    kind: 'capsule',
-    start: { x, y, z: startZ },
-    end: { x, y, z: endZ },
-    radiusM,
-  };
-}
+import {
+  clipBarycentricTriangle,
+  fitSourceAxisCapsule,
+  interpolateFace,
+  positiveArea,
+  stretchBound,
+  type SourceBarycentric,
+} from './sourceContactGeometry';
+export { fitSourceAxisCapsule, type SourceBarycentric } from './sourceContactGeometry';
 
 export interface SourceContactTriangle {
   readonly positions: readonly Vector3[];
@@ -75,7 +34,6 @@ export interface SourceContactTriangle {
   readonly footWeights: readonly number[];
   readonly toeWeights: readonly number[];
 }
-export type SourceBarycentric = readonly [number, number, number];
 /** Clip the ORIGINAL face, not just its already-selected vertices. Numeric cuts
  * are developer-authored anatomy seeds; normal fields are source vertex normals,
  * not a claim that the smoothly interpolated field is a geometric face normal. */
@@ -115,41 +73,7 @@ export function clipContactTriangle(
           values((i) => 0.035 - (face.positions[i]?.y ?? 0)),
           values((i) => -0.35 - (face.normals[i]?.y ?? 0)),
         ];
-  let polygon: SourceBarycentric[] = [
-    [1, 0, 0],
-    [0, 1, 0],
-    [0, 0, 1],
-  ];
-  for (const field of fields) {
-    const next: SourceBarycentric[] = [];
-    const value = (b: SourceBarycentric) =>
-      b[0] * field[0] + b[1] * field[1] + b[2] * field[2];
-    for (let i = 0; i < polygon.length; i++) {
-      const a = polygon[i],
-        b = polygon[(i + 1) % polygon.length];
-      if (!a || !b) throw new Error('Invalid clipping edge');
-      const av = value(a),
-        bv = value(b);
-      if (av >= 0) next.push(a);
-      if (av >= 0 !== bv >= 0) {
-        const t = av / (av - bv);
-        next.push([
-          a[0] + (b[0] - a[0]) * t,
-          a[1] + (b[1] - a[1]) * t,
-          a[2] + (b[2] - a[2]) * t,
-        ]);
-      }
-    }
-    polygon = next.filter((point, index) => {
-      const previous = next[(index + next.length - 1) % next.length];
-      return (
-        !previous ||
-        point.some((value, component) => value !== previous[component])
-      );
-    });
-    if (polygon.length < 3) return [];
-  }
-  return polygon;
+  return clipBarycentricTriangle(fields);
 }
 
 export interface GroundedContactPolygon {
@@ -162,49 +86,6 @@ export interface GroundedContactPolygon {
 }
 const plain = (v: ThreeVector3): Vector3 => ({ x: v.x, y: v.y, z: v.z });
 const three = (v: Vector3) => new ThreeVector3(v.x, v.y, v.z);
-/** Conservative spectral norm bound sqrt(max absolute row sum of A^T A).
- * Unlike assuming orthonormality, this retains source Float32/TRS affine effects. */
-function stretchBound(matrix: Matrix4): number {
-  const columns = [0, 1, 2].map((i) =>
-    new ThreeVector3().setFromMatrixColumn(matrix, i),
-  );
-  return Math.sqrt(
-    Math.max(
-      ...columns.map((a) =>
-        columns.reduce((sum, b) => sum + Math.abs(a.dot(b)), 0),
-      ),
-    ),
-  );
-}
-function positiveArea(points: readonly Vector3[]): boolean {
-  const origin = points[0];
-  if (!origin) return false;
-  let area = 0;
-  for (let i = 1; i + 1 < points.length; i++) {
-    const a = points[i],
-      b = points[i + 1];
-    if (a && b)
-      area += three(a)
-        .sub(three(origin))
-        .cross(three(b).sub(three(origin)))
-        .length();
-  }
-  return area > 0;
-}
-function interpolateFace(
-  points: readonly Vector3[],
-  b: SourceBarycentric,
-): Vector3 {
-  const result = new ThreeVector3();
-  for (let i = 0; i < 3; i++) {
-    const p = points[i],
-      w = b[i];
-    if (!p || w === undefined) throw new Error('Missing original face point');
-    result.addScaledVector(three(p), w);
-  }
-  return plain(result);
-}
-
 /** One source-only fit per clip, using exact keys plus a declared 240Hz finite grid.
  * No continuous certificate or gameplay acceptance is implied by this generator.
  * It returns data only; the caller must write NEW files and pin the final bytes. */

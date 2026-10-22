@@ -1,0 +1,1587 @@
+{
+  "schemaVersion": 1,
+  "status": "diagnostic-broadphase-only",
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "source": {
+    "sourcePath": "assets/android/motions/completed42-speed15/punch/android_punch.glb",
+    "sourceSha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+    "manifestPath": "assets/android/motions/completed42-speed15/punch/manifest.json",
+    "manifestSha256": "dcb21aefd7e07cfe9019bc65d573e88db4fb477c1a10da619c3ab5afbc18aff0"
+  },
+  "clock": {
+    "source": "Exact original FLOAT accessor times, initial first-key hold and original durations preserved. Already baked1.5x source plays at runtime1.",
+    "endpointPolicy": "Developer inclusive-accessor-frame-cells-v1 maps [first,last] to [t(first),t(last+1)). This is an interpretation, not source-authored half-open semantics.",
+    "palmWindow": "Newly authored provisional diagnosticF24–26 around source peak25. Source provides no active interval. Never widen for a hit.",
+    "acceptance": null
+  },
+  "anatomy": {
+    "coordinates": "Predicates use original joint inverse-bind positions and inverse-transpose unnormalized source normals. Original skin weights and original crossing triangle barycentrics are preserved.",
+    "rule": "Original faces clipped in bone-bind coordinates; distal hand y>=.060,normal.y>=.25; proximal fingers y>=-.012,y<=.020,z<=-.003,normal.z<=-.25 with whole-face restoration only across the sole upper-y exclusion; palmar heel 0<=y<=.040,z>=.015,normal.z>=.35; eligible original joint influence>=.5. No welding or dominant-weight skinning.",
+    "priorRimCaveat": "This strict original-corner restoration is independently computed for each side, not an accepted transplant of Uppercut geometry. Count differences and unselected boundary faces remain review gates.",
+    "handShapeGate": "Inspect actual posed surfaces. Do not call partly curled hands closed fists or presume the source Palm is fully open. If palmar-heel interpretation fails, retain point/region-only result without accepted hit shape.",
+    "acceptance": null
+  },
+  "fit": {
+    "rule": "One source-reference AABB midpoint sphere per event, maximum distance over finite active source corners plus 1e-7m CPU arithmetic guard. No interpolation padding or gameplay allowance.",
+    "reference": "Original mesh-bind coordinates recovered through the inverse of the hand skin-affine transform; not a guessed anatomical local frame. One seed per event from source only.",
+    "noFurtherFit": true,
+    "acceptance": null
+  },
+  "rootPolicy": {
+    "mode": "grounded-posture-y",
+    "transportY": 0,
+    "rawY": "Retained as immutable provenance and in source pose/strike geometry.",
+    "acceptance": null
+  },
+  "qualification": {
+    "sourceEquivalenceM": 1e-10,
+    "additionalInterpolationEnclosureTargetM": 0.00025,
+    "cpuArithmeticGuardM": 1e-07,
+    "enclosureApplied": false,
+    "continuousContainment": null,
+    "gameplayExcessAllowance": null,
+    "gpuOrFormalRoundedProof": false
+  },
+  "clips": [
+    {
+      "descriptor": {
+        "clipId": "PunchCombo4",
+        "durationMs": 1800.0000715255737,
+        "sourceClipPointer": "/clips/4",
+        "sourceTimesSeconds": [
+          0.02222222276031971,
+          0.04444444552063942,
+          0.06666667014360428,
+          0.08888889104127884,
+          0.1111111119389534,
+          0.13333334028720856,
+          0.15555556118488312,
+          0.17777778208255768,
+          0.20000000298023224,
+          0.2222222238779068,
+          0.24444444477558136,
+          0.2666666805744171,
+          0.2888889014720917,
+          0.31111112236976624,
+          0.3333333432674408,
+          0.35555556416511536,
+          0.3777777850627899,
+          0.4000000059604645,
+          0.42222222685813904,
+          0.4444444477558136,
+          0.46666666865348816,
+          0.4888888895511627,
+          0.5111110806465149,
+          0.5333333611488342,
+          0.555555522441864,
+          0.5777778029441833,
+          0.5999999642372131,
+          0.6222222447395325,
+          0.6444444060325623,
+          0.6666666865348816,
+          0.6888888478279114,
+          0.7111111283302307,
+          0.7333333492279053,
+          0.7555555701255798,
+          0.7777777314186096,
+          0.800000011920929,
+          0.8222222328186035,
+          0.8444444537162781,
+          0.8666666150093079,
+          0.8888888955116272,
+          0.9111111164093018,
+          0.9333333373069763,
+          0.9555554986000061,
+          0.9777777791023254,
+          1,
+          1.0222221612930298,
+          1.0444444417953491,
+          1.0666667222976685,
+          1.0888888835906982,
+          1.111111044883728,
+          1.1333333253860474,
+          1.1555556058883667,
+          1.1777777671813965,
+          1.1999999284744263,
+          1.2222222089767456,
+          1.244444489479065,
+          1.2666666507720947,
+          1.2888888120651245,
+          1.3111110925674438,
+          1.3333333730697632,
+          1.355555534362793,
+          1.3777776956558228,
+          1.399999976158142,
+          1.4222222566604614,
+          1.4444445371627808,
+          1.4666666984558105,
+          1.4888888597488403,
+          1.5111111402511597,
+          1.5333333015441895,
+          1.5555554628372192,
+          1.5777777433395386,
+          1.600000023841858,
+          1.6222223043441772,
+          1.644444465637207,
+          1.6666666269302368,
+          1.6888889074325562,
+          1.711111068725586,
+          1.7333332300186157,
+          1.7555556297302246,
+          1.7777777910232544,
+          1.8000000715255737
+        ],
+        "events": [
+          {
+            "impactIndex": 0,
+            "side": "L",
+            "boneName": "hand.L",
+            "sourceType": "jab",
+            "peakFrame": 12,
+            "sourceFrames": [
+              11,
+              12
+            ],
+            "diagnosticFrames": [
+              11,
+              12
+            ],
+            "windowOrigin": "source-explicit-interval",
+            "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/0",
+            "sourceEvent": {
+              "frame": 12,
+              "limb": "hand.L",
+              "type": "jab",
+              "window": [
+                11,
+                12
+              ]
+            },
+            "window": {
+              "policy": "inclusive-accessor-frame-cells-v1",
+              "acceptance": "provisional-policy",
+              "startMs": 244.44444477558136,
+              "endMs": 288.8889014720917,
+              "peakMs": 266.6666805744171,
+              "relativeClock": {
+                "policy": "inclusive-source-frame-cells-v1",
+                "acceptance": "provisional-policy",
+                "startMs": 222.2222222222222,
+                "endMs": 266.6666666666667,
+                "peakMs": 244.44444444444443
+              },
+              "initialHoldEndMs": 22.22222276031971
+            },
+            "intendedRegion": "distal-hand-proximal-finger-rim",
+            "acceptance": null
+          },
+          {
+            "impactIndex": 1,
+            "side": "R",
+            "boneName": "hand.R",
+            "sourceType": "cross",
+            "peakFrame": 24,
+            "sourceFrames": [
+              23,
+              24
+            ],
+            "diagnosticFrames": [
+              23,
+              24
+            ],
+            "windowOrigin": "source-explicit-interval",
+            "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/1",
+            "sourceEvent": {
+              "frame": 24,
+              "limb": "hand.R",
+              "type": "cross",
+              "window": [
+                23,
+                24
+              ]
+            },
+            "window": {
+              "policy": "inclusive-accessor-frame-cells-v1",
+              "acceptance": "provisional-policy",
+              "startMs": 511.1110806465149,
+              "endMs": 555.555522441864,
+              "peakMs": 533.3333611488342,
+              "relativeClock": {
+                "policy": "inclusive-source-frame-cells-v1",
+                "acceptance": "provisional-policy",
+                "startMs": 488.88888888888886,
+                "endMs": 533.3333333333334,
+                "peakMs": 511.1111111111111
+              },
+              "initialHoldEndMs": 22.22222276031971
+            },
+            "intendedRegion": "distal-hand-proximal-finger-rim",
+            "acceptance": null
+          },
+          {
+            "impactIndex": 2,
+            "side": "L",
+            "boneName": "hand.L",
+            "sourceType": "horizontal hook",
+            "peakFrame": 39,
+            "sourceFrames": [
+              38,
+              40
+            ],
+            "diagnosticFrames": [
+              38,
+              40
+            ],
+            "windowOrigin": "source-explicit-interval",
+            "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/2",
+            "sourceEvent": {
+              "frame": 39,
+              "limb": "hand.L",
+              "type": "horizontal hook",
+              "window": [
+                38,
+                40
+              ]
+            },
+            "window": {
+              "policy": "inclusive-accessor-frame-cells-v1",
+              "acceptance": "provisional-policy",
+              "startMs": 844.4444537162781,
+              "endMs": 911.1111164093018,
+              "peakMs": 866.6666150093079,
+              "relativeClock": {
+                "policy": "inclusive-source-frame-cells-v1",
+                "acceptance": "provisional-policy",
+                "startMs": 822.2222222222222,
+                "endMs": 888.8888888888888,
+                "peakMs": 844.4444444444445
+              },
+              "initialHoldEndMs": 22.22222276031971
+            },
+            "intendedRegion": "distal-hand-proximal-finger-rim",
+            "acceptance": null
+          },
+          {
+            "impactIndex": 3,
+            "side": "R",
+            "boneName": "hand.R",
+            "sourceType": "upward uppercut",
+            "peakFrame": 59,
+            "sourceFrames": [
+              58,
+              60
+            ],
+            "diagnosticFrames": [
+              58,
+              60
+            ],
+            "windowOrigin": "source-explicit-interval",
+            "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/3",
+            "sourceEvent": {
+              "frame": 59,
+              "limb": "hand.R",
+              "type": "upward uppercut",
+              "window": [
+                58,
+                60
+              ]
+            },
+            "window": {
+              "policy": "inclusive-accessor-frame-cells-v1",
+              "acceptance": "provisional-policy",
+              "startMs": 1288.8888120651245,
+              "endMs": 1355.555534362793,
+              "peakMs": 1311.1110925674438,
+              "relativeClock": {
+                "policy": "inclusive-source-frame-cells-v1",
+                "acceptance": "provisional-policy",
+                "startMs": 1266.6666666666665,
+                "endMs": 1333.3333333333333,
+                "peakMs": 1288.888888888889
+              },
+              "initialHoldEndMs": 22.22222276031971
+            },
+            "intendedRegion": "distal-hand-proximal-finger-rim",
+            "acceptance": null
+          }
+        ],
+        "sourceSupport": {
+          "support": "Left sole planted throughout; rear forefoot pivots with heel rise during cross, then returns flat for hook and uppercut. No steps or airborne phases."
+        },
+        "sourceRoot": {
+          "root_motion": "In-place combat combo. Temporary weight shift and knee dip/rise, zero net translation. No terminal teleport."
+        },
+        "sourcePhases": {
+          "phases": [
+            {
+              "phase": "anticipation",
+              "frames": [
+                1,
+                6
+              ]
+            },
+            {
+              "phase": "jab",
+              "frames": [
+                7,
+                12
+              ]
+            },
+            {
+              "phase": "cross link and drive",
+              "frames": [
+                13,
+                24
+              ]
+            },
+            {
+              "phase": "hook wind-up and arc",
+              "frames": [
+                25,
+                39
+              ]
+            },
+            {
+              "phase": "uppercut load and rise",
+              "frames": [
+                40,
+                59
+              ]
+            },
+            {
+              "phase": "recoil",
+              "frames": [
+                60,
+                73
+              ]
+            },
+            {
+              "phase": "balanced guard recovery",
+              "frames": [
+                74,
+                81
+              ]
+            }
+          ],
+          "timing": "[原資料1.0倍速の説明。秒数×2/3、秒速×1.5に換算] 30 fps, frames 1-81, 2.6667 seconds; drawing numbers denote phases not literal frames."
+        },
+        "rootPolicy": {
+          "version": 1,
+          "clipId": "PunchCombo4",
+          "sourceSha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+          "mode": "grounded-posture-y",
+          "provenance": {
+            "manifestSha256": "dcb21aefd7e07cfe9019bc65d573e88db4fb477c1a10da619c3ab5afbc18aff0",
+            "clipPointer": "/clips/4",
+            "supportPointer": "/clips/4/support_contacts/support"
+          }
+        },
+        "rootPolicyAcceptance": null,
+        "acceptance": null
+      },
+      "regions": [
+        {
+          "impactIndex": 0,
+          "shapeId": "PunchCombo4:distal-hand-proximal-finger-rim:0",
+          "side": "L",
+          "intendedRegion": "distal-hand-proximal-finger-rim",
+          "coverage": [
+            {
+              "primitive": 0,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 47,
+              "clipped": 26,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 25,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 25,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 10,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 13,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 14,
+              "clipped": 14,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 24,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 15,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 15,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 14,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 14,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            }
+          ],
+          "polygons": 485,
+          "seed": {
+            "kind": "sphere",
+            "center": {
+              "x": 0.48774979108343625,
+              "y": 0.9817095970111649,
+              "z": 0.018838056720210113
+            },
+            "radiusM": 0.05166462326791053
+          }
+        },
+        {
+          "impactIndex": 1,
+          "shapeId": "PunchCombo4:distal-hand-proximal-finger-rim:1",
+          "side": "R",
+          "intendedRegion": "distal-hand-proximal-finger-rim",
+          "coverage": [
+            {
+              "primitive": 0,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 47,
+              "clipped": 26,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 9,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 10,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 23,
+              "clipped": 4,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 12,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 12,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 11,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 11,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            }
+          ],
+          "polygons": 470,
+          "seed": {
+            "kind": "sphere",
+            "center": {
+              "x": -0.4887469564021949,
+              "y": 0.9817096072582958,
+              "z": 0.01883805180364173
+            },
+            "radiusM": 0.053966487116840586
+          }
+        },
+        {
+          "impactIndex": 2,
+          "shapeId": "PunchCombo4:distal-hand-proximal-finger-rim:2",
+          "side": "L",
+          "intendedRegion": "distal-hand-proximal-finger-rim",
+          "coverage": [
+            {
+              "primitive": 0,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 47,
+              "clipped": 26,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 25,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 25,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 10,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 13,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 14,
+              "clipped": 14,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 24,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 15,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 15,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 14,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 12,
+              "clipped": 14,
+              "restoredLeadingRim": 6
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "hand.L",
+              "jointIndex": 10,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_01.01.L",
+              "jointIndex": 11,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_02.01.L",
+              "jointIndex": 14,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_03.01.L",
+              "jointIndex": 17,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_04.01.L",
+              "jointIndex": 20,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            }
+          ],
+          "polygons": 485,
+          "seed": {
+            "kind": "sphere",
+            "center": {
+              "x": 0.48774979108343625,
+              "y": 0.9817095970111649,
+              "z": 0.018838056720210106
+            },
+            "radiusM": 0.05166462326791073
+          }
+        },
+        {
+          "impactIndex": 3,
+          "shapeId": "PunchCombo4:distal-hand-proximal-finger-rim:3",
+          "side": "R",
+          "intendedRegion": "distal-hand-proximal-finger-rim",
+          "coverage": [
+            {
+              "primitive": 0,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 47,
+              "clipped": 26,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 24,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 0,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 19,
+              "clipped": 23,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 16,
+              "clipped": 9,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 10,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 15,
+              "clipped": 11,
+              "restoredLeadingRim": 10
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 23,
+              "clipped": 4,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 12,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 12,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 11,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 13,
+              "clipped": 11,
+              "restoredLeadingRim": 7
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "distal-hand",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_01.01.R",
+              "jointIndex": 30,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_02.01.R",
+              "jointIndex": 33,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_03.01.R",
+              "jointIndex": 36,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "finger_04.01.R",
+              "jointIndex": 39,
+              "region": "proximal-finger",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            }
+          ],
+          "polygons": 470,
+          "seed": {
+            "kind": "sphere",
+            "center": {
+              "x": -0.48874695640219495,
+              "y": 0.9817096072582956,
+              "z": 0.018838051803641842
+            },
+            "radiusM": 0.05396648711684075
+          }
+        }
+      ]
+    },
+    {
+      "descriptor": {
+        "clipId": "PalmStrike",
+        "durationMs": 1355.555534362793,
+        "sourceClipPointer": "/clips/9",
+        "sourceTimesSeconds": [
+          0.02222222276031971,
+          0.04444444552063942,
+          0.06666667014360428,
+          0.08888889104127884,
+          0.1111111119389534,
+          0.13333334028720856,
+          0.15555556118488312,
+          0.17777778208255768,
+          0.20000000298023224,
+          0.2222222238779068,
+          0.24444444477558136,
+          0.2666666805744171,
+          0.2888889014720917,
+          0.31111112236976624,
+          0.3333333432674408,
+          0.35555556416511536,
+          0.3777777850627899,
+          0.4000000059604645,
+          0.42222222685813904,
+          0.4444444477558136,
+          0.46666666865348816,
+          0.4888888895511627,
+          0.5111110806465149,
+          0.5333333611488342,
+          0.555555522441864,
+          0.5777778029441833,
+          0.5999999642372131,
+          0.6222222447395325,
+          0.6444444060325623,
+          0.6666666865348816,
+          0.6888888478279114,
+          0.7111111283302307,
+          0.7333333492279053,
+          0.7555555701255798,
+          0.7777777314186096,
+          0.800000011920929,
+          0.8222222328186035,
+          0.8444444537162781,
+          0.8666666150093079,
+          0.8888888955116272,
+          0.9111111164093018,
+          0.9333333373069763,
+          0.9555554986000061,
+          0.9777777791023254,
+          1,
+          1.0222221612930298,
+          1.0444444417953491,
+          1.0666667222976685,
+          1.0888888835906982,
+          1.111111044883728,
+          1.1333333253860474,
+          1.1555556058883667,
+          1.1777777671813965,
+          1.1999999284744263,
+          1.2222222089767456,
+          1.244444489479065,
+          1.2666666507720947,
+          1.2888888120651245,
+          1.3111110925674438,
+          1.3333333730697632,
+          1.355555534362793
+        ],
+        "events": [
+          {
+            "impactIndex": 0,
+            "side": "R",
+            "boneName": "hand.R",
+            "sourceType": "palm_heel",
+            "peakFrame": 25,
+            "sourceFrames": null,
+            "diagnosticFrames": [
+              24,
+              26
+            ],
+            "windowOrigin": "developer-provisional-around-source-peak",
+            "sourceEventPointer": "/clips/9/attack_and_timeline_events/attack_events/0",
+            "sourceEvent": {
+              "frame": 25,
+              "type": "palm_heel",
+              "side": "R",
+              "count": 1
+            },
+            "window": {
+              "policy": "inclusive-accessor-frame-cells-v1",
+              "acceptance": "provisional-policy",
+              "startMs": 533.3333611488342,
+              "endMs": 599.9999642372131,
+              "peakMs": 555.555522441864,
+              "relativeClock": {
+                "policy": "inclusive-source-frame-cells-v1",
+                "acceptance": "provisional-policy",
+                "startMs": 511.1111111111111,
+                "endMs": 577.7777777777777,
+                "peakMs": 533.3333333333334
+              },
+              "initialHoldEndMs": 22.22222276031971
+            },
+            "intendedRegion": "proximal-palmar-heel",
+            "acceptance": null
+          }
+        ],
+        "sourceSupport": {
+          "support_contacts": [
+            {
+              "bone": "foot.L",
+              "frames": [
+                1,
+                61
+              ],
+              "fixed_ankle": [
+                0.38,
+                0.18,
+                0.168
+              ]
+            },
+            {
+              "bone": "foot.R",
+              "frames": [
+                1,
+                61
+              ],
+              "fixed_ankle": [
+                -0.39,
+                -0.24,
+                0.168
+              ]
+            }
+          ]
+        },
+        "sourceRoot": {
+          "root_motion": "Root shifts 0.035 m rearward on load then 0.115 m forward during impact. Finishes 0.055 m forward, no terminal reset. Both feet remain anchored throughout. Export forward is glTF +Z."
+        },
+        "sourcePhases": {
+          "timing": {
+            "ready": 1,
+            "load": 13,
+            "contact": 25,
+            "follow_through": 28,
+            "recoil": 40,
+            "guard": 61
+          }
+        },
+        "rootPolicy": {
+          "version": 1,
+          "clipId": "PalmStrike",
+          "sourceSha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+          "mode": "grounded-posture-y",
+          "provenance": {
+            "manifestSha256": "dcb21aefd7e07cfe9019bc65d573e88db4fb477c1a10da619c3ab5afbc18aff0",
+            "clipPointer": "/clips/9",
+            "supportPointer": "/clips/9/support_contacts/support_contacts"
+          }
+        },
+        "rootPolicyAcceptance": null,
+        "acceptance": null
+      },
+      "regions": [
+        {
+          "impactIndex": 0,
+          "shapeId": "PalmStrike:proximal-palmar-heel:0",
+          "side": "R",
+          "intendedRegion": "proximal-palmar-heel",
+          "coverage": [
+            {
+              "primitive": 0,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "palmar-heel",
+              "full": 27,
+              "clipped": 79,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 1,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "palmar-heel",
+              "full": 9,
+              "clipped": 25,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 2,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "palmar-heel",
+              "full": 28,
+              "clipped": 37,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 3,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "palmar-heel",
+              "full": 0,
+              "clipped": 2,
+              "restoredLeadingRim": 0
+            },
+            {
+              "primitive": 4,
+              "sourceJointName": "hand.R",
+              "jointIndex": 29,
+              "region": "palmar-heel",
+              "full": 0,
+              "clipped": 0,
+              "restoredLeadingRim": 0
+            }
+          ],
+          "polygons": 207,
+          "seed": {
+            "kind": "sphere",
+            "center": {
+              "x": -0.4840313639037174,
+              "y": 1.0390904185983787,
+              "z": -0.004496422456224446
+            },
+            "radiusM": 0.04543810991417208
+          }
+        }
+      ]
+    }
+  ]
+}
