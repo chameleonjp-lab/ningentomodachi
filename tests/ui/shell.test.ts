@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
-import { expect, test } from 'vitest';
+import { afterEach, expect, test } from 'vitest';
 import { createInterface } from '../../src/ui';
 import { frame, run, snapshot, viewport } from './fixtures/core';
 import {
   type HostRequest,
   type HostSnapshot,
+  type StartupState,
   gameTimeMs,
+  runId,
 } from '../../src/contracts';
 function state(
   phase: HostSnapshot['phase'],
@@ -271,4 +273,227 @@ test('open settings preview follows viewport changes without replacing focused c
   }
   host.dispose();
   root.remove();
+});
+
+const focusCleanups: (() => void)[] = [];
+afterEach(() => {
+  for (const cleanup of focusCleanups.splice(0)) cleanup();
+});
+function focusSetup() {
+  const s = setup();
+  focusCleanups.push(() => {
+    s.host.dispose();
+    s.root.remove();
+  });
+  const find = (label: string) => {
+    const control = [...s.root.querySelectorAll('button')].find(
+      (node) => node.textContent === label,
+    );
+    if (!control) throw Error(`Missing button: ${label}`);
+    return control;
+  };
+  return { ...s, find };
+}
+function startupState(
+  countdown: StartupState['countdown'],
+  generation = 1,
+): HostSnapshot & { startup: StartupState } {
+  return {
+    ...state('loading'),
+    startup: {
+      generation,
+      countdown,
+      requiredAssetsReady: false,
+      pauseReasons: [],
+    },
+  };
+}
+test('owned focus follows the same startup control across countdown and readiness rerenders', () => {
+  const s = focusSetup();
+  for (const label of ['読込を中止', '設定', '一時停止']) {
+    s.host.render(startupState(3));
+    const before = s.find(label);
+    before.focus();
+    s.host.render(startupState(2));
+    expect(document.activeElement).toBe(s.find(label));
+    expect(s.find(label)).not.toBe(before);
+    const next = startupState(2);
+    s.host.render({
+      ...next,
+      phase: 'ready',
+      startup: { ...next.startup, requiredAssetsReady: true },
+    });
+    expect(document.activeElement).toBe(s.find(label));
+  }
+  expect(s.requests).toEqual([]);
+});
+test('settings quality and reset rerenders retain only the focused semantic control', () => {
+  const s = focusSetup();
+  const paused = (quality: 'standard' | 'low') =>
+    state(
+      'playing',
+      snapshot({ quality, phase: 'paused', pauseReasons: ['settings'] }),
+    );
+  s.host.render(state('playing', snapshot()));
+  s.click('設定');
+  const quality = s.find('低負荷');
+  quality.focus();
+  quality.click();
+  s.host.render(paused('low'));
+  expect(document.activeElement).toBe(s.find('低負荷'));
+  const selector = '[aria-label="パンチ 不透明度"]';
+  const slider = s.root.querySelector<HTMLInputElement>(selector);
+  if (!slider) throw Error('Missing settings slider');
+  slider.value = '0.7';
+  slider.dispatchEvent(new Event('input'));
+  slider.focus();
+  s.host.render(paused('standard'));
+  expect(document.activeElement).toBe(s.root.querySelector(selector));
+  expect(s.root.querySelector<HTMLInputElement>(selector)?.value).toBe('0.7');
+  const reset = s.find('初期配置に戻す');
+  reset.focus();
+  reset.click();
+  expect(document.activeElement).toBe(s.find('初期配置に戻す'));
+  expect(
+    s.requests.map((request) =>
+      request.type === 'CommandRequested' ? request.command.type : request.type,
+    ),
+  ).toEqual(['PauseRequested', 'QualityChanged']);
+});
+test('focused detail-zero settings navigation targets the heading then its opener despite synchronous host updates', () => {
+  const s = focusSetup();
+  s.host.render(state('playing', snapshot()));
+  s.host.subscribe((request) => {
+    if (request.type !== 'CommandRequested') return;
+    if (request.command.type === 'PauseRequested')
+      s.host.render(
+        state(
+          'playing',
+          snapshot({ phase: 'paused', pauseReasons: ['settings'] }),
+        ),
+      );
+    if (request.command.type === 'ResumeRequested')
+      s.host.render(state('playing', snapshot()));
+  });
+  const open = s.find('設定');
+  open.focus();
+  open.click();
+  const heading = s.root.querySelector('h2');
+  expect(document.activeElement).toBe(heading);
+  expect(heading?.tabIndex).toBe(-1);
+  const close = s.find('設定を閉じる');
+  close.focus();
+  close.click();
+  expect(document.activeElement).toBe(s.find('設定'));
+  expect(
+    s.requests.map((request) =>
+      request.type === 'CommandRequested' ? request.command.type : request.type,
+    ),
+  ).toEqual(['PauseRequested', 'ResumeRequested']);
+});
+test('pointer settings navigation and detail-zero activation without DOM focus never autofocus', () => {
+  const s = focusSetup();
+  s.host.render(state('title'));
+  const open = s.find('設定');
+  open.focus();
+  open.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  expect(document.activeElement).toBe(document.body);
+  const close = s.find('設定を閉じる');
+  close.focus();
+  close.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  expect(document.activeElement).toBe(document.body);
+  s.find('設定').click();
+  expect(document.activeElement).toBe(document.body);
+  s.find('設定を閉じる').click();
+  expect(document.activeElement).toBe(document.body);
+});
+test('initial rendering and rerenders preserve external focus without assigning shell focus', () => {
+  const s = focusSetup();
+  const external = document.createElement('button');
+  document.body.append(external);
+  focusCleanups.push(() => external.remove());
+  external.focus();
+  s.host.render(state('title'));
+  expect(document.activeElement).toBe(external);
+  s.find('設定').click();
+  expect(document.activeElement).toBe(external);
+  s.find('設定を閉じる').click();
+  expect(document.activeElement).toBe(external);
+  s.host.render(startupState(3));
+  s.host.render(startupState(2));
+  expect(document.activeElement).toBe(external);
+});
+test('missing controls and successor startup run or error contexts never inherit stale focus', () => {
+  const s = focusSetup();
+  s.host.render(startupState(3));
+  s.find('読込を中止').focus();
+  s.host.render(startupState(3, 2));
+  expect(document.activeElement).toBe(document.body);
+  s.find('一時停止').focus();
+  const paused = startupState(2, 2);
+  s.host.render({
+    ...paused,
+    startup: { ...paused.startup, pauseReasons: ['manual'] },
+  });
+  expect(document.activeElement).toBe(document.body);
+  s.host.render(state('playing', snapshot()));
+  s.find('設定').focus();
+  s.host.render(
+    state('playing', snapshot({ runId: runId('focus-successor') })),
+  );
+  expect(document.activeElement).toBe(document.body);
+  s.find('設定').focus();
+  s.host.render(state('error'));
+  expect(document.activeElement).toBe(document.body);
+  s.find('再試行').focus();
+  s.host.render(startupState(3, 3));
+  expect(document.activeElement).toBe(document.body);
+});
+test('rerender leaves gameplay focus alone and detached settings callbacks cannot move successor focus', () => {
+  const s = focusSetup();
+  s.host.render(state('playing', snapshot()));
+  const gameplay = s.find('パンチ');
+  gameplay.focus();
+  s.host.render(state('playing', snapshot({ quality: 'low' })));
+  expect(document.activeElement).toBe(gameplay);
+  const staleOpen = s.find('設定');
+  s.host.render(startupState(3));
+  s.find('設定').click();
+  const staleClose = s.find('設定を閉じる');
+  s.host.render(startupState(3, 2));
+  const current = s.find('読込を中止');
+  current.focus();
+  const count = s.requests.length;
+  staleOpen.click();
+  staleClose.click();
+  expect(document.activeElement).toBe(current);
+  expect(s.requests).toHaveLength(count);
+});
+
+test('focused settings navigation returns to the correct title or same-generation startup opener', () => {
+  const s = focusSetup();
+  for (const next of [state('title'), startupState(2, 5)]) {
+    s.host.render(next);
+    const count = s.requests.length;
+    s.find('設定').focus();
+    s.find('設定').click();
+    expect(document.activeElement).toBe(s.root.querySelector('h2'));
+    s.find('設定を閉じる').focus();
+    s.find('設定を閉じる').click();
+    expect(document.activeElement).toBe(s.find('設定'));
+    if (next.startup)
+      expect(s.requests.slice(count)).toMatchObject([
+        {
+          type: 'StartupPauseRequested',
+          startupGeneration: 5,
+          reason: 'settings',
+        },
+        {
+          type: 'StartupResumeRequested',
+          startupGeneration: 5,
+          reason: 'settings',
+        },
+      ]);
+    else expect(s.requests).toHaveLength(count);
+  }
 });
