@@ -635,3 +635,44 @@ test('startup game pause and quality changes do not reuse a captured view author
     expect(s.requests).toMatchObject([{ type: 'CancelLoadingRequested' }]);
   }
 });
+
+test.each([
+  ['manual', '再開', 'run'],
+  ['manual', '再開', 'pause-authority'],
+  ['interruption', '中断から再開', 'run'],
+  ['interruption', '中断から再開', 'pause-authority'],
+] as const)(
+  'detached playing %s resume (%s) cannot clear successor %s',
+  (reason, label, transition) => {
+    const s = setup();
+    const paused = snapshot({ phase: 'paused', pauseReasons: [reason] });
+    s.host.render(state('playing', paused));
+    const held = [...s.root.querySelectorAll('button')].find(
+      (node) => node.textContent === label,
+    );
+    if (!held) throw Error('Expected resume button');
+    const successor = snapshot({
+      ...paused,
+      runId: transition === 'run' ? runId('successor-run') : run,
+      pauseReasons:
+        transition === 'pause-authority' ? [reason, 'background'] : [reason],
+    });
+    s.host.render(state('playing', successor));
+    expect(held.isConnected).toBe(false);
+    held.click();
+    expect(s.requests).toEqual([]);
+    s.click(label);
+    expect(s.requests).toMatchObject([
+      {
+        type: 'CommandRequested',
+        command: {
+          type: 'ResumeRequested',
+          runId: successor.runId,
+          reason,
+        },
+      },
+    ]);
+    s.host.dispose();
+    s.root.remove();
+  },
+);

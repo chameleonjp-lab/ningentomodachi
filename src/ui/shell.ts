@@ -580,7 +580,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
             button(
               document,
               reason === 'manual' ? '再開' : '中断から再開',
-              () => pause('ResumeRequested', reason),
+              () => {
+                if (isCurrent()) pause('ResumeRequested', reason);
+              },
             ),
           );
       }
