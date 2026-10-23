@@ -1,4 +1,4 @@
-import { clipId, type ClipId, type Vector3 } from '../contracts';
+import { type ClipId, clipId, type Vector3 } from '../contracts';
 import type { MotionAsset } from './motionCatalog';
 
 /** Explicit source-bound extraction recipe. Absence is legacy full extraction, not production approval. */
@@ -6,7 +6,10 @@ export interface ClipRootPolicy {
   readonly version: 1;
   readonly clipId: ClipId;
   readonly sourceSha256: string;
-  readonly mode: 'full-translation' | 'grounded-posture-y';
+  readonly mode:
+    | 'full-translation'
+    | 'grounded-posture-y'
+    | 'in-place-posture-xyz';
   readonly provenance: {
     readonly manifestSha256: string;
     readonly clipPointer: string;
@@ -26,7 +29,8 @@ export function copyRootPolicy(value: unknown): ClipRootPolicy {
     !value.clipId.length ||
     !hash(value.sourceSha256) ||
     (value.mode !== 'full-translation' &&
-      value.mode !== 'grounded-posture-y') ||
+      value.mode !== 'grounded-posture-y' &&
+      value.mode !== 'in-place-posture-xyz') ||
     !record(value.provenance) ||
     !hash(value.provenance.manifestSha256) ||
     typeof value.provenance.clipPointer !== 'string' ||
@@ -66,6 +70,7 @@ export function extractedTranslation(
   raw: Vector3,
   policy?: ClipRootPolicy,
 ): Vector3 {
+  if (policy?.mode === 'in-place-posture-xyz') return { x: 0, y: 0, z: 0 };
   return {
     x: raw.x,
     y: policy?.mode === 'grounded-posture-y' ? 0 : raw.y,
@@ -93,6 +98,15 @@ export function assertRootPolicyCompatibility(
     )
       throw new Error('Incompatible visual/baked root policy');
     seen.add(id);
+    if (
+      expected.mode === 'in-place-posture-xyz' &&
+      (asset.definition.rootCurve.some(
+        (key) =>
+          key.position.x !== 0 || key.position.y !== 0 || key.position.z !== 0,
+      ) ||
+        asset.ownership.some((key) => key.verticalOwner !== 'spatial-jump'))
+    )
+      throw new Error('In-place posture cannot own XYZ transport');
     if (
       expected.mode === 'grounded-posture-y' &&
       (asset.definition.rootCurve.some((key) => key.position.y !== 0) ||

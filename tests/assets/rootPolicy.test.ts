@@ -1,11 +1,12 @@
 import { expect, test } from 'vitest';
-import { clipId, durationMs } from '../../src/contracts';
 import {
+  assertRootPolicyCompatibility,
   copyRootPolicy,
   extractedTranslation,
-  assertRootPolicyCompatibility,
 } from '../../src/assets/rootPolicy';
+import { clipId, durationMs } from '../../src/contracts';
 import { indexedFixture } from './catalogIndexFixture';
+
 const policy = {
   version: 1,
   clipId: clipId('index-equivalence'),
@@ -85,4 +86,98 @@ test('mixed visual/baked policy version, source, mode or provenance cannot publi
       rootPolicy: () => receipt,
     }),
   ).toThrow();
+});
+
+test('in-place posture copies an explicit receipt and extracts positive zero XYZ without changing raw source', () => {
+  const receipt = copyRootPolicy({ ...policy, mode: 'in-place-posture-xyz' });
+  const raw = Object.freeze({ x: 0.25, y: -0.475, z: -0 });
+  expect(receipt.mode).toBe('in-place-posture-xyz');
+  expect(Object.isFrozen(receipt)).toBe(true);
+  expect(Object.isFrozen(receipt.provenance)).toBe(true);
+  const extracted = extractedTranslation(raw, receipt);
+  for (const axis of ['x', 'y', 'z'] as const)
+    expect(Object.is(extracted[axis], 0)).toBe(true);
+  expect(raw).toEqual({ x: 0.25, y: -0.475, z: -0 });
+  expect(extractedTranslation(raw)).toEqual(raw);
+  expect(
+    extractedTranslation(
+      raw,
+      copyRootPolicy({ ...policy, mode: 'full-translation' }),
+    ),
+  ).toEqual(raw);
+  expect(extractedTranslation(raw, copyRootPolicy(policy))).toEqual({
+    x: 0.25,
+    y: 0,
+    z: -0,
+  });
+});
+
+test('in-place compatibility rejects every nonzero transport axis, nonspatial vertical owner and mixed policy', () => {
+  const receipt = copyRootPolicy({ ...policy, mode: 'in-place-posture-xyz' });
+  const original = indexedFixture();
+  const asset = {
+    ...original,
+    definition: {
+      ...original.definition,
+      rootCurve: original.definition.rootCurve.map((key) => ({
+        ...key,
+        position: { x: 0, y: 0, z: 0 },
+      })),
+    },
+    ownership: [
+      {
+        atMs: durationMs(0),
+        horizontalOwner: 'authored-root' as const,
+        verticalOwner: 'spatial-jump' as const,
+      },
+    ],
+  };
+  const visuals = { rootPolicy: () => receipt };
+  expect(() =>
+    assertRootPolicyCompatibility([{ asset, rootPolicy: receipt }], visuals),
+  ).not.toThrow();
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const moving = {
+      ...asset,
+      definition: {
+        ...asset.definition,
+        rootCurve: asset.definition.rootCurve.map((key) => ({
+          ...key,
+          position: { ...key.position, [axis]: 1e-12 },
+        })),
+      },
+    };
+    expect(() =>
+      assertRootPolicyCompatibility(
+        [{ asset: moving, rootPolicy: receipt }],
+        visuals,
+      ),
+    ).toThrow('In-place posture');
+  }
+  expect(() =>
+    assertRootPolicyCompatibility(
+      [
+        {
+          asset: {
+            ...asset,
+            ownership: [
+              {
+                atMs: durationMs(0),
+                horizontalOwner: 'authored-root',
+                verticalOwner: 'authored-root',
+              },
+            ],
+          },
+          rootPolicy: receipt,
+        },
+      ],
+      visuals,
+    ),
+  ).toThrow('In-place posture');
+  for (const mode of ['full-translation', 'grounded-posture-y'])
+    expect(() =>
+      assertRootPolicyCompatibility([{ asset, rootPolicy: receipt }], {
+        rootPolicy: () => copyRootPolicy({ ...receipt, mode }),
+      }),
+    ).toThrow('Incompatible');
 });

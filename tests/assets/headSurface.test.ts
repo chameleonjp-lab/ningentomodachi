@@ -450,3 +450,287 @@ test('policy inputs are captured before yielding; changed binding, clock and uns
     }),
   ).rejects.toThrow(/duplicate root policy/);
 }, 30000);
+
+import { createHash } from 'node:crypto';
+const inPlaceKickHash =
+  '697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd';
+const inPlaceManifestHash =
+  'f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed';
+const inPlaceRecipes = [
+  { name: 'RoundhouseKick', index: 2, support: 'support', peak: 31 },
+  { name: 'SideThrustKick', index: 9, support: 'support_contacts', peak: 36 },
+  { name: 'LowSweep', index: 3, support: 'support_contacts', peak: 29 },
+] as const;
+function inPlacePolicies(mode: ClipRootPolicy['mode']): ClipRootPolicy[] {
+  return inPlaceRecipes.map(({ name, index, support }) => ({
+    version: 1,
+    clipId: clipId(name),
+    sourceSha256: inPlaceKickHash,
+    mode,
+    provenance: {
+      manifestSha256: inPlaceManifestHash,
+      clipPointer: `/clips/${index}`,
+      supportPointer: `/clips/${index}/support_contacts/${support}`,
+    },
+  }));
+}
+function originalRootKeys(index: number) {
+  const bytes = new Uint8Array(
+    readFileSync(
+      'assets/android/motions/completed42-speed15/kick/android_kick.glb',
+    ),
+  );
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+    inPlaceKickHash,
+  );
+  const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    length = data.getUint32(12, true),
+    bin = 28 + length;
+  const doc = JSON.parse(
+    new TextDecoder().decode(bytes.subarray(20, 20 + length)),
+  ) as {
+    animations: {
+      channels: { sampler: number; target: { node: number; path: string } }[];
+      samplers: { input: number; output: number }[];
+    }[];
+    accessors: {
+      bufferView: number;
+      byteOffset?: number;
+      componentType: number;
+      count: number;
+      type: string;
+    }[];
+    bufferViews: { byteOffset?: number; byteStride?: number }[];
+  };
+  const animation = doc.animations[index];
+  if (!animation) throw Error('Missing source clip');
+  const channel = animation.channels.find(
+    (c) => c.target.node === 52 && c.target.path === 'translation',
+  );
+  if (!channel) throw Error('Missing root channel');
+  const sampler = animation.samplers[channel.sampler];
+  if (!sampler) throw Error('Missing sampler');
+  const read = (accessorIndex: number, size: number) => {
+    const a = doc.accessors[accessorIndex];
+    if (!a) throw Error('Missing accessor');
+    expect(a.componentType).toBe(5126);
+    const v = doc.bufferViews[a.bufferView];
+    if (!v) throw Error('Missing view');
+    return Array.from({ length: a.count }, (_, i) =>
+      Array.from({ length: size }, (_, k) =>
+        data.getFloat32(
+          bin +
+            (v.byteOffset ?? 0) +
+            (a.byteOffset ?? 0) +
+            i * (v.byteStride ?? size * 4) +
+            k * 4,
+          true,
+        ),
+      ),
+    );
+  };
+  return {
+    times: read(sampler.input, 1).map((x) => x[0] as number),
+    values: read(sampler.output, 3),
+  };
+}
+test('native XYZ point transform does not fall through to full root extraction', async () => {
+  const native = await preparePinnedSourceHead({
+    derivedBytes: derived(),
+    rootPolicies: inPlacePolicies('in-place-posture-xyz'),
+    signal: signal(),
+  });
+  const full = await preparePinnedSourceHead({
+    derivedBytes: derived(),
+    rootPolicies: inPlacePolicies('full-translation'),
+    signal: signal(),
+  });
+  try {
+    const rows = [];
+    for (const recipe of inPlaceRecipes) {
+      const a = native.poseBindings.clips.find((b) => b.clipId === recipe.name),
+        b = full.poseBindings.clips.find((b) => b.clipId === recipe.name);
+      if (!a || !b) throw Error('Missing binding');
+      const keys = originalRootKeys(recipe.index),
+        i = recipe.peak - 1,
+        time = keys.times[i],
+        value = keys.values[i],
+        origin = keys.values[0];
+      if (time === undefined || !value || !origin)
+        throw Error('Missing source key');
+      const x = native.evaluate(a, durationMs(time * 1000)),
+        y = full.evaluate(b, durationMs(time * 1000));
+      if (x.kind !== 'transform' || y.kind !== 'transform')
+        throw Error('Missing transform');
+      expect(native.evaluate(b, durationMs(time * 1000))).toMatchObject({
+        kind: 'unavailable',
+        reason: 'invalid-binding',
+      });
+      expect(full.evaluate(a, durationMs(time * 1000))).toMatchObject({
+        kind: 'unavailable',
+        reason: 'invalid-binding',
+      });
+      expect(native.evaluate(a, durationMs(time * 1000))).toEqual(x);
+      const expected = value.map((v, k) => v - (origin[k] as number)),
+        actual = [12, 13, 14].map(
+          (k) => (x.matrix[k] as number) - (y.matrix[k] as number),
+        );
+      rows.push({ clip: recipe.name, time, expected, actual });
+      if (process.env.IN_PLACE_HEAD_RED_RECEIPT)
+        appendFileSync(
+          process.env.IN_PLACE_HEAD_RED_RECEIPT,
+          `${JSON.stringify(rows[rows.length - 1])}\n`,
+        );
+      for (let k = 0; k < 3; k++)
+        expect(
+          Math.abs((actual[k] as number) - (expected[k] as number)),
+        ).toBeLessThanOrEqual(1e-10);
+    }
+  } finally {
+    native.dispose();
+    full.dispose();
+  }
+}, 30000);
+
+test('pure unknown root policy rejects before any source geometry can be published', async () => {
+  const known = inPlacePolicies('in-place-posture-xyz')[0];
+  if (!known) throw Error('Missing fixture');
+  await expect(
+    preparePinnedSourceHead({
+      derivedBytes: new Uint8Array(),
+      rootPolicies: [
+        { ...known, mode: 'future-mode' },
+      ] as unknown as ClipRootPolicy[],
+      signal: signal(),
+    }),
+  ).rejects.toThrow(/root.*policy/i);
+});
+
+test('three pinned native XYZ head bindings match original derived and canonical rig in arbitrary order', async () => {
+  const rootPolicies = inPlacePolicies('in-place-posture-xyz');
+  const a = await preparePinnedSourceHead({
+    sources: originals(),
+    rootPolicies,
+    signal: signal(),
+  });
+  const b = await preparePinnedSourceHead({
+    derivedBytes: derived(),
+    rootPolicies,
+    signal: signal(),
+  });
+  const pack = await createPinnedDerivedThreeAssetPack({
+    derivedBytes: derived(),
+    artifactBytes: new Uint8Array(
+      readFileSync('public/game-assets/android/runtime-artifact-v1.json'),
+    ),
+    rootPolicies,
+    signal: signal(),
+  });
+  const rig = pack.create('white'),
+    parent = new Object3D();
+  parent.position.set(3, -2, 1);
+  parent.rotation.set(0.2, 0.7, -0.1);
+  parent.add(rig.node);
+  parent.updateMatrixWorld(true);
+  const parentBefore = parent.matrixWorld.toArray(),
+    meshes: SkinnedMesh[] = [];
+  rig.node.traverse((part) => {
+    if (part instanceof SkinnedMesh) meshes.push(part);
+  });
+  const receipt = {
+    passed: false,
+    mode: 'in-place-posture-xyz',
+    clips: 3,
+    poses: 0,
+    witnesses: 0,
+    maxErrorM: 0,
+    criterionM: 1e-10,
+    scope:
+      'Matched actor-local/reference finite points only; no parent-basis invariance or continuous bound claim',
+  };
+  try {
+    expect(a.poseBindings).toEqual(pack.poseBindings);
+    expect(b.poseBindings).toEqual(pack.poseBindings);
+    expect(a.descriptor).toEqual(b.descriptor);
+    expect(meshes).toHaveLength(5);
+    const seek = rig.seekPose?.bind(rig);
+    if (!seek) throw Error('Missing canonical seek');
+    const idle = a.poseBindings.clips.find((x) => x.clipId === 'Idle');
+    if (!idle) throw Error('Missing interleaved binding');
+    for (const recipe of [...inPlaceRecipes].reverse()) {
+      const binding = a.poseBindings.clips.find(
+        (x) => x.clipId === recipe.name,
+      );
+      if (!binding) throw Error('Missing native binding');
+      const keys = originalRootKeys(recipe.index),
+        first = keys.times[0],
+        peak = keys.times[recipe.peak - 1],
+        previous = keys.times[recipe.peak - 2];
+      if (first === undefined || peak === undefined || previous === undefined)
+        throw Error('Missing source clock');
+      for (const ms of [
+        peak * 1000,
+        0,
+        binding.durationMs,
+        first * 500,
+        first * 1000,
+        (previous * 0.75 + peak * 0.25) * 1000,
+        peak * 1000,
+      ]) {
+        const time = durationMs(ms),
+          sample = a.evaluate(binding, time);
+        expect(b.evaluate(binding, time)).toEqual(sample);
+        if (sample.kind !== 'transform')
+          throw Error('Unavailable native sample');
+        expect(
+          a.evaluate(
+            { ...binding, sourceBindingId: 'mismatched-policy' },
+            time,
+          ),
+        ).toMatchObject({ kind: 'unavailable', reason: 'invalid-binding' });
+        a.evaluate(idle, durationMs(0));
+        expect(a.evaluate(binding, time)).toEqual(sample);
+        seek(idle, durationMs(0));
+        seek(binding, time);
+        parent.updateMatrixWorld(true);
+        expect(parent.matrixWorld.toArray()).toEqual(parentBefore);
+        const actorFromWorld = rig.node.matrixWorld.clone().invert(),
+          matrix = new Matrix4().fromArray(sample.matrix);
+        for (const vertex of a.descriptor.vertices) {
+          const mesh = meshes[vertex.primitive];
+          if (!mesh) throw Error('Missing primitive');
+          const expected = mesh
+            .getVertexPosition(vertex.vertexIndex, new Vector3())
+            .applyMatrix4(mesh.matrixWorld)
+            .applyMatrix4(actorFromWorld);
+          const actual = new Vector3(
+              vertex.position.x,
+              vertex.position.y,
+              vertex.position.z,
+            ).applyMatrix4(matrix),
+            error = expected.distanceTo(actual);
+          if (!Number.isFinite(error) || error > 1e-10)
+            throw Error(
+              `${recipe.name} ${ms} ${vertex.primitive}/${vertex.vertexIndex} CPU error ${error}`,
+            );
+          receipt.maxErrorM = Math.max(receipt.maxErrorM, error);
+          receipt.witnesses++;
+        }
+        receipt.poses++;
+      }
+    }
+    expect(receipt.poses).toBe(21);
+    expect(receipt.witnesses).toBe(93912);
+    receipt.passed = true;
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    a.dispose();
+    b.dispose();
+    if (process.env.IN_PLACE_HEAD_PROOF_RECEIPT)
+      appendFileSync(
+        process.env.IN_PLACE_HEAD_PROOF_RECEIPT,
+        `${JSON.stringify(receipt)}\n`,
+      );
+  }
+}, 30000);
