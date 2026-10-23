@@ -21,6 +21,13 @@ import { loadVerifiedSource } from './loadVerifiedSource';
 import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
 import { copyRootPolicy, type ClipRootPolicy } from './rootPolicy';
 
+import {
+  createHeadIntervalDiagnostics,
+  type IntervalChannel,
+  type IntervalValue,
+  type SourceHeadIntervalDiagnostics,
+} from './headIntervals';
+
 type Point = Readonly<{ x: number; y: number; z: number }>;
 export interface SourceHeadDescriptor {
   readonly geometryId: string;
@@ -65,9 +72,11 @@ export type SourceHeadSample =
         | 'invalid-binding'
         | 'invalid-time'
         | 'disposed'
-        | 'unsupported-affine';
+        | 'unsupported-affine'
+        | 'unsupported-root-policy';
     }>;
 export interface SourceHeadProvider {
+  readonly intervalDiagnostics?: SourceHeadIntervalDiagnostics;
   readonly descriptor: SourceHeadDescriptor;
   readonly poseBindings: PoseCatalogBindings;
   readonly clipSources: readonly Readonly<{
@@ -81,6 +90,9 @@ export interface SourceHeadProvider {
   dispose(): void;
 }
 export type SourceHeadInput = {
+  readonly intervalDiagnostics?:
+    | 'idle-uppercut-f21-f24-v1'
+    | 'pinned42-source-cells-v1';
   readonly rootPolicies?: readonly ClipRootPolicy[];
   readonly signal: AbortSignal;
   readonly checkpoint?: (stage: string) => Promise<void>;
@@ -234,6 +246,7 @@ interface NumericNode {
   readonly world: Matrix4;
 }
 interface Channel {
+  readonly interval?: IntervalChannel;
   readonly node: NumericNode;
   readonly property: 'translation' | 'rotation' | 'scale';
   readonly interpolant: Interpolant;
@@ -392,6 +405,13 @@ function staticEqual(a: Decoded, b: Decoded): void {
 export async function preparePinnedSourceHead(
   input: SourceHeadInput,
 ): Promise<SourceHeadProvider> {
+  const intervalDiagnostics = input.intervalDiagnostics;
+  if (
+    intervalDiagnostics !== undefined &&
+    intervalDiagnostics !== 'idle-uppercut-f21-f24-v1' &&
+    intervalDiagnostics !== 'pinned42-source-cells-v1'
+  )
+    unsupported('interval diagnostic scope');
   const signal = input.signal,
     scheduled = input.checkpoint;
   const check = () => {
@@ -406,6 +426,17 @@ export async function preparePinnedSourceHead(
     ? [new Uint8Array(required(input.derivedBytes))]
     : required(input.sources).map((b) => new Uint8Array(b));
   const policies = (input.rootPolicies ?? []).map(copyRootPolicy);
+  if (
+    policies.some(
+      (p) =>
+        ![
+          'full-translation',
+          'grounded-posture-y',
+          'in-place-posture-xyz',
+        ].includes(p.mode),
+    )
+  )
+    unsupported('root policy mode');
   const policyMap = new Map(policies.map((p) => [p.clipId, p]));
   if (policyMap.size !== policies.length) unsupported('duplicate root policy');
   const pins = isDerived
@@ -661,7 +692,30 @@ export async function preparePinnedSourceHead(
                   output,
                 )
               : new LinearInterpolant(inputTimes, inputValues, size, output);
-        channels.push({ node, property, interpolant });
+        channels.push({
+          node,
+          property,
+          interpolant,
+          ...(intervalDiagnostics &&
+          (intervalDiagnostics === 'pinned42-source-cells-v1' ||
+            id === 'Idle' ||
+            id === 'Uppercut')
+            ? {
+                interval: {
+                  node: targetIndex,
+                  property,
+                  mode,
+                  times: inputTimes,
+                  values: inputValues,
+                },
+              }
+            : {}),
+        });
+        if (
+          intervalDiagnostics === 'pinned42-source-cells-v1' &&
+          channels.length % 7 === 0
+        )
+          await checkpoint(`interval-channels:${id}:${channels.length}`);
       }
       const manifestOrigin = isDerived
         ? ANDROID_DERIVED_PACK_V1.clips.find((c) => c.name === id)
@@ -699,6 +753,7 @@ export async function preparePinnedSourceHead(
     () => checkpoint('bindings'),
   );
   const referenceAdjustment = attachment.clone().invert().multiply(reference);
+  if (intervalDiagnostics) await checkpoint('interval-diagnostics');
   await checkpoint('publish');
   sources.length = 0;
   captured.length = 0;
@@ -708,6 +763,7 @@ export async function preparePinnedSourceHead(
     plans,
     nodes,
     referenceAdjustment,
+    intervalDiagnostics,
   );
 }
 
@@ -719,6 +775,7 @@ function numericProvider(
   plans: Map<string, ClipPlan>,
   nodes: NumericNode[],
   referenceAdjustment: Matrix4,
+  intervalScope: SourceHeadInput['intervalDiagnostics'],
 ): SourceHeadProvider {
   const byId = new Map(nodes.map((n) => [n.sourceIndex, n]));
   const root = required(byId.get(52)),
@@ -739,34 +796,21 @@ function numericProvider(
       });
     }),
   );
-  return Object.freeze({
-    descriptor,
-    poseBindings,
-    clipSources,
-    evaluate(binding: PoseClipBinding, time: DurationMs): SourceHeadSample {
-      if (disposed)
-        return Object.freeze({ kind: 'unavailable', reason: 'disposed' });
-      const expected = binding && known.get(binding.clipId),
-        plan = binding && plans.get(binding.clipId);
-      if (
-        !expected ||
-        !plan ||
-        binding.sourceBindingId !== expected.sourceBindingId ||
-        binding.durationMs !== expected.durationMs
-      )
-        return Object.freeze({
-          kind: 'unavailable',
-          reason: 'invalid-binding',
-        });
-      if (!Number.isFinite(time) || time < 0 || time > expected.durationMs)
-        return Object.freeze({ kind: 'unavailable', reason: 'invalid-time' });
-      sampleChannels(
-        plan,
-        time === expected.durationMs ? plan.seconds : time / 1000,
-        nodes,
-        byId,
-      );
-      if (plan.origin.rootPolicy?.mode === 'grounded-posture-y') {
+  function resolve(binding: PoseClipBinding) {
+    const expected = binding && known.get(binding.clipId),
+      plan = binding && plans.get(binding.clipId);
+    if (
+      !expected ||
+      !plan ||
+      binding.sourceBindingId !== expected.sourceBindingId ||
+      binding.durationMs !== expected.durationMs
+    )
+      return undefined;
+    return { binding: expected, plan };
+  }
+  function matrixFor(plan: ClipPlan): SourceHeadSample {
+    switch (plan.origin.rootPolicy?.mode ?? 'full-translation') {
+      case 'grounded-posture-y': {
         const parent = required(byId.get(required(root.parent))).world;
         if (!affine(parent))
           return Object.freeze({
@@ -777,23 +821,126 @@ function numericProvider(
         current.x = plan.actorOrigin.x;
         current.z = plan.actorOrigin.z;
         root.position.copy(current.applyMatrix4(parent.clone().invert()));
-      } else root.position.copy(plan.localOrigin);
-      update(nodes, byId);
-      const matrix = new Matrix4()
-        .multiplyMatrices(mesh.world, mesh.world.clone().invert())
-        .multiply(head.world)
-        .multiply(referenceAdjustment);
-      if (!affine(matrix))
+        break;
+      }
+      case 'full-translation':
+        root.position.copy(plan.localOrigin);
+        break;
+      case 'in-place-posture-xyz':
+        // Zero extraction: keep native source XYZ, including first-key hold.
+        break;
+      default:
         return Object.freeze({
           kind: 'unavailable',
-          reason: 'unsupported-affine',
+          reason: 'unsupported-root-policy',
         });
+    }
+    update(nodes, byId);
+    const matrix = new Matrix4()
+      .multiplyMatrices(mesh.world, mesh.world.clone().invert())
+      .multiply(head.world)
+      .multiply(referenceAdjustment);
+    if (!affine(matrix))
       return Object.freeze({
-        kind: 'transform',
-        matrix: matrixArray(matrix),
-        numerics: 'cpu-float64-not-certified',
+        kind: 'unavailable',
+        reason: 'unsupported-affine',
       });
-    },
+    return Object.freeze({
+      kind: 'transform',
+      matrix: matrixArray(matrix),
+      numerics: 'cpu-float64-not-certified',
+    });
+  }
+  function evaluate(
+    binding: PoseClipBinding,
+    time: DurationMs,
+  ): SourceHeadSample {
+    if (disposed)
+      return Object.freeze({ kind: 'unavailable', reason: 'disposed' });
+    const found = resolve(binding);
+    if (!found)
+      return Object.freeze({ kind: 'unavailable', reason: 'invalid-binding' });
+    const { plan, binding: expected } = found;
+    if (!Number.isFinite(time) || time < 0 || time > expected.durationMs)
+      return Object.freeze({ kind: 'unavailable', reason: 'invalid-time' });
+    sampleChannels(
+      plan,
+      time === expected.durationMs ? plan.seconds : time / 1000,
+      nodes,
+      byId,
+    );
+    return matrixFor(plan);
+  }
+  function sampleValues(
+    binding: PoseClipBinding,
+    values: readonly IntervalValue[],
+  ): SourceHeadSample {
+    const found = resolve(binding);
+    if (!found)
+      return Object.freeze({ kind: 'unavailable', reason: 'invalid-binding' });
+    reset(nodes);
+    for (const value of values) {
+      const node = required(byId.get(value.node));
+      if (value.property === 'rotation') node.rotation.fromArray(value.value);
+      else if (value.property === 'translation')
+        node.position.fromArray(value.value);
+      else node.scale.fromArray(value.value);
+    }
+    update(nodes, byId);
+    return matrixFor(found.plan);
+  }
+  function makeIntervals(): SourceHeadIntervalDiagnostics {
+    const identity = new Matrix4().elements;
+    const parents = [undefined, 54, 52, 51, 42, 41, 40, 1, 54];
+    const staticNodes = [required(byId.get(54)), mesh];
+    const layoutSupported =
+      nodes.every((n, i) => n.parent === parents[i]) &&
+      staticNodes.every(
+        (n) =>
+          n.baseRotation.equals(new Quaternion()) &&
+          n.baseScale.equals(new Vector3(1, 1, 1)),
+      ) &&
+      required(staticNodes[0]).basePosition.equals(
+        new Vector3(0, -0.02199999988079071, 0),
+      ) &&
+      mesh.basePosition.equals(new Vector3()) &&
+      referenceAdjustment.elements.every((x, i) => x === identity[i]);
+    let radiusM = 0;
+    for (const { position: p } of descriptor.vertices)
+      radiusM = Math.max(radiusM, Math.sqrt(p.x * p.x + p.y * p.y + p.z * p.z));
+    return createHeadIntervalDiagnostics(
+      {
+        geometryId: descriptor.geometryId,
+        radiusM,
+        layoutSupported,
+        alive: () => !disposed,
+        resolve(binding) {
+          const found = resolve(binding);
+          if (!found) return undefined;
+          const { plan } = found;
+          return {
+            binding: found.binding,
+            sourceSha256: plan.origin.sourceSha256,
+            sourceClipIndex: plan.origin.sourceClipIndex,
+            rootMode: plan.origin.rootPolicy?.mode ?? 'full-translation',
+            rootOrigin: plan.localOrigin.toArray(),
+            channels: plan.channels.flatMap((c) =>
+              c.interval ? [c.interval] : [],
+            ),
+          };
+        },
+        sampleCanonical: evaluate,
+        sampleValues,
+      },
+      intervalScope,
+    );
+  }
+  return Object.freeze({
+    descriptor,
+    poseBindings,
+    clipSources,
+    evaluate,
+    ...(intervalScope ? { intervalDiagnostics: makeIntervals() } : {}),
     dispose() {
       disposed = true;
       plans.clear();

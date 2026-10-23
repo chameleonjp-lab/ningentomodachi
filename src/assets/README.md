@@ -110,3 +110,23 @@ These declarations qualify deterministic display timing only. They do not certif
 anatomical hurt geometry, continuous collision, a complete production catalog,
 world/art/browser acceptance, or phone frame-time performance. Actual C/Core
 composition and deployment readiness remain separately gated.
+
+### Opt-in in-place XYZ posture (diagnostic policy)
+
+`ClipRootPolicy.mode: 'in-place-posture-xyz'` retains the native authored root
+translation in all three axes and extracts exactly zero XYZ transport. It does
+not change source yaw, C facing, physical anchors or jump/gravity ownership.
+The receipt remains source/manifest/support-bound; its pose binding differs from
+both legacy full extraction and `grounded-posture-y`. Those existing modes and
+all previously frozen fixtures keep their original behavior.
+
+Compatibility requires zero XYZ root-curve keys and `spatial-jump` vertical
+ownership. Raw source root displacement remains separate provenance, not actor
+travel. This is an opt-in diagnostic decomposition, not a production catalog,
+continuous support or gameplay-contact acceptance.
+
+**Integration gate:** the independently owned numeric head point/interval
+providers must explicitly support this mode or reject it before their old binary
+root branches. This asset checkpoint must not be promoted with an old provider
+that interprets the new mode as full extraction or grounded-Y. Numeric provider
+qualification and actual C world/contact qualification remain separate gates.

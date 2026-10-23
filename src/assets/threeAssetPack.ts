@@ -19,15 +19,16 @@ import {
   type ActorColor,
   type ClipId,
   clipId,
+  type DurationMs,
   durationMs,
-  type PresentationTimeMs,
   type PoseCatalogBindings,
   type PoseClipBinding,
-  type DurationMs,
+  type PresentationTimeMs,
   type StampedDefeatSeek,
 } from '../contracts';
 import type { ActorRig, AnimatorAssets } from './actorAnimator';
 import { fixedSwingTwistPath } from './entryRotation';
+import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
 import {
   type ClipRootPolicy,
   copyRootPolicy,
@@ -40,7 +41,6 @@ import {
   type SkinBoundsPlan,
 } from './skinBounds';
 import { inspectGlb } from './source';
-import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
 
 // Bounded immutable numeric plans only. No actor, scene, GPU or skeleton resources.
 const supportPlans = new Map<string, SkinBoundsPlan>();
@@ -586,7 +586,11 @@ export async function prepareThreeAssetPack(
             root.position.copy(
               root.parent.worldToLocal(node.localToWorld(current)),
             );
-          } else root.position.copy(rootOrigin);
+          } else if (policy?.mode !== 'in-place-posture-xyz') {
+            root.position.copy(rootOrigin);
+          }
+          // Explicit in-place XYZ retains the native source root unchanged. No
+          // transport or actor/parent inverse roundtrip is applied in this mode.
           node.updateWorldMatrix(true, true);
           const canonicalPelvis = pelvis ? actorRotation(pelvis) : undefined;
           // Defeated visual pose only: blend from the actual last displayed pose,
