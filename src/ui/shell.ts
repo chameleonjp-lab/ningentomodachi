@@ -398,6 +398,10 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     startupViewKey = null;
     startupStatus = null;
     const focusContext = `${focusScope()}:${settingsOpen}`;
+    const settingsScrollTop =
+      settingsOpen && renderedFocusContext === focusContext
+        ? chrome.querySelector<HTMLElement>('.nt-panel')?.scrollTop
+        : undefined;
     const focused = document.activeElement;
     const focusedKey =
       renderedFocusContext === focusContext &&
@@ -470,6 +474,8 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     if (settingsOpen) {
       renderSettings(panel, isCurrent, startupGeneration);
       chrome.append(panel);
+      // Restore after attachment so the browser clamps to the current scroll range.
+      if (settingsScrollTop !== undefined) panel.scrollTop = settingsScrollTop;
       restoreFocus();
       return;
     }

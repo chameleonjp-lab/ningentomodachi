@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { createInterface } from '../../src/ui';
 import { frame, run, snapshot, viewport } from './fixtures/core';
 import {
@@ -676,3 +676,89 @@ test.each([
     s.root.remove();
   },
 );
+
+test('settings scroll and focused lower slider survive authoritative pause and quality rerenders', () => {
+  const s = focusSetup();
+  const writes = vi.spyOn(Storage.prototype, 'setItem');
+  try {
+    s.host.render(state('playing', snapshot()));
+    s.click('設定');
+    const selector = '[aria-label="ジャンプ 不透明度"]';
+    const slider = s.root.querySelector<HTMLInputElement>(selector);
+    if (!slider) throw Error('Missing settings slider');
+    slider.focus();
+    const requestsBefore = [...s.requests];
+    for (const game of [
+      snapshot({
+        phase: 'paused',
+        pauseReasons: ['settings', 'background', 'interruption'],
+      }),
+      snapshot({
+        phase: 'paused',
+        pauseReasons: ['settings', 'interruption'],
+        quality: 'low',
+      }),
+    ]) {
+      const previous = s.root.querySelector<HTMLElement>('.nt-panel');
+      if (!previous) throw Error('Missing settings panel');
+      previous.scrollTop = 417;
+      s.host.render(state('playing', game));
+      const panel = s.root.querySelector<HTMLElement>('.nt-panel');
+      expect(panel).not.toBe(previous);
+      expect(panel?.scrollTop).toBe(417);
+      expect(document.activeElement).toBe(s.root.querySelector(selector));
+    }
+    expect(s.requests).toEqual(requestsBefore);
+    expect(writes).not.toHaveBeenCalled();
+  } finally {
+    writes.mockRestore();
+  }
+});
+
+test('settings reset keeps the current scroll position without requiring focused controls', () => {
+  const s = focusSetup();
+  s.host.render(state('title'));
+  s.click('設定');
+  const panel = s.root.querySelector<HTMLElement>('.nt-panel');
+  if (!panel) throw Error('Missing settings panel');
+  panel.scrollTop = 612;
+  s.click('初期配置に戻す');
+  expect(s.root.querySelector<HTMLElement>('.nt-panel')?.scrollTop).toBe(612);
+  expect(document.activeElement).toBe(document.body);
+});
+
+test('settings scroll never carries into closed reopened or successor contexts', () => {
+  const s = focusSetup();
+  const scroll = () => {
+    const panel = s.root.querySelector<HTMLElement>('.nt-panel');
+    if (!panel) throw Error('Missing panel');
+    panel.scrollTop = 417;
+  };
+  const expectTop = () =>
+    expect(s.root.querySelector<HTMLElement>('.nt-panel')?.scrollTop).toBe(0);
+  s.host.render(state('title'));
+  s.click('設定');
+  scroll();
+  s.click('設定を閉じる');
+  expectTop();
+  s.click('設定');
+  expectTop();
+  scroll();
+  s.host.render(state('playing', snapshot()));
+  expectTop();
+  scroll();
+  s.host.render(state('playing', snapshot({ runId: runId('successor') })));
+  expectTop();
+  scroll();
+  s.host.render(startupState(3));
+  expectTop();
+  s.click('設定');
+  scroll();
+  s.host.render(startupState(3, 2));
+  expectTop();
+  s.click('設定');
+  expectTop();
+  scroll();
+  s.host.render(state('error'));
+  expectTop();
+});
