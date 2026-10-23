@@ -14,8 +14,8 @@ import {
 } from '../world/math';
 import type { StreetLayout } from '../world/street-layout';
 import type { Box } from '../world/swept-shapes';
-import { cameraSphereBlocked } from './sphere-box';
 import { refineVerifiedRange } from './refine-fit';
+import { cameraSphereBlocked } from './sphere-box';
 export interface CameraFrame {
   readonly position: Vector3;
   readonly target: Vector3;
@@ -37,6 +37,11 @@ export const CAMERA_NEAR = 0.05;
 export const CAMERA_FAR = 250;
 const MAX_DISTANCE = 180;
 const MIN_HORIZONTAL = 0.05;
+// Initial battle-reference tuning, not a guarantee of final HUD occupancy.
+// Exact corner fit and obstacle clearance always override the preferred view.
+const COMBAT_MIN_DISTANCE = 2.5;
+const COMBAT_PITCH = (6 * Math.PI) / 180;
+const EXPLORATION_PITCH = Math.acos(0.94);
 
 function eyeIsClear(focus: Vector3, eye: Vector3, boxes: readonly Box[]) {
   return !boxes.some((box) => cameraSphereBlocked(focus, eye, box));
@@ -87,8 +92,9 @@ function horizontalBudget(
   depth: Vector3,
   layout: StreetLayout,
   distance: number,
+  horizontalRatio: number,
 ) {
-  let h = distance * 0.94;
+  let h = distance * horizontalRatio;
   for (const axis of ['x', 'z'] as const) {
     const direction = -depth[axis];
     if (Math.abs(direction) > 1e-8) {
@@ -109,6 +115,7 @@ function cornerConstraints(
   aspect: number,
   usableX: number,
   usableY: number,
+  minDistance: number,
 ) {
   const forward = unit(sub(focus, eye)),
     right = unit(v(-forward.z, 0, forward.x));
@@ -120,7 +127,7 @@ function cornerConstraints(
   const tx = Math.tan((25 * Math.PI) / 180) * aspect * usableX,
     ty = Math.tan((25 * Math.PI) / 180) * usableY;
   const distance = length(sub(eye, focus));
-  let required = 7,
+  let required = minDistance,
     contained = true;
   for (const point of points) {
     const delta = sub(point, focus),
@@ -154,6 +161,7 @@ function bodyCorners(actor: SpatialActor): Vector3[] {
 }
 export function createCameraRig(layout: StreetLayout) {
   let current: CameraFrame | undefined,
+    combatPreference: number | undefined,
     duelAxis = v(0, 0, 1);
   const opaqueBoxes = layout.objects.map((o) =>
     toBox(o.position, o.halfExtents),
@@ -168,6 +176,26 @@ export function createCameraRig(layout: StreetLayout) {
     ): CameraFrame {
       if (!Number.isFinite(elapsedMs) || elapsedMs < 0)
         throw new RangeError('Invalid presentation elapsed');
+      const alpha = current
+        ? 1 - Math.exp(-Math.min(elapsedMs, 1000) / 180)
+        : 1;
+      const desiredPreference = b ? 1 : 0;
+      // Blend preference, not the safety-adjusted eye. Initialization is exact;
+      // transitions approach the endpoints exponentially without a finite snap.
+      // Zero elapsed preserves both preferred pitch and minimum range, while
+      // the checked fit/obstruction solver may still make required corrections.
+      const preference =
+        combatPreference === undefined
+          ? desiredPreference
+          : combatPreference + (desiredPreference - combatPreference) * alpha;
+      const minDistance = 7 + (COMBAT_MIN_DISTANCE - 7) * preference;
+      const horizontalRatio =
+        preference === 0
+          ? 0.94
+          : Math.cos(
+              EXPLORATION_PITCH +
+                (COMBAT_PITCH - EXPLORATION_PITCH) * preference,
+            );
       let right = v(1, 0, 0),
         target = add(a.position, v(0, 1, 0));
       if (b) {
@@ -218,9 +246,6 @@ export function createCameraRig(layout: StreetLayout) {
       }
       const framingScale =
         Math.sin((25 * Math.PI) / 180) * Math.min(usableY, aspect * usableX);
-      const alpha = current
-        ? 1 - Math.exp(-Math.min(elapsedMs, 1000) / 180)
-        : 1;
       const focus = lerp(current?.target ?? target, target, alpha);
       // Smooth the intended signed view direction, independently from safety
       // corrections. Angular interpolation has no zero-length midpoint, even
@@ -239,7 +264,7 @@ export function createCameraRig(layout: StreetLayout) {
       // Include focus lag in the enclosing sphere, so damping does not quietly
       // crop the actual actors while merely keeping the old focus on screen.
       const distance = Math.max(
-        7,
+        minDistance,
         (radius + length(sub(target, focus))) / framingScale,
       );
       const fallbackDistance = Math.min(MAX_DISTANCE, distance * 1.06);
@@ -259,7 +284,7 @@ export function createCameraRig(layout: StreetLayout) {
           focus,
           actualDepth,
           d,
-          horizontalBudget(focus, actualDepth, layout, d),
+          horizontalBudget(focus, actualDepth, layout, d, horizontalRatio),
           opaqueBoxes,
         );
         solvedRanges.set(d, result);
@@ -276,11 +301,12 @@ export function createCameraRig(layout: StreetLayout) {
           ),
           usableX,
           usableY,
+          minDistance,
         );
       const priorDistance = current
         ? length(sub(current.position, current.target))
-        : 7;
-      let trial = Math.min(MAX_DISTANCE, Math.max(7, priorDistance));
+        : minDistance;
+      let trial = Math.min(MAX_DISTANCE, Math.max(minDistance, priorDistance));
       let best: { distance: number; eye: Vector3 } | undefined;
       let failedRange: number | undefined;
       // Rear bounds and obstacles can change the view basis, so an analytic
@@ -301,7 +327,7 @@ export function createCameraRig(layout: StreetLayout) {
           // An absolute 1mm reserve avoids discontinuous 6% range purchases
           // when a previously valid eye first crosses the framing boundary.
           // The candidate still needs every unchanged fit/obstruction check.
-          Math.max(7, constraints.required + 0.001),
+          Math.max(minDistance, constraints.required + 0.001),
         );
         // Stop analytic angle updates at a verified fit. Outward corrections
         // get a separately bounded checked refinement below.
@@ -348,7 +374,13 @@ export function createCameraRig(layout: StreetLayout) {
           // search. Extending its ray still needs a fresh complete sweep: a
           // farther obstacle may block it, in which case use the verified fit.
           const horizontal = Math.min(
-            horizontalBudget(focus, actualDepth, layout, damped),
+            horizontalBudget(
+              focus,
+              actualDepth,
+              layout,
+              damped,
+              horizontalRatio,
+            ),
             (Math.hypot(best.eye.x - focus.x, best.eye.z - focus.z) * damped) /
               best.distance,
           );
@@ -368,6 +400,7 @@ export function createCameraRig(layout: StreetLayout) {
         eye = fallback.eye;
         constrained = fallback.constrained || !check(eye).contained;
       }
+      combatPreference = preference;
       current = {
         position: eye,
         target: focus,

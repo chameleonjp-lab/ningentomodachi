@@ -1,24 +1,25 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 import { expect, test } from 'vitest';
 import {
-  createCameraRig,
-  CAMERA_NEAR,
   CAMERA_FAR,
-  projectPoint,
+  CAMERA_NEAR,
   type CameraFrame,
+  createCameraRig,
+  projectPoint,
 } from '../../src/camera/camera-rig';
 import {
   actorId,
-  worldObjectId,
-  type SpatialActor,
   type Vector3 as Point,
+  type SpatialActor,
   type ViewportSnapshot,
+  worldObjectId,
 } from '../../src/contracts';
-import { createParisStreetLayout } from '../../src/world/street-layout';
-import { viewport } from '../world/fixtures';
-import { length, sub } from '../../src/world/math';
 import { toBox } from '../../src/world/character-motor';
+import { length, sub } from '../../src/world/math';
+import { createParisStreetLayout } from '../../src/world/street-layout';
 import { sweepBox } from '../../src/world/swept-shapes';
+import { viewport } from '../world/fixtures';
+
 const actor = (p: Point): SpatialActor => ({
   actorId: actorId('white'),
   position: p,
@@ -111,7 +112,9 @@ test('portrait/landscape, reversed frame order and side-on motion retain all dis
       ];
       const f = rig.update(a, b, vp, 16, points);
       contained(f, points, vp);
-      expect(length(sub(f.position, f.target))).toBeGreaterThanOrEqual(7);
+      // Opponent-present framing now permits the reference's closer view.
+      // All exact corner containment and maximum-range checks stay unchanged.
+      expect(length(sub(f.position, f.target))).toBeGreaterThanOrEqual(2.5);
       expect(length(sub(f.position, f.target))).toBeLessThanOrEqual(180);
     }
   }
