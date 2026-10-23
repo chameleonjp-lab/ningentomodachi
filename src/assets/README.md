@@ -34,6 +34,27 @@ Numerical tests sample canonical geometry at 480Hz, entry rotations at 960Hz, an
 - No real WebGL/shared-depth rendering, one-on-one integration, full four-opponent game, screenshots/video, mobile browser performance or iPhone/iPad acceptance has been performed.
 - Model resources, synthetic public-contract correctness, actual CPU source playback, visual acceptance, integration and device acceptance are separate gates.
 
+### Artifact-delivery correction (2026-10-23)
+
+The earlier statement that the public directory is untouched describes the
+original module checkpoint and is retained above as history. It is superseded
+for the current repository: these two checked-in public payloads are present and
+match their built-in trust pins:
+- `public/game-assets/android/derived-pack-v1.glb`: 8,349,400 bytes; SHA-256
+  `78113b6f409633a8ae127a0c4cf149e6e0db8a8f023da53693f5976ddeaac37b`,
+  pinned by `ANDROID_DERIVED_PACK_V1` in `derivedPackManifest.ts`.
+- `public/game-assets/android/runtime-artifact-v1.json`: 1,351,601 bytes; SHA-256
+  `04dd9e6ee5dd9600eb93a4083a18e721634e4b136afe3b1b02d7835e6caf5c22`,
+  pinned by `ANDROID_RUNTIME_ARTIFACT_V1` in `runtimeArtifactManifest.ts`.
+
+`../app/androidVisualAssets.ts` already provides `androidAssetUrls`, resolving
+the fixed manifest paths beneath an explicit application base, and
+`prepareAndroidVisualAssets`, consuming the two pinned payloads. No new
+base-aware resolver is needed. See `RUNTIME_ARTIFACTS.md` for artifact scope.
+This is repository availability, not a public-deployment or playable-game claim.
+`../main.ts` still supplies no accepted game configuration; complete gameplay
+catalog acceptance and browser/device readiness remain unproven.
+
 ### Source-stamped driver preparation (checkpoint 1)
 
 Prepared packs with all four locomotion sources expose immutable `poseBindings`.

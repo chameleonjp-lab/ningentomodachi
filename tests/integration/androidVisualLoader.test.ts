@@ -324,3 +324,183 @@ test('visual wrapper forwards the actual final pack pose descriptor without allo
   }
   expect(dispose).toHaveBeenCalledTimes(1);
 });
+
+// Source-free wrapper boundary only: no GLB parse, actual model, or pose work.
+async function forwardingFixture(
+  options: { absent?: boolean; lateAbort?: boolean } = {},
+) {
+  const { RECOVERY_FRAME_CAPABILITY } = await import(
+    '../../src/assets/poseFramePreparation'
+  );
+  const controller = new AbortController();
+  let closed = false,
+    released = false,
+    transferred = false;
+  const token = Object.freeze({ identity: 'synthetic-token' });
+  const driver = {
+    capability: RECOVERY_FRAME_CAPABILITY,
+    prepare: vi.fn(() => token),
+    apply: vi.fn(),
+    dispose: vi.fn(),
+  };
+  const rig = {
+    node: new Group(),
+    seek() {},
+    setEmissiveEnabled() {},
+    defeatPoseSupport: () => undefined,
+    poseFrame: driver,
+    dispose: vi.fn(() => {
+      released = true;
+      driver.dispose();
+    }),
+  };
+  const handle = {
+    poseFrame: driver,
+    materialize: vi.fn(() => {
+      if (closed) throw Error('underlying pack closed');
+      if (released || transferred) throw Error('underlying stage consumed');
+      transferred = true;
+      return rig;
+    }),
+    dispose: vi.fn(() => {
+      if (released || transferred) return;
+      released = true;
+      driver.dispose();
+    }),
+  };
+  const owned: AssetModule.ThreeAssetPack = {
+    create: vi.fn(() => rig),
+    clipDuration: () => undefined,
+    clipNames: () => [],
+    rootPolicy: () => undefined,
+    dispose: vi.fn(() => {
+      closed = true;
+    }),
+    ...(!options.absent
+      ? {
+          recoveryCapability: RECOVERY_FRAME_CAPABILITY,
+          stageActor: vi.fn(function (this: AssetModule.ThreeAssetPack) {
+            expect(this).toBe(owned);
+            if (closed) throw Error('underlying pack closed');
+            return handle;
+          }),
+        }
+      : {}),
+  };
+  vi.spyOn(AssetModule, 'createPinnedDerivedThreeAssetPack').mockImplementation(
+    async () => {
+      if (options.lateAbort) controller.abort();
+      return owned;
+    },
+  );
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          new Uint8Array(
+            url.endsWith('.glb')
+              ? ANDROID_DERIVED_PACK_V1.bytes
+              : ANDROID_RUNTIME_ARTIFACT_V1.bytes,
+          ),
+        ),
+    ),
+  );
+  const loading = prepareAndroidVisualAssets({
+    appBase: 'https://example.test/',
+    signal: controller.signal,
+    rootPolicies: [],
+  });
+  return { loading, owned, handle, driver, rig, token, controller };
+}
+
+test('recovery forwarding preserves capability, receiver, handle and token identity', async () => {
+  const f = await forwardingFixture();
+  const pack = await f.loading;
+  expect(pack.recoveryCapability).toBe(f.owned.recoveryCapability);
+  expect(f.owned.create).not.toHaveBeenCalled();
+  const handle = pack.stageActor!('blue');
+  expect(handle).toBe(f.handle);
+  expect(f.owned.stageActor).toHaveBeenCalledExactlyOnceWith('blue');
+  const request = {} as Parameters<typeof handle.poseFrame.prepare>[0];
+  const token = handle.poseFrame.prepare(request);
+  expect(token).toBe(f.token);
+  expect(f.driver.prepare).toHaveBeenCalledExactlyOnceWith(request);
+  const rig = handle.materialize();
+  expect(rig).toBe(f.rig);
+  rig.poseFrame!.apply(token);
+  expect(f.driver.apply).toHaveBeenCalledExactlyOnceWith(token);
+  rig.dispose();
+  pack.dispose();
+});
+test('recovery forwarding absent optional methods leaves default creation unchanged', async () => {
+  const f = await forwardingFixture({ absent: true });
+  const pack = await f.loading;
+  expect('stageActor' in pack).toBe(false);
+  expect('recoveryCapability' in pack).toBe(false);
+  expect(f.owned.create).not.toHaveBeenCalled();
+  expect(pack.create('white')).toBe(f.rig);
+  f.rig.dispose();
+  pack.dispose();
+  expect(f.owned.dispose).toHaveBeenCalledTimes(1);
+});
+test('recovery forwarding abandoned stage retains underlying disposal ownership', async () => {
+  const f = await forwardingFixture();
+  const pack = await f.loading;
+  const handle = pack.stageActor!('white');
+  handle.dispose();
+  handle.dispose();
+  expect(f.driver.dispose).toHaveBeenCalledTimes(1);
+  expect(f.rig.dispose).not.toHaveBeenCalled();
+  expect(f.owned.dispose).not.toHaveBeenCalled();
+  pack.dispose();
+});
+test('recovery forwarding pack close does not dispose transferred actor or live stage', async () => {
+  const f = await forwardingFixture();
+  const pack = await f.loading;
+  const handle = pack.stageActor!('white');
+  const rig = handle.materialize();
+  handle.dispose();
+  expect(f.driver.dispose).not.toHaveBeenCalled();
+  pack.dispose();
+  expect(f.driver.dispose).not.toHaveBeenCalled();
+  expect(() => pack.stageActor!('blue')).toThrow('underlying pack closed');
+  expect(() => handle.materialize()).toThrow('underlying pack closed');
+  rig.dispose();
+  expect(f.driver.dispose).toHaveBeenCalledTimes(1);
+});
+test('recovery forwarding stage rejection preserves the underlying error', async () => {
+  const f = await forwardingFixture();
+  const error = Error('stage admission');
+  vi.mocked(f.owned.stageActor!).mockImplementation(() => {
+    throw error;
+  });
+  const pack = await f.loading;
+  expect(() => pack.stageActor!('white')).toThrow(error);
+  expect(f.owned.create).not.toHaveBeenCalled();
+  expect(f.driver.dispose).not.toHaveBeenCalled();
+  pack.dispose();
+});
+test('recovery forwarding late abort releases pack without staging or returning capabilities', async () => {
+  const f = await forwardingFixture({ lateAbort: true });
+  await expect(f.loading).rejects.toMatchObject({ name: 'AbortError' });
+  expect(f.owned.dispose).toHaveBeenCalledTimes(1);
+  expect(f.owned.stageActor).not.toHaveBeenCalled();
+  expect(f.owned.create).not.toHaveBeenCalled();
+});
+
+test('recovery forwarding close keeps a live unmaterialized stage owned until its release', async () => {
+  const f = await forwardingFixture();
+  const pack = await f.loading;
+  const handle = pack.stageActor!('white');
+  pack.dispose();
+  expect(f.driver.dispose).not.toHaveBeenCalled();
+  // The wrapper must not replace the underlying stage's post-close contract.
+  const request = {} as Parameters<typeof handle.poseFrame.prepare>[0];
+  expect(handle.poseFrame.prepare(request)).toBe(f.token);
+  expect(() => handle.materialize()).toThrow('underlying pack closed');
+  handle.dispose();
+  handle.dispose();
+  expect(f.driver.dispose).toHaveBeenCalledTimes(1);
+  expect(f.rig.dispose).not.toHaveBeenCalled();
+});

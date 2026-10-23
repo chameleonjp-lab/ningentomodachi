@@ -547,3 +547,428 @@ test('recovery is a separately explicit constructor capability, never inferred f
     enabled.dispose();
   }
 });
+
+// Source-free integration: actual Core commands and C engine selections. Catalog,
+// geometry absence, and explicitly injected contact candidates are synthetic.
+import { createCore } from '../../src/core';
+import {
+  type ActorColor,
+  type CoreOutput,
+  type ImpactReference,
+  vehicleId,
+  tick,
+} from '../../src/contracts';
+
+const lifecycleRecovery = {
+  version: 1,
+  protocol: 'kungfu-recovery-epoch-diagnostic-v1',
+  durationMs: durationMs(150),
+  fixedLiftSign: 1,
+} as const;
+function lifecycleHarness(enabled: boolean) {
+  const fixture = fixtureCatalog(150);
+  const definitions = fixture.catalog.list().map((motion) => {
+    const selected = motion.clipId === 'punch:0';
+    const end = selected ? 125 : motion.category === 'punch' ? 300 : 10;
+    return {
+      ...motion,
+      clipId: selected ? clipId('KungFuStraight') : motion.clipId,
+      durationMs: durationMs(end),
+      impacts: motion.impacts.map((impact) => ({
+        ...impact,
+        endMs: durationMs(end),
+      })),
+      rootCurve: motion.rootCurve.map((key, index) => ({
+        ...key,
+        atMs: durationMs(index === 0 ? 0 : end),
+      })),
+    };
+  });
+  const rename = (id: ReturnType<typeof clipId>) =>
+    id === 'punch:0' ? clipId('KungFuStraight') : id;
+  const moves = { ...fixture.moves };
+  for (const color of ['white', 'blue', 'green', 'yellow', 'black'] as const) {
+    const set = fixture.moves[color];
+    moves[color] = {
+      ...set,
+      punches:
+        color === 'white'
+          ? [clipId('KungFuStraight')]
+          : set.punches.map(rename),
+    };
+  }
+  // Blue must use a longer ordinary punch so a valid impact can arrive after
+  // White's125ms completion. Its four-punch roster remains valid and unique.
+  moves.blue = {
+    ...moves.blue,
+    punches: ['punch:1', 'punch:2', 'punch:3', 'punch:4'].map(clipId),
+  };
+  const motions: MotionCatalogPort = {
+    ...catalog(),
+    list: () => definitions,
+    get: (id) => definitions.find((motion) => motion.clipId === id),
+    sampleMotion: () => undefined,
+  };
+  const car = vehicleId('lifecycle-car');
+  const layout = createParisStreetLayout();
+  const parked = layout.vehicles[0]!;
+  const isolatedLayout = {
+    ...layout,
+    objects: [],
+    vehicles: [
+      {
+        ...parked,
+        vehicleId: car,
+        position: { x: 1000, y: 0, z: 1000 },
+      },
+    ],
+  };
+  const core = createCore(
+    { runId: coreRun, seed: 1 },
+    {
+      catalog: motions,
+      moves,
+      enemyAi: false,
+      world: { vehicles: [{ vehicleId: car, hp: 100 }], objects: [] },
+    },
+  );
+  const e = createSpatialEngine(coreRun, isolatedLayout, {
+    ...policy,
+    ...(enabled ? { recovery: lifecycleRecovery } : {}),
+  });
+  const idleBindings = descriptor();
+  const bindings: PoseCatalogBindings = {
+    ...idleBindings,
+    bindingSetId: 'synthetic-lifecycle125',
+    clips: [
+      ...idleBindings.clips.map((b) =>
+        b.clipId === 'idle' ? { ...b, clipId: clipId('Idle') } : b,
+      ),
+      ...definitions.map((m) => ({
+        clipId: m.clipId,
+        durationMs: m.durationMs,
+        sourceBindingId: `synthetic:${m.clipId}`,
+      })),
+    ],
+    locomotion: { ...idleBindings.locomotion, idle: clipId('Idle') },
+  };
+  const trace: { output: CoreOutput; spatial: unknown }[] = [];
+  let committed: SpatialSnapshot;
+  let provisional: SpatialSnapshot | undefined;
+  const commit = (output = core.drain()) => {
+    committed = e.commit(output);
+    trace.push({
+      output,
+      spatial: {
+        ...committed,
+        actors: committed.actors.map(
+          ({ pose: _pose, ...physical }) => physical,
+        ),
+      },
+    });
+    return committed;
+  };
+  commit();
+  e.poseProtocol!.bindPreparedCatalog(bindings);
+  core.handle({ type: 'AssetsReady', runId: coreRun });
+  commit();
+  core.handle({ type: 'StartRequested', runId: coreRun });
+  commit();
+  const actorFor = (color: ActorColor) =>
+    core.read().actors.find((a) => a.color === color)!;
+  const attack = (
+    color: ActorColor = 'white',
+    category: 'punch' | 'kick' = 'punch',
+  ) => {
+    requestAttack(core, color, category);
+    commit();
+    expect(actorFor(color).attack).not.toBeNull();
+    return reference(core, color);
+  };
+  const perform = (dt = 20, contacts: readonly SpatialCandidate[] = []) => {
+    core.present(durationMs(dt));
+    const request = core.beginStep({ durationMs: durationMs(dt) });
+    const result = e.step(request, motions);
+    expect(result.candidates).toEqual([]);
+    provisional = result.snapshot;
+    const output = core.completeStep({ ...result, candidates: contacts });
+    commit(output);
+    return output;
+  };
+  const advance = (real: number) => {
+    let remaining = real;
+    while (remaining > 0) {
+      const dt = Math.min(20, remaining);
+      perform(dt);
+      remaining -= dt;
+    }
+  };
+  const bodyHit = (
+    source: ImpactReference,
+    target: ActorColor,
+    at: number,
+    id: string,
+  ): SpatialCandidate => ({
+    ...envelope(at, id),
+    interval: {
+      from: core.read().clocks.gameTimeMs,
+      to: gameTimeMs(core.read().clocks.gameTimeMs + 20),
+    },
+    kind: 'body-hit',
+    source,
+    targetActorId: actorFor(target).actorId,
+  });
+  return {
+    core,
+    e,
+    car,
+    trace,
+    attack,
+    perform,
+    advance,
+    commit,
+    actorFor,
+    bodyHit,
+    read: () => committed,
+    provisional: () => provisional,
+    pose: (color: ActorColor = 'white') =>
+      committed.actors.find((a) => a.actorId === actorFor(color).actorId)!
+        .pose!,
+    prime: (victim: ActorColor) => {
+      const sourceColor = victim === 'white' ? 'blue' : 'white';
+      for (let i = 0; i < 3; i++) {
+        advance(500);
+        const source = attack(
+          sourceColor,
+          victim === 'white' ? 'punch' : 'kick',
+        );
+        const at = core.read().clocks.gameTimeMs + 1;
+        perform(20, [bodyHit(source, victim, at, `prime:${victim}:${i}`)]);
+      }
+      expect(actorFor(victim).hp).toBe(50);
+      advance(500);
+    },
+    dispose() {
+      core.dispose();
+      e.dispose();
+    },
+  };
+}
+type LifecycleHarness = ReturnType<typeof lifecycleHarness>;
+function lifecyclePair(exercise: (h: LifecycleHarness) => void) {
+  const off = lifecycleHarness(false),
+    on = lifecycleHarness(true);
+  try {
+    exercise(off);
+    exercise(on);
+    // Complete Core events/clocks/HP/heat and every physical C field, not only root position.
+    expect(on.trace).toEqual(off.trace);
+    return on.pose();
+  } finally {
+    off.dispose();
+    on.dispose();
+  }
+}
+test('actual Core recovery natural completion is125ms inside a120-to140 step', () => {
+  const pose = lifecyclePair((h) => {
+    h.attack();
+    h.advance(120);
+    expect(h.actorFor('white').attack?.startedAt).toBe(0);
+    h.perform();
+    expect(h.core.read().clocks.gameTimeMs).toBe(140);
+    expect(h.actorFor('white').attack).toBeNull();
+  });
+  expect(pose).toMatchObject({
+    kind: 'recovery',
+    epoch: {
+      startMs: 125,
+      endMs: 275,
+      outgoing: { startedAt: 0 },
+      destination: { startedAt: 125, binding: { clipId: 'Idle' } },
+    },
+  });
+});
+test('actual Core recovery skipped observations end without restarting destination Idle', () => {
+  const pose = lifecyclePair((h) => {
+    h.attack();
+    h.advance(280);
+  });
+  expect(pose).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle', startedAt: 125 },
+  });
+});
+test('actual Core recovery pause preserves clocks and captured epochs', () => {
+  lifecyclePair((h) => {
+    h.attack();
+    h.advance(140);
+    h.core.handle({
+      type: 'PauseRequested',
+      runId: coreRun,
+      reason: 'settings',
+    });
+    h.commit();
+    const paused = h.core.read(),
+      pose = h.pose();
+    h.core.present(durationMs(1000));
+    h.commit();
+    expect(h.core.read().clocks).toEqual(paused.clocks);
+    expect(h.pose()).toEqual(pose);
+    h.core.handle({
+      type: 'ResumeRequested',
+      runId: coreRun,
+      reason: 'settings',
+    });
+    h.commit();
+    h.perform();
+    expect(h.core.read().clocks.gameTimeMs).toBe(160);
+  });
+});
+test('actual Core new attack interrupts recovery with its real activation epoch', () => {
+  const pose = lifecyclePair((h) => {
+    h.attack();
+    const first = h.actorFor('white').attack!.activationId;
+    h.advance(140);
+    h.attack();
+    expect(h.actorFor('white').attack?.startedAt).toBe(140);
+    expect(h.actorFor('white').attack!.activationId).not.toBe(first);
+    h.perform();
+  });
+  expect(pose).toMatchObject({
+    kind: 'living',
+    living: { mode: 'attack', startedAt: 140 },
+  });
+});
+test('actual Core jump interrupts recovery without altering paired physical results', () => {
+  const pose = lifecyclePair((h) => {
+    h.attack();
+    h.advance(140);
+    h.core.handleInputBatch({
+      runId: coreRun,
+      tick: tick(h.core.read().clocks.tick + 1),
+      commands: [
+        {
+          type: 'JumpRequested',
+          runId: coreRun,
+          actorId: h.actorFor('white').actorId,
+          input: { commandId: commandId('lifecycle-jump'), sequence: 2 },
+        },
+      ],
+    });
+    h.commit();
+    h.perform();
+  });
+  expect(pose).toMatchObject({
+    kind: 'living',
+    living: { mode: 'jump', startedAt: 160 },
+  });
+});
+for (const offset of [120, 125, 150] as const)
+  test(`actual Core fatal contact at${offset} preserves exact strict-left recovery authority`, () => {
+    let origin = 0;
+    const pose = lifecyclePair((h) => {
+      h.prime('white');
+      origin = h.core.read().clocks.gameTimeMs;
+      h.attack();
+      const source = h.attack('blue');
+      h.advance(offset === 150 ? 140 : 100);
+      const from = h.core.read().clocks.gameTimeMs,
+        at = origin + offset;
+      // Proposed step crosses natural completion for120/125 and advances past150.
+      const dt = at - from + 10;
+      const candidate = {
+        ...h.bodyHit(source, 'white', at, 'fatal'),
+        interval: { from: gameTimeMs(from), to: gameTimeMs(from + dt) },
+      };
+      const out = h.perform(dt, [candidate]);
+      expect(out.snapshot.phase).toBe('terminal');
+      expect(out.snapshot.clocks.gameTimeMs).toBe(at);
+      expect(
+        out.events.find((event) => event.type === 'ActorDefeated')?.at,
+      ).toBe(at);
+      const provisionalPose = h
+        .provisional()!
+        .actors.find(
+          (actor) => actor.actorId === h.actorFor('white').actorId,
+        )?.pose;
+      expect(provisionalPose).toMatchObject({
+        kind: h.e.poseProtocol?.recovery ? 'recovery' : 'living',
+      });
+      const captured = h.read();
+      expect(h.commit()).toEqual(captured);
+    });
+    expect(pose).toMatchObject({ kind: 'defeat', entryAt: origin + offset });
+    if (pose.kind !== 'defeat') throw Error('Expected actual Core defeat');
+    expect(pose.entry).toMatchObject(
+      offset <= 125
+        ? { mode: 'attack', startedAt: origin }
+        : { kind: 'recovery', startMs: origin + 125, endMs: origin + 275 },
+    );
+  });
+test('actual Core endpoint encounter cancellation and1500-plus125 retirement preserve paired authority', () => {
+  lifecyclePair((h) => {
+    h.prime('blue');
+    const source = h.attack('white', 'kick'),
+      launchAt = h.core.read().clocks.gameTimeMs + 1;
+    const launch = h
+      .perform(20, [
+        {
+          ...envelope(launchAt, 'launch'),
+          interval: {
+            from: h.core.read().clocks.gameTimeMs,
+            to: gameTimeMs(h.core.read().clocks.gameTimeMs + 20),
+          },
+          kind: 'vehicle-launch',
+          source,
+          vehicleId: h.car,
+        },
+      ])
+      .events.find((event) => event.type === 'VehicleLaunchApproved');
+    if (!launch || launch.type !== 'VehicleLaunchApproved')
+      throw Error('Real Core launch missing');
+    h.advance(500);
+    h.attack();
+    const origin = h.actorFor('white').attack!.startedAt;
+    h.advance(120);
+    const at = origin + 125,
+      retired = h.actorFor('blue').actorId;
+    const output = h.perform(20, [
+      {
+        ...envelope(at, 'vehicle-kill'),
+        interval: {
+          from: gameTimeMs(origin + 120),
+          to: gameTimeMs(origin + 140),
+        },
+        kind: 'vehicle-contact',
+        vehicleId: h.car,
+        launchId: launch.launchId,
+        targetActorId: retired,
+      },
+    ]);
+    expect(
+      output.events.some(
+        (event) => event.type === 'ActorDefeated' && event.at === at,
+      ),
+    ).toBe(true);
+    expect(h.pose()).toMatchObject({
+      kind: 'living',
+      living: { mode: 'idle', startedAt: at },
+    });
+    const old = output;
+    h.advance(1500);
+    expect(h.core.read().presentation.kind).toBe('opponent-defeat-finish');
+    h.advance(125);
+    expect(h.core.read().presentation.kind).toBe('none');
+    expect(h.core.read().residentActorIds).not.toContain(retired);
+    expect(h.e.isRetired(retired)).toBe(true);
+    expect(() => h.e.commit(old)).toThrow('Invalid pose residency');
+  });
+});
+test('actual Core recovery engine disposal rejects further committed work', () => {
+  const h = lifecycleHarness(true);
+  h.attack();
+  h.advance(140);
+  const output = h.core.drain();
+  h.dispose();
+  expect(() => h.e.commit(output)).toThrow(/disposed/);
+});

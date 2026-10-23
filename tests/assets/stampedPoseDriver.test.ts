@@ -2,7 +2,7 @@ import {
   AnimationClip,
   QuaternionKeyframeTrack,
   VectorKeyframeTrack,
-  type Object3D,
+  Object3D,
   type Material,
 } from 'three';
 import { expect, test } from 'vitest';
@@ -1041,5 +1041,534 @@ test('synthetic stage2 R2 default bounds use zero matrix clones while opt-in sna
   } finally {
     rig.dispose();
     pack.dispose();
+  }
+});
+
+import { AnimationMixer } from 'three';
+import { vi } from 'vitest';
+import type { PoseFrameRequest } from '../../src/assets/poseFramePreparation';
+
+function canonicalRequest(
+  pack: Awaited<ReturnType<typeof createThreeAssetPack>>,
+  at: number,
+  name = 'Idle',
+  owner = 'white',
+  side: 'left' | 'right' = 'right',
+): Extract<PoseFrameRequest, { kind: 'living' }> {
+  return {
+    kind: 'living',
+    runId: runId('canonical-reuse'),
+    actorId: actorId(owner),
+    revision: 1,
+    epoch: createLivingPoseStamp({
+      version: 1,
+      binding: required(
+        pack.poseBindings?.clips.find((b) => b.clipId === name),
+      ),
+      mode: 'idle',
+      startedAt: gameTimeMs(0),
+      playback: 'loop',
+      activationId: null,
+    }),
+    at: gameTimeMs(at),
+    side,
+  };
+}
+
+// Observe real mixer construction and release; delegate every mixer operation.
+// An injected callback exercises exceptional/reentrant ownership, not pose math.
+function observePrivateEvaluators() {
+  const roots = new Set<Object3D>(),
+    live = new Set<Object3D>(),
+    releases = new Map<Object3D, number>();
+  let peak = 0,
+    updates = 0,
+    beforeUpdate: (() => void) | undefined;
+  const privateRoot = (root: Object3D) => {
+    let mesh = false;
+    root.traverse((part) => {
+      if (part instanceof Mesh) mesh = true;
+    });
+    return !mesh;
+  };
+  // This installed Three version initializes its memory manager exactly once
+  // from the constructor after assigning the root. No production test API.
+  const prototype = AnimationMixer.prototype as AnimationMixer & {
+      _initMemoryManager(): void;
+    },
+    initialize = prototype._initMemoryManager,
+    update = AnimationMixer.prototype.update,
+    uncache = AnimationMixer.prototype.uncacheRoot;
+  const constructorSpy = vi
+    .spyOn(prototype, '_initMemoryManager')
+    .mockImplementation(function (this: AnimationMixer) {
+      const root = this.getRoot();
+      if (root instanceof Object3D && privateRoot(root)) {
+        roots.add(root);
+        live.add(root);
+        peak = Math.max(peak, live.size);
+      }
+      return initialize.call(this);
+    });
+  const updateSpy = vi
+    .spyOn(AnimationMixer.prototype, 'update')
+    .mockImplementation(function (this: AnimationMixer, delta) {
+      const root = this.getRoot();
+      if (root instanceof Object3D && roots.has(root)) {
+        updates++;
+        beforeUpdate?.();
+      }
+      return update.call(this, delta);
+    });
+  const uncacheSpy = vi
+    .spyOn(AnimationMixer.prototype, 'uncacheRoot')
+    .mockImplementation(function (this: AnimationMixer, root) {
+      if (root instanceof Object3D && roots.has(root)) {
+        releases.set(root, (releases.get(root) ?? 0) + 1);
+        live.delete(root);
+      }
+      return uncache.call(this, root);
+    });
+  return {
+    roots,
+    live,
+    releases,
+    get peak() {
+      return peak;
+    },
+    get updates() {
+      return updates;
+    },
+    set beforeUpdate(value: (() => void) | undefined) {
+      beforeUpdate = value;
+    },
+    restore() {
+      constructorSpy.mockRestore();
+      updateSpy.mockRestore();
+      uncacheSpy.mockRestore();
+    },
+  };
+}
+
+test('canonical reuse samples every advancing Idle clock on one retained private graph', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    driver = required(rig.poseFrame),
+    observed = observePrivateEvaluators();
+  try {
+    const request = canonicalRequest(pack, 500);
+    driver.apply(driver.prepare(request));
+    const first = pose(rig.node);
+    driver.apply(driver.prepare({ ...request, at: gameTimeMs(750) }));
+    expect(pose(rig.node)).not.toEqual(first);
+    expect(observed.roots.size).toBe(1);
+    expect(observed.updates).toBe(4);
+    expect(observed.live.size).toBe(1);
+    expect(observed.releases.size).toBe(0);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse resets clip and actor alternation with exact repeat and reverse parity against fresh rigs', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    actors = [pack.create('white'), pack.create('white')],
+    observed = observePrivateEvaluators();
+  try {
+    for (const [index, name, at] of [
+      [0, 'Walk', 750],
+      [1, 'Run', 900],
+      [0, 'Idle', 700],
+      [1, 'Jump', 500],
+      [0, 'Idle', 700],
+      [1, 'Idle', 250],
+      [0, 'Walk', 500],
+    ] as const) {
+      const rig = required(actors[index]),
+        driver = required(rig.poseFrame),
+        fresh = qualified(pack.create('white'));
+      try {
+        const request = canonicalRequest(pack, at, name, `actor-${index}`);
+        driver.apply(driver.prepare(request));
+        fresh.seekPose(
+          required(pack.poseBindings?.clips.find((b) => b.clipId === name)),
+          durationMs(at),
+        );
+        expect(pose(rig.node)).toEqual(pose(fresh.node));
+      } finally {
+        fresh.dispose();
+      }
+    }
+    expect(observed.roots.size).toBe(1);
+    expect(observed.updates).toBe(14);
+  } finally {
+    for (const rig of actors) rig.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse preserves raw quaternion endpoint values and both loop seam sides', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    driver = required(rig.poseFrame),
+    observed = observePrivateEvaluators();
+  try {
+    driver.apply(
+      driver.prepare(canonicalRequest(pack, 1000, 'Idle', 'white', 'left')),
+    );
+    expect(
+      required(rig.node.getObjectByName('hand')).quaternion.toArray(),
+    ).toEqual(Array.from(new Float32Array([0, 0, Math.SQRT1_2, Math.SQRT1_2])));
+    driver.apply(driver.prepare(canonicalRequest(pack, 1000)));
+    expect(
+      required(rig.node.getObjectByName('hand')).quaternion.toArray(),
+    ).toEqual([0, 0, 0, 1]);
+    driver.apply(
+      driver.prepare(canonicalRequest(pack, 2000, 'Idle', 'white', 'left')),
+    );
+    expect(
+      required(rig.node.getObjectByName('hand')).quaternion.toArray(),
+    ).toEqual(Array.from(new Float32Array([0, 0, Math.SQRT1_2, Math.SQRT1_2])));
+    expect(observed.roots.size).toBe(1);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse validates every requested palette even when a White evaluator is already cached', async () => {
+  const palette = {
+      armorRgb: [0.1, 0.2, 0.3] as [number, number, number],
+      emissiveRgb: [0, 0, 0] as [number, number, number],
+      inlayBaseRgb: [0, 0, 0] as [number, number, number],
+      emissiveStrength: 1,
+      sourceSha256: 'a'.repeat(64),
+    },
+    palettes = { black: palette, white: { ...palette } },
+    pack = await createThreeAssetPack([source(true)], palettes, deaths),
+    white = pack.create('white'),
+    black = pack.create('black'),
+    missing = required(pack.stageActor)('blue'),
+    observed = observePrivateEvaluators();
+  try {
+    required(white.poseFrame).prepare(canonicalRequest(pack, 500));
+    const driver = required(black.poseFrame),
+      request = canonicalRequest(pack, 500, 'Idle', 'black');
+    const token = driver.prepare(request);
+    for (const field of ['armorRgb', 'emissiveRgb', 'inlayBaseRgb'] as const) {
+      const prior = palette[field];
+      palette[field] = [NaN, 0, 0];
+      expect(() => driver.prepare(request)).toThrow('palette');
+      palette[field] = prior;
+    }
+    palette.emissiveStrength = -1;
+    expect(() => driver.prepare(request)).toThrow('palette');
+    palette.emissiveStrength = 1;
+    palette.sourceSha256 = 'invalid';
+    expect(() => driver.prepare(request)).toThrow('palette');
+    palette.sourceSha256 = 'a'.repeat(64);
+    palettes.white.sourceSha256 = 'invalid';
+    expect(() =>
+      required(white.poseFrame).prepare(canonicalRequest(pack, 500)),
+    ).toThrow('palette');
+    palettes.white.sourceSha256 = 'a'.repeat(64);
+    expect(() =>
+      missing.poseFrame.prepare(canonicalRequest(pack, 500, 'Idle', 'blue')),
+    ).toThrow('palette');
+    expect(() => driver.apply(token)).toThrow('superseded');
+    driver.apply(driver.prepare(request));
+    expect(observed.roots.size).toBe(1);
+    expect(observed.updates).toBe(6);
+  } finally {
+    missing.dispose();
+    white.dispose();
+    black.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse evicts a poisoned sample and invalidates prior receipts before a fresh retry', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    driver = required(rig.poseFrame),
+    observed = observePrivateEvaluators();
+  try {
+    const request = canonicalRequest(pack, 750),
+      token = driver.prepare(request),
+      before = pose(rig.node);
+    observed.beforeUpdate = () => {
+      observed.beforeUpdate = undefined;
+      throw Error('Injected poisoned sample');
+    };
+    expect(() => driver.prepare(request)).toThrow('Injected poisoned sample');
+    expect(observed.roots.size).toBe(1);
+    expect(observed.live.size).toBe(0);
+    expect([...observed.releases.values()]).toEqual([1]);
+    expect(() => driver.apply(token)).toThrow('superseded');
+    expect(pose(rig.node)).toEqual(before);
+    driver.apply(driver.prepare(request));
+    expect(pose(rig.node)).not.toEqual(before);
+    expect(observed.roots.size).toBe(2);
+    expect(observed.peak).toBe(1);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse rejects nested borrow without evicting the active outer evaluator', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    first = pack.create('white'),
+    second = pack.create('white'),
+    observed = observePrivateEvaluators();
+  try {
+    observed.beforeUpdate = () => {
+      observed.beforeUpdate = undefined;
+      expect(() =>
+        required(second.poseFrame).prepare(
+          canonicalRequest(pack, 900, 'Idle', 'second'),
+        ),
+      ).toThrow('already borrowed');
+      expect(observed.releases.size).toBe(0);
+      expect(observed.live.size).toBe(1);
+    };
+    const driver = required(first.poseFrame);
+    driver.apply(driver.prepare(canonicalRequest(pack, 750)));
+    driver.apply(driver.prepare(canonicalRequest(pack, 500)));
+    expect(observed.roots.size).toBe(1);
+    expect(observed.updates).toBe(4);
+    expect(observed.releases.size).toBe(0);
+  } finally {
+    first.dispose();
+    second.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse pack close releases its idle graph and shared source exactly once without self-retention', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    observed = observePrivateEvaluators();
+  let geometryDisposals = 0;
+  rig.node.traverse((part) => {
+    if (part instanceof Mesh)
+      part.geometry.addEventListener('dispose', () => geometryDisposals++);
+  });
+  try {
+    required(rig.poseFrame).prepare(canonicalRequest(pack, 750));
+    rig.dispose();
+    expect(observed.live.size).toBe(1);
+    expect(geometryDisposals).toBe(0);
+    pack.dispose();
+    pack.dispose();
+    expect(observed.live.size).toBe(0);
+    expect([...observed.releases.values()]).toEqual([1]);
+    expect(geometryDisposals).toBe(1);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse pack close during borrow lets an alive caller finish then uses fresh ephemeral fallbacks', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    stage = required(pack.stageActor)('white'),
+    driver = required(rig.poseFrame),
+    request = canonicalRequest(pack, 750),
+    observed = observePrivateEvaluators();
+  try {
+    observed.beforeUpdate = () => {
+      observed.beforeUpdate = undefined;
+      const active = required([...observed.live][0]);
+      pack.dispose();
+      expect(observed.releases.size).toBe(0);
+      expect(observed.live.size).toBe(1);
+      expect(() => pack.create('white')).toThrow('disposed');
+      // Admission is already closed while the original borrow remains active:
+      // an authorized stage gets a separate ephemeral graph, not the old slot.
+      stage.poseFrame.prepare({ ...request, actorId: actorId('stage') });
+      expect(observed.releases.has(active)).toBe(false);
+      expect(observed.live.size).toBe(1);
+      expect(observed.peak).toBe(2);
+    };
+    driver.apply(driver.prepare(request));
+    const completed = pose(rig.node);
+    expect(observed.live.size).toBe(0);
+    expect([...observed.releases.values()]).toEqual([1, 1]);
+    driver.apply(driver.prepare(request));
+    expect(pose(rig.node)).toEqual(completed);
+    stage.poseFrame.prepare({ ...request, actorId: actorId('stage') });
+    expect(observed.roots.size).toBe(4);
+    expect([...observed.releases.values()]).toEqual([1, 1, 1, 1]);
+    expect(observed.live.size).toBe(0);
+    expect(observed.peak).toBe(2);
+  } finally {
+    rig.dispose();
+    stage.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse detached receipts survive other actors and allow fresh historical requests but not old or foreign tokens', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    first = pack.create('white'),
+    second = pack.create('white'),
+    a = required(first.poseFrame),
+    b = required(second.poseFrame),
+    observed = observePrivateEvaluators();
+  try {
+    const request = canonicalRequest(pack, 500),
+      token = a.prepare(request),
+      before = pose(first.node);
+    b.apply(b.prepare(canonicalRequest(pack, 900, 'Walk', 'second')));
+    expect(pose(first.node)).toEqual(before);
+    expect(Object.isFrozen(token)).toBe(true);
+    expect(() => b.apply(token)).toThrow();
+    a.apply(token);
+    const early = pose(first.node);
+    const old = a.prepare(request);
+    a.apply(a.prepare({ ...request, at: gameTimeMs(900), revision: 99 }));
+    expect(() => a.apply(old)).toThrow('superseded');
+    a.apply(a.prepare(request));
+    expect(pose(first.node)).toEqual(early);
+    expect(() =>
+      a.prepare({ ...request, actorId: actorId('foreign') }),
+    ).toThrow('foreign');
+    first.dispose();
+    expect(() => a.prepare(request)).toThrow('disposed');
+    expect(observed.roots.size).toBe(1);
+  } finally {
+    first.dispose();
+    second.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse stage transfer keeps its receipt without resampling and retirement releases owned resources', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    stage = required(pack.stageActor)('white'),
+    abandoned = required(pack.stageActor)('white'),
+    observed = observePrivateEvaluators();
+  let rig: ActorRig<Object3D> | undefined;
+  try {
+    const request = canonicalRequest(pack, 750),
+      token = stage.poseFrame.prepare(request);
+    rig = stage.materialize();
+    expect(observed.updates).toBe(2);
+    required(rig.poseFrame).apply(token);
+    abandoned.poseFrame.prepare({ ...request, actorId: actorId('abandoned') });
+    abandoned.dispose();
+    expect(() => abandoned.poseFrame.prepare(request)).toThrow('disposed');
+    stage.dispose();
+    required(rig.poseFrame).prepare(request);
+    pack.dispose();
+    expect(observed.live.size).toBe(0);
+    rig.dispose();
+    expect(() => stage.poseFrame.apply(token)).toThrow('disposed');
+    expect(observed.roots.size).toBe(1);
+    expect([...observed.releases.values()]).toEqual([1]);
+  } finally {
+    rig?.dispose();
+    stage.dispose();
+    abandoned.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse leaves default-off legacy and direct stamped seeks with zero private allocations', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    legacy = pack.create('white'),
+    stamped = qualified(pack.create('white')),
+    observed = observePrivateEvaluators();
+  try {
+    legacy.seek(clipId('Idle'), 0.5);
+    legacy.seek(clipId('Walk'), 0.75);
+    stamped.seekPose(
+      required(pack.poseBindings?.clips.find((b) => b.clipId === 'Idle')),
+      durationMs(750),
+    );
+    expect(observed.roots.size).toBe(0);
+    expect(observed.updates).toBe(0);
+    expect(observed.live.size).toBe(0);
+  } finally {
+    legacy.dispose();
+    stamped.dispose();
+    pack.dispose();
+    observed.restore();
+  }
+});
+
+test('canonical reuse retains at most one graph alongside unchanged ephemeral recovery and defeat preparations', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    driver = required(rig.poseFrame),
+    observed = observePrivateEvaluators();
+  try {
+    const epoch = syntheticEpoch(pack),
+      request = canonicalRequest(pack, 750, 'Idle', 'white');
+    // Match recovery authority while keeping the canonical clock unchanged.
+    driver.apply(driver.prepare({ ...request, runId: epoch.runId }));
+    const before = pose(rig.node);
+    const recovery = driver.prepare({
+      kind: 'living',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 2,
+      epoch,
+      at: gameTimeMs(1075),
+      side: 'left',
+    });
+    expect(pose(rig.node)).toEqual(before);
+    driver.apply(recovery);
+    const entry = pose(rig.node);
+    const defeat = driver.prepare({
+      kind: 'defeat',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 3,
+      input: {
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        defeatStartedAt: presentationTimeMs(2000),
+        deathClipId: clipId('DefeatPunch'),
+        deathClipTime: durationMs(0),
+        entry: {
+          kind: 'recovery',
+          epoch,
+          at: gameTimeMs(1075),
+          sampleSide: 'left',
+        },
+      },
+    });
+    expect(pose(rig.node)).toEqual(entry);
+    driver.apply(defeat);
+    expect(observed.roots.size).toBe(3);
+    expect(observed.peak).toBe(2);
+    expect(observed.live.size).toBe(1);
+    expect([...observed.releases.values()]).toEqual([1, 1]);
+    driver.apply(driver.prepare({ ...request, runId: epoch.runId }));
+    expect(pose(rig.node)).toEqual(before);
+    expect(observed.roots.size).toBe(3);
+    for (const root of observed.roots)
+      root.traverse((part) => expect(part).not.toBeInstanceOf(Mesh));
+    pack.dispose();
+    expect(observed.live.size).toBe(0);
+    expect([...observed.releases.values()]).toEqual([1, 1, 1]);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+    observed.restore();
   }
 });

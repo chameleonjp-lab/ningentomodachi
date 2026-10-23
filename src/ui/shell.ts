@@ -69,6 +69,56 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   let renderEpoch = 0;
   let layoutUsable = true;
   let refreshSettingsPreview: (() => void) | null = null;
+  let renderedFocusContext = '';
+  const focusScope = () =>
+    JSON.stringify(
+      state?.startup && !['error', 'results', 'disposed'].includes(state.phase)
+        ? ['startup', state.startup.generation]
+        : [state?.phase, state?.runId, state?.game?.runId],
+    );
+  const semanticFocusKey = (node: Element | null) => {
+    if (!node || !['BUTTON', 'INPUT'].includes(node.tagName)) return null;
+    const label = node.getAttribute('aria-label') ?? node.textContent;
+    return label ? `${node.tagName}:${label}` : null;
+  };
+  const ownedControls = () => [
+    ...chrome.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
+      'button,input',
+    ),
+    ...tools.querySelectorAll<HTMLButtonElement | HTMLInputElement>(
+      'button,input',
+    ),
+  ];
+  // Only explicit activation of a DOM-focused settings trigger moves focus
+  // between views. Pointer clicks and an AT cursor alone do not request it.
+  const settingsNavigationButton = (
+    label: string,
+    opening: boolean,
+    navigate: () => void,
+  ) => {
+    const node = element(document, 'button', '', label);
+    node.type = 'button';
+    node.addEventListener('click', (event) => {
+      const moveFocus = event.detail === 0 && document.activeElement === node;
+      const scope = focusScope();
+      navigate();
+      if (
+        !moveFocus ||
+        disposed ||
+        scope !== focusScope() ||
+        settingsOpen !== opening ||
+        document.activeElement !== document.body
+      )
+        return;
+      const target = opening
+        ? chrome.querySelector<HTMLElement>('h2')
+        : ownedControls().find(
+            (control) => semanticFocusKey(control) === 'BUTTON:設定',
+          );
+      target?.focus({ preventScroll: true });
+    });
+    return node;
+  };
   const initial = readSettings(storage);
   let settings = initial.settings;
   let settingsWarning = initial.warning;
@@ -154,7 +204,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     isCurrent: () => boolean,
     startupGeneration?: number,
   ) => {
-    panel.append(element(document, 'h2', '', '操作設定'));
+    const heading = element(document, 'h2', '', '操作設定');
+    heading.tabIndex = -1;
+    panel.append(heading);
     if (state?.game) {
       panel.append(
         element(
@@ -272,7 +324,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         key = '';
         render();
       }),
-      button(document, '設定を閉じる', () => {
+      settingsNavigationButton('設定を閉じる', false, () => {
         if (!isCurrent()) return;
         if (
           startupGeneration !== undefined &&
@@ -304,6 +356,21 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     ]);
     if (nextKey === key) return;
     key = nextKey;
+    const focusContext = `${focusScope()}:${settingsOpen}`;
+    const focused = document.activeElement;
+    const focusedKey =
+      renderedFocusContext === focusContext &&
+      focused &&
+      (chrome.contains(focused) || tools.contains(focused))
+        ? semanticFocusKey(focused)
+        : null;
+    renderedFocusContext = focusContext;
+    const restoreFocus = () => {
+      if (!focusedKey || document.activeElement !== document.body) return;
+      ownedControls()
+        .find((control) => semanticFocusKey(control) === focusedKey)
+        ?.focus({ preventScroll: true });
+    };
     const epoch = ++renderEpoch;
     const generation = state.startup?.generation;
     const isCurrent = () =>
@@ -341,7 +408,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       render();
     };
     if ((playing || startup) && !settingsOpen) {
-      tools.append(button(document, '設定', openSettings));
+      tools.append(settingsNavigationButton('設定', true, openSettings));
       if (!(startup?.pauseReasons ?? state.game?.pauseReasons)?.length)
         tools.append(
           button(document, '一時停止', () =>
@@ -349,7 +416,10 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
           ),
         );
     }
-    if (playing && !settingsOpen && !state.game?.pauseReasons.length) return;
+    if (playing && !settingsOpen && !state.game?.pauseReasons.length) {
+      restoreFocus();
+      return;
+    }
     const panel = element(document, 'section', 'nt-panel');
     panel.setAttribute(
       'aria-label',
@@ -358,6 +428,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     if (settingsOpen) {
       renderSettings(panel, isCurrent, startupGeneration);
       chrome.append(panel);
+      restoreFocus();
       return;
     }
     panel.append(element(document, 'h1', '', 'ニンゲントモダチ'));
@@ -407,6 +478,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         }),
       );
       chrome.append(panel);
+      restoreFocus();
       return;
     }
     if (state.phase === 'title') {
@@ -415,7 +487,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         button(document, 'はじめる', () =>
           request({ type: 'PrepareRequested' }),
         ),
-        button(document, '設定', openSettings),
+        settingsNavigationButton('設定', true, openSettings),
       );
     }
     if (state.phase === 'loading') {
@@ -487,6 +559,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       );
     }
     chrome.append(panel);
+    restoreFocus();
   };
   const host = (reader: ViewportReader): HostPort => {
     if (attached) throw Error('Interface host already attached');

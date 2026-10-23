@@ -17,6 +17,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import {
   type ActorColor,
+  isRecoveryPoseEpoch,
   resolvePoseEpoch,
   type ClipId,
   clipId,
@@ -378,6 +379,12 @@ export async function prepareThreeAssetPack(
   let disposed = false,
     references = 0,
     released = false;
+  // Pack-owned, lazily allocated only by opt-in canonical preparation. The
+  // ordinary rig reference keeps shared resources alive during an active borrow;
+  // pack close always retires this slot, so that reference cannot retain itself.
+  let canonicalEvaluator:
+    | { rig: ActorRig<Object3D>; busy: boolean; retiring: boolean }
+    | undefined;
   const release = () => {
     if (!disposed || references || released) return;
     released = true;
@@ -406,12 +413,68 @@ export async function prepareThreeAssetPack(
     releaseScene(template);
     for (const texture of textures) texture.dispose();
   };
+  const validatePalette = (color: ActorColor) => {
+    const palette = palettes[color];
+    if (color !== 'white' && !palette)
+      throw new Error(`Missing verified palette: ${color}`);
+    if (
+      palette &&
+      (!/^[a-f0-9]{64}$/.test(palette.sourceSha256) ||
+        [
+          ...palette.armorRgb,
+          ...palette.emissiveRgb,
+          ...palette.inlayBaseRgb,
+          palette.emissiveStrength,
+        ].some((n) => !Number.isFinite(n) || n < 0))
+    )
+      throw new Error('Invalid verified palette');
+    return palette;
+  };
   const evaluateFrame = (
     color: ActorColor,
     request: PoseFrameRequest,
   ): PoseFrameResult => {
-    // One ephemeral, unskinned hierarchy/mixer per preparation. Disposal in
-    // finally prevents abandoned/failed frames from poisoning private caches.
+    if (
+      request.kind === 'living' &&
+      !isRecoveryPoseEpoch(request.epoch) &&
+      !disposed
+    ) {
+      // Reject outside the eviction catch: a nested rejection must not dispose
+      // the mutable graph still in use by the already admitted outer request.
+      if (canonicalEvaluator?.busy)
+        throw Error('Canonical evaluator already borrowed');
+      validatePalette(color);
+      canonicalEvaluator ??= {
+        rig: createRig(color, true),
+        busy: false,
+        retiring: false,
+      };
+      const entry = canonicalEvaluator;
+      entry.busy = true;
+      try {
+        const diagnostic = entry.rig.recoveryDiagnostic;
+        if (!diagnostic) throw Error('Missing private source evaluator');
+        // Always reset and sample the exact absolute clock; cache no poses,
+        // snapshots or receipts, even when the epoch/clip/time is unchanged.
+        const sample = samplePoseEpoch(
+          request.epoch,
+          request.at,
+          request.side,
+          diagnostic.sampleCanonical,
+        );
+        return { pose: sample.pose };
+      } catch (error) {
+        if (canonicalEvaluator === entry) canonicalEvaluator = undefined;
+        entry.retiring = true;
+        throw error;
+      } finally {
+        entry.busy = false;
+        if (entry.retiring) entry.rig.dispose();
+      }
+    }
+    // Recovery/defeat and still-authorized borrows after pack close retain the
+    // ephemeral path. Ordinary nonrecursive use has at most two private graphs;
+    // this does not add a recursion guard to the inherited ephemeral path.
     const evaluator = createRig(color, true);
     try {
       if (request.kind === 'living') {
@@ -479,20 +542,7 @@ export async function prepareThreeAssetPack(
   ): ActorRig<Object3D> => {
     if ((disposed && !privateTransformOnly) || !supportPlan)
       throw new Error('Asset pack disposed');
-    const palette = palettes[color];
-    if (color !== 'white' && !palette)
-      throw new Error(`Missing verified palette: ${color}`);
-    if (
-      palette &&
-      (!/^[a-f0-9]{64}$/.test(palette.sourceSha256) ||
-        [
-          ...palette.armorRgb,
-          ...palette.emissiveRgb,
-          ...palette.inlayBaseRgb,
-          palette.emissiveStrength,
-        ].some((n) => !Number.isFinite(n) || n < 0))
-    )
-      throw new Error('Invalid verified palette');
+    const palette = validatePalette(color);
     const privateHierarchy = privateTransformOnly
       ? createPrivatePoseHierarchy(template, supportPlan)
       : undefined;
@@ -1211,6 +1261,14 @@ export async function prepareThreeAssetPack(
     dispose() {
       if (disposed) return;
       disposed = true;
+      const entry = canonicalEvaluator;
+      canonicalEvaluator = undefined;
+      if (entry) {
+        entry.retiring = true;
+        // An admitted caller may finish while still alive. Never dispose its
+        // active graph mid-sample; its finally releases this reference once.
+        if (!entry.busy) entry.rig.dispose();
+      }
       release();
     },
   };
