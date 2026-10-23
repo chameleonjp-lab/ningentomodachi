@@ -12,7 +12,11 @@ import {
   type Vector3,
 } from '../contracts';
 import { type PathKey, toBox } from './character-motor';
-import { combatHurt } from './combat-hurt';
+import {
+  combatHurt,
+  validateHurtRegions,
+  type HurtRegionSegment,
+} from './combat-hurt';
 import { add, lerp, localToWorld } from './math';
 import {
   interpolateVolume,
@@ -127,15 +131,126 @@ export function envelope(
     evidence: 'swept-shape' as const,
   };
 }
+/** Opt-in pre-sampled qualification seam. Not wired by the spatial engine.
+ * Identity guards reject detached target snapshots, not dishonest provenance.
+ * sourceId/poseId are declarations only and never certify actual source anatomy.
+ */
+export interface CombatHurtRegions {
+  readonly runId: RunId;
+  readonly target: ActorTrajectory;
+  readonly sourceId: string;
+  readonly poseId: string;
+  readonly space: 'actor-local-metres';
+  readonly interpolation: 'piecewise-linear';
+  readonly segments: readonly HurtRegionSegment[];
+}
 export function combatContacts(
   run: RunId,
   actors: readonly ActorTrajectory[],
+  regions?: readonly CombatHurtRegions[],
 ): SpatialCandidate[] {
   const candidates: SpatialCandidate[] = [];
+  const supplied = new Map<ActorTrajectory, readonly HurtRegionSegment[]>();
+  if (regions !== undefined) {
+    if (regions.length !== actors.length)
+      throw new RangeError('Missing hurt target');
+    for (const input of regions) {
+      if (
+        input.runId !== run ||
+        !actors.includes(input.target) ||
+        supplied.has(input.target) ||
+        !input.sourceId ||
+        !input.poseId ||
+        input.space !== 'actor-local-metres' ||
+        input.interpolation !== 'piecewise-linear'
+      )
+        throw new RangeError('Invalid hurt target provenance');
+      const path = input.target.path;
+      supplied.set(
+        input.target,
+        validateHurtRegions(
+          input.segments,
+          path[0]?.at ?? NaN,
+          path.at(-1)?.at ?? NaN,
+        ),
+      );
+    }
+  }
   const sweeps = actors.flatMap(attackSweeps);
   for (const sweep of sweeps) {
     for (const target of actors) {
       if (target.state.actorId === sweep.source.actorId) continue;
+      if (regions !== undefined) {
+        const parts = supplied.get(target);
+        if (!parts) throw new RangeError('Missing hurt target');
+        validateHurtRegions(parts, sweep.from, sweep.to);
+        const cuts = [
+          ...new Set(
+            [
+              sweep.from,
+              sweep.to,
+              ...target.path.map((k) => k.at),
+              ...parts.flatMap((p) => [p.from, p.to]),
+            ].filter((t) => t >= sweep.from && t <= sweep.to),
+          ),
+        ].sort((a, b) => a - b);
+        for (let i = 1; i < cuts.length; i++) {
+          const from = cuts[i - 1],
+            to = cuts[i];
+          if (from === undefined || to === undefined)
+            throw new RangeError('Missing hurt interval');
+          let earliest: SweepHit | undefined;
+          // Validation sorts stable part IDs; strict comparison preserves exact ties.
+          for (const part of parts) {
+            if (part.from > from || part.to < to) continue;
+            const at = (t: number) =>
+              worldVolume(
+                interpolateVolume(
+                  part.start,
+                  part.end,
+                  (t - part.from) / (part.to - part.from),
+                ),
+                positionAt(target.path, t),
+                target.actor.facing,
+              );
+            const hit = sweepVolumes(
+              interpolateVolume(
+                sweep.start,
+                sweep.end,
+                (from - sweep.from) / (sweep.to - sweep.from),
+              ),
+              interpolateVolume(
+                sweep.start,
+                sweep.end,
+                (to - sweep.from) / (sweep.to - sweep.from),
+              ),
+              at(from),
+              at(to),
+            );
+            if (
+              hit &&
+              hit.fraction < 1 &&
+              (!earliest || hit.fraction < earliest.fraction)
+            )
+              earliest = hit;
+          }
+          if (earliest)
+            candidates.push({
+              ...envelope(
+                run,
+                'body-hit',
+                [sweep.source.impactId, target.state.actorId],
+                from,
+                to,
+                earliest,
+              ),
+              kind: 'body-hit',
+              source: sweep.source,
+              targetActorId: target.state.actorId,
+            });
+        }
+        continue;
+      }
       const cuts = [
         sweep.from,
         ...target.path

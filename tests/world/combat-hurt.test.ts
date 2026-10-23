@@ -146,7 +146,7 @@ test('complete candidates match legacy query across bends, facing, misses and co
 test('legacy and separated candidates produce identical HP with duplicate interval contacts', async () => {
   const { attack, setup, step } = await import('../core/fixtures/scenarios');
   const { body } = await import('../../src/world/character-motor');
-  const evaluate = async () => {
+  const evaluate = async (withRegions = false) => {
     const { combatContacts } = await import(
       '../../src/world/contact-candidates'
     );
@@ -176,7 +176,27 @@ test('legacy and separated candidates produce identical HP with duplicate interv
         },
       };
     });
-    const candidates = combatContacts(snapshot.runId, actors);
+    const candidates = combatContacts(
+      snapshot.runId,
+      actors,
+      withRegions
+        ? actors.map((target) => ({
+            runId: snapshot.runId,
+            target,
+            sourceId: 'synthetic-body',
+            poseId: 'synthetic-static',
+            space: 'actor-local-metres' as const,
+            interpolation: 'piecewise-linear' as const,
+            segments: ['head', 'body'].map((partId) => ({
+              partId,
+              from: 0,
+              to: 10,
+              start: body({ x: 0, y: 0, z: 0 }),
+              end: body({ x: 0, y: 0, z: 0 }),
+            })),
+          }))
+        : undefined,
+    );
     expect(candidates.length).toBeGreaterThan(1);
     const output = step(core, () => [...candidates, ...candidates].reverse());
     expect(output.events.filter((e) => e.type === 'HpChanged')).toHaveLength(1);
@@ -191,6 +211,7 @@ test('legacy and separated candidates produce identical HP with duplicate interv
   vi.doUnmock('../../src/world/combat-hurt');
   vi.resetModules();
   expect(await evaluate()).toStrictEqual(legacy);
+  expect(await evaluate(true)).toStrictEqual(legacy);
 });
 
 test('motor and launched car results are independent of the melee hurt query', async () => {
