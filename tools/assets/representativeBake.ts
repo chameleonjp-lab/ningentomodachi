@@ -6,6 +6,28 @@ import { inspectGlb } from '../../src/assets/source';
 import { PROVISIONAL_GROUNDED_REPRESENTATIVE_POLICIES } from '../../src/assets/representativePolicies';
 import { inclusiveAccessorFrameWindow } from './annotationPolicy';
 
+/** Preserve the established v2 artifact schema; operational counters stay outside it. */
+export function serializeAdaptiveDiagnostics(
+  value: Pick<
+    Awaited<ReturnType<typeof refineActiveEnvelopes>>['diagnostics'],
+    | 'toleranceM'
+    | 'rounds'
+    | 'addedKeyCount'
+    | 'addedKeysMs'
+    | 'maximumMeasuredResidualM'
+    | 'limitation'
+  >,
+) {
+  return {
+    toleranceM: value.toleranceM,
+    rounds: value.rounds,
+    addedKeyCount: value.addedKeyCount,
+    addedKeysMs: value.addedKeysMs,
+    maximumMeasuredResidualM: value.maximumMeasuredResidualM,
+    limitation: value.limitation,
+  };
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Expected source object');
@@ -229,7 +251,7 @@ export async function bakeRepresentative(input: {
       },
       surfaceSelections: evaluator.surfaceSelections,
       measurements: {
-        adaptive: refined.diagnostics,
+        adaptive: serializeAdaptiveDiagnostics(refined.diagnostics),
         sampleCount: asset.definition.rootCurve.length,
         sampledConservativeEffectiveRangeM: asset.definition.effectiveRangeM,
         rootBoundsM: Object.fromEntries(
