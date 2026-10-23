@@ -289,7 +289,10 @@ test('delayed first defeat reconstructs the exact LEFT loop seam and supports re
   expect(h.deaths.map((d) => d.deathClipTime)).toEqual([125, 25, 25]);
   expect(
     h.deaths.every(
-      (d) => d.entry.clipTime === 1000 && d.entry.sampleSide === 'left',
+      (d) =>
+        !('kind' in d.entry) &&
+        d.entry.clipTime === 1000 &&
+        d.entry.sampleSide === 'left',
     ),
   ).toBe(true);
   expect(h.poses).toHaveLength(0);
@@ -1193,3 +1196,344 @@ for (const action of ['dispose', 'throw'] as const) {
     );
   });
 }
+
+import {
+  createPoseFrameDriver,
+  RECOVERY_FRAME_CAPABILITY,
+  type PoseFrameRequest,
+} from '../../src/assets/poseFramePreparation';
+function recoverySetup(fail?: ActorColor) {
+  const h = setup(),
+    requests: PoseFrameRequest[] = [];
+  const context = {
+    ...h.context,
+    posePolicy: {
+      version: 1 as const,
+      mode: 'deterministic-pose-v1' as const,
+      recovery: RECOVERY_FRAME_CAPABILITY,
+    },
+  };
+  const stageActor = (color: ActorColor) => {
+    const driver = createPoseFrameDriver(
+      (request) => {
+        requests.push(request);
+        h.events.push(`${color}:prepare`);
+        if (color === fail) throw Error('late invalid pose');
+        return {
+          pose: [
+            {
+              id: 'root',
+              parent: null,
+              t: [0, 0, 0],
+              q: [0, 0, 0, 1],
+              s: [1, 1, 1],
+            },
+          ],
+        };
+      },
+      () => h.events.push(`${color}:apply`),
+      () => {},
+    );
+    let consumed = false,
+      disposed = false;
+    return {
+      poseFrame: driver,
+      materialize() {
+        if (consumed || disposed) throw Error('stage consumed');
+        consumed = true;
+        h.events.push(`${color}:create`);
+        const rig = h.makeRig(color);
+        return {
+          ...rig,
+          poseFrame: driver,
+          dispose() {
+            driver.dispose();
+            rig.dispose();
+          },
+        };
+      },
+      dispose() {
+        if (consumed || disposed) return;
+        disposed = true;
+        driver.dispose();
+        h.events.push(`${color}:stage-dispose`);
+      },
+    };
+  };
+  const assets = {
+    ...h.assets,
+    recoveryCapability: RECOVERY_FRAME_CAPABILITY,
+    stageActor,
+    create: (color: ActorColor) => stageActor(color).materialize(),
+  };
+  return { ...h, context, assets, requests };
+}
+test('synthetic stage2 all actor preparations precede mount emission and apply', () => {
+  const h = recoverySetup(),
+    a = createActorAnimator(h.context, h.assets);
+  a.render(stamped(25, [player, blue]));
+  const lastPrepare = h.events.lastIndexOf('blue:prepare'),
+    firstMount = h.events.findIndex((e) => e.endsWith(':mount'));
+  expect(lastPrepare).toBeLessThan(firstMount);
+  expect(h.events.indexOf('white:apply')).toBeGreaterThan(lastPrepare);
+  expect(h.requests).toHaveLength(2);
+  a.dispose();
+});
+test('synthetic stage2 late new actor invalid pose causes zero mounts emissions or visible writes', () => {
+  const h = recoverySetup('blue'),
+    a = createActorAnimator(h.context, h.assets);
+  expect(() => a.render(stamped(25, [player, blue]))).toThrow(
+    'late invalid pose',
+  );
+  expect(
+    h.events.filter((e) => /:mount|:emission|:apply|:pose|:death/.test(e)),
+  ).toEqual([]);
+  expect(h.events).toContain('white:stage-dispose');
+  expect(h.events).toContain('blue:stage-dispose');
+  a.dispose();
+});
+test('synthetic stage2 late invalid newcomer preserves existing actor without visible writes', () => {
+  const h = recoverySetup('blue'),
+    a = createActorAnimator(h.context, h.assets);
+  a.render(stamped(0));
+  h.events.length = 0;
+  expect(() => a.render(stamped(25, [player, blue], 2))).toThrow(
+    'late invalid pose',
+  );
+  expect(
+    h.events.filter((e) =>
+      /:mount|:emission|:apply|:pose|:death|:detach/.test(e),
+    ),
+  ).toEqual([]);
+  expect(h.events).not.toContain('white:dispose');
+  a.dispose();
+});
+test('synthetic stage2 v1 descriptors alone cannot negotiate recovery', () => {
+  const h = recoverySetup();
+  expect(() => createActorAnimator(h.context, h.assets)).not.toThrow();
+  const { recoveryCapability: _cap, ...withoutCapability } = h.assets;
+  expect(() => createActorAnimator(h.context, withoutCapability)).toThrow();
+});
+test('synthetic stage2 declared pack capability cannot substitute missing actor driver', () => {
+  const h = recoverySetup(),
+    a = createActorAnimator(h.context, {
+      ...h.assets,
+      stageActor: (color) => ({
+        ...h.assets.stageActor(color),
+        materialize: () => h.makeRig(color),
+      }),
+    });
+  expect(() => a.render(stamped(0))).toThrow();
+  expect(h.events.filter((e) => e.endsWith(':mount'))).toEqual([]);
+  a.dispose();
+});
+
+import {
+  createRecoveryPoseEpoch,
+  attackActivationId,
+} from '../../src/contracts';
+test('synthetic stage2 composite defeat forwards C identity left time and distinct presentation epoch', () => {
+  const h = recoverySetup(),
+    attackBinding = {
+      clipId: clipId('KungFuStraight'),
+      durationMs: durationMs(1000),
+      sourceBindingId: 'synthetic-KungFuStraight',
+    };
+  const epoch = createRecoveryPoseEpoch({
+    runId: run,
+    actorId: player,
+    outgoing: createLivingPoseStamp({
+      version: 1,
+      binding: attackBinding,
+      mode: 'attack',
+      startedAt: gameTimeMs(0),
+      playback: 'clamp',
+      activationId: attackActivationId('a'),
+    }),
+    destination: living('Idle', 1000),
+  });
+  const assets = {
+      ...h.assets,
+      poseBindings: { ...bindings, clips: [...bindings.clips, attackBinding] },
+    },
+    a = createActorAnimator(h.context, assets),
+    f = defeated(1100, 1075);
+  a.render({
+    ...f,
+    spatial: {
+      ...f.spatial,
+      actors: f.spatial.actors.map((actor) => ({
+        ...actor,
+        pose: {
+          kind: 'defeat' as const,
+          entry: epoch,
+          entryAt: gameTimeMs(1075),
+          defeatStartedAt: presentationTimeMs(1000),
+        },
+      })),
+    },
+  });
+  expect(h.requests).toHaveLength(1);
+  expect(h.requests[0]).toMatchObject({
+    kind: 'defeat',
+    input: {
+      defeatStartedAt: 1000,
+      deathClipTime: 25,
+      entry: {
+        kind: 'recovery',
+        epoch: { identity: epoch.identity },
+        at: 1075,
+        sampleSide: 'left',
+      },
+    },
+  });
+  expect(h.deaths).toHaveLength(0);
+  a.dispose();
+});
+
+test('synthetic stage2 R2 public animator allows fresh historical resident replay', () => {
+  const h = recoverySetup(),
+    a = createActorAnimator(h.context, h.assets);
+  a.render(stamped(25, [player], 2));
+  a.render(stamped(0, [player], 1));
+  expect(h.requests.map((r) => r.revision)).toEqual([2, 1]);
+  a.dispose();
+});
+test('synthetic stage2 R2 replacement full rig is created only after old retirement and peak stays two', () => {
+  const h = recoverySetup(),
+    a = createActorAnimator(h.context, h.assets);
+  a.render(stamped(0, [player, black], 1));
+  a.render(stamped(25, [player, blue], 2));
+  expect(h.events.indexOf('black:dispose')).toBeLessThan(
+    h.events.indexOf('blue:create'),
+  );
+  let live = 0,
+    peak = 0;
+  for (const event of h.events) {
+    if (event.endsWith(':create')) live++;
+    if (event.endsWith(':dispose')) live--;
+    peak = Math.max(peak, live);
+  }
+  expect(peak).toBe(2);
+  a.dispose();
+});
+test('synthetic stage2 R2 failed replacement preparation neither retires old nor creates new full rig', () => {
+  const h = recoverySetup('blue'),
+    a = createActorAnimator(h.context, h.assets);
+  a.render(stamped(0, [player, black], 1));
+  h.events.length = 0;
+  expect(() => a.render(stamped(25, [player, blue], 2))).toThrow(
+    'late invalid pose',
+  );
+  expect(h.events).not.toContain('black:dispose');
+  expect(h.events).not.toContain('blue:create');
+  expect(h.events.filter((e) => /:apply|:emission|:detach/.test(e))).toEqual(
+    [],
+  );
+  expect(h.events).toContain('blue:stage-dispose');
+  a.dispose();
+});
+
+test('synthetic stage2 R2 materialization exception releases CPU handle without touching prepared existing actor', () => {
+  const h = recoverySetup(),
+    normal = h.assets.stageActor;
+  const a = createActorAnimator(h.context, {
+    ...h.assets,
+    stageActor: (color) => {
+      const handle = normal(color);
+      return color === 'blue'
+        ? {
+            ...handle,
+            materialize() {
+              throw Error('materialization failure');
+            },
+          }
+        : handle;
+    },
+  });
+  a.render(stamped(0, [player, black], 1));
+  h.events.length = 0;
+  expect(() => a.render(stamped(25, [player, blue], 2))).toThrow(
+    'materialization failure',
+  );
+  expect(h.events).toContain('blue:stage-dispose');
+  expect(h.events).toContain('black:dispose');
+  expect(h.events.filter((e) => /:apply|:emission/.test(e))).toEqual([]);
+  a.dispose();
+});
+
+test.each(['getter', 'mismatch', 'reentrant', 'cleanup-throws'] as const)(
+  'synthetic stage2 R3 materialized rig owned before transfer validation: %s',
+  (kind) => {
+    const h = recoverySetup(),
+      normal = h.assets.stageActor;
+    let disposed = 0,
+      a: AnimationPort;
+    a = createActorAnimator(h.context, {
+      ...h.assets,
+      stageActor: (color) => {
+        const handle = normal(color);
+        return {
+          ...handle,
+          materialize() {
+            const rig = handle.materialize(),
+              release = rig.dispose;
+            const wrapped = {
+              ...rig,
+              dispose() {
+                disposed++;
+                release();
+                if (kind === 'cleanup-throws') throw Error('cleanup failure');
+              },
+            };
+            Object.defineProperty(wrapped, 'poseFrame', {
+              get() {
+                if (kind === 'getter' || kind === 'cleanup-throws')
+                  throw Error('transfer getter failure');
+                if (kind === 'reentrant') {
+                  a.dispose();
+                  return rig.poseFrame;
+                }
+                return createPoseFrameDriver(
+                  () => ({
+                    pose: [
+                      {
+                        id: 'root',
+                        parent: null,
+                        t: [0, 0, 0],
+                        q: [0, 0, 0, 1],
+                        s: [1, 1, 1],
+                      },
+                    ],
+                  }),
+                  () => {},
+                  () => {},
+                );
+              },
+            });
+            return wrapped;
+          },
+        };
+      },
+    });
+    let error: unknown;
+    try {
+      a.render(stamped(0));
+    } catch (value) {
+      error = value;
+    }
+    expect(error).toBeDefined();
+    expect(disposed).toBe(1);
+    expect(h.events.filter((e) => /:mount|:apply|:emission/.test(e))).toEqual(
+      [],
+    );
+    if (kind === 'cleanup-throws') {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors[0]).toMatchObject({
+        message: 'transfer getter failure',
+      });
+    }
+    a.dispose();
+    expect(disposed).toBe(1);
+  },
+);

@@ -1,10 +1,10 @@
 import {
-  durationMs,
-  gameTimeMs,
-  presentationTimeMs,
   type DurationMs,
+  durationMs,
   type GameTimeMs,
+  gameTimeMs,
   type PresentationTimeMs,
+  presentationTimeMs,
 } from './clock';
 import type { ActorId, AttackActivationId, ClipId, RunId } from './ids';
 
@@ -15,6 +15,7 @@ export type PoseSampleSide = 'left' | 'right';
 export interface PoseRunPolicy {
   readonly version: 1;
   readonly mode: 'legacy' | 'deterministic-pose-v1';
+  readonly recovery?: RecoveryTimelinePolicy;
 }
 export interface PoseClipBinding {
   readonly clipId: ClipId;
@@ -32,13 +33,14 @@ export interface LivingPoseStamp {
 }
 export interface DefeatPoseStamp {
   readonly kind: 'defeat';
-  readonly entry: LivingPoseStamp;
+  readonly entry: PoseEpoch;
   readonly entryAt: GameTimeMs;
   /** Matches the original Core defeatPresentation epoch; finish never restarts it. */
   readonly defeatStartedAt: PresentationTimeMs;
 }
 export type ActorPoseStamp =
   | { readonly kind: 'living'; readonly living: LivingPoseStamp }
+  | { readonly kind: 'recovery'; readonly epoch: RecoveryPoseEpoch }
   | DefeatPoseStamp;
 /** Descriptor coverage only. No geometry/sampler or anatomy-ready flag is implied. */
 export interface PoseCatalogBindings {
@@ -52,6 +54,8 @@ export interface PoseCatalogBindings {
 export interface PoseDisplayCapability {
   readonly version: 1;
   readonly protocol: 'deterministic-pose-v1';
+  /** Separate diagnostic support; v1 alone never admits a composite epoch. */
+  readonly recovery?: RecoveryTimelinePolicy;
 }
 export interface PoseSpatialCapability extends PoseDisplayCapability {
   /** Once per run, after catalog.prepare and before AssetsReady. Preserve pending
@@ -65,11 +69,18 @@ export interface StampedDefeatSeek {
   readonly defeatStartedAt: PresentationTimeMs;
   readonly deathClipId: ClipId;
   readonly deathClipTime: DurationMs;
-  readonly entry: {
-    readonly binding: PoseClipBinding;
-    readonly clipTime: DurationMs;
-    readonly sampleSide: 'left';
-  };
+  readonly entry:
+    | {
+        readonly binding: PoseClipBinding;
+        readonly clipTime: DurationMs;
+        readonly sampleSide: 'left';
+      }
+    | {
+        readonly kind: 'recovery';
+        readonly epoch: RecoveryPoseEpoch;
+        readonly at: GameTimeMs;
+        readonly sampleSide: 'left';
+      };
 }
 
 function nonempty(value: unknown): value is string {
@@ -83,7 +94,15 @@ export function capturePoseRunPolicy(
     !['legacy', 'deterministic-pose-v1'].includes(input.mode)
   )
     throw new RangeError('Invalid pose run policy');
-  return Object.freeze({ version: 1, mode: input.mode });
+  if (input.recovery && input.mode !== 'deterministic-pose-v1')
+    throw Error('Recovery requires deterministic mode');
+  return Object.freeze({
+    version: 1,
+    mode: input.mode,
+    ...(input.recovery
+      ? { recovery: captureRecoveryTimelinePolicy(input.recovery) }
+      : {}),
+  });
 }
 export function createLivingPoseStamp(input: LivingPoseStamp): LivingPoseStamp {
   const { binding, mode, playback, activationId } = input;
@@ -180,9 +199,9 @@ export function poseClipTime(
 }
 export function createDefeatPoseStamp(input: DefeatPoseStamp): DefeatPoseStamp {
   if (input.kind !== 'defeat') throw new RangeError('Invalid defeat pose kind');
-  const entry = createLivingPoseStamp(input.entry);
+  const entry = capturePoseEpoch(input.entry);
   const entryAt = gameTimeMs(input.entryAt);
-  localTime(entry, entryAt, 'left');
+  resolvePoseEpoch(entry, entryAt, 'left');
   return Object.freeze({
     kind: 'defeat',
     entry,
@@ -238,4 +257,149 @@ export function poseClipIntervals(
       }
     },
   });
+}
+
+/** Internal diagnostic constructor policy. Not an application run-policy activation. */
+export interface RecoveryTimelinePolicy {
+  readonly version: 1;
+  readonly protocol: 'kungfu-recovery-epoch-diagnostic-v1';
+  readonly durationMs: DurationMs;
+  readonly fixedLiftSign: 1;
+}
+export function captureRecoveryTimelinePolicy(
+  input: RecoveryTimelinePolicy,
+): RecoveryTimelinePolicy {
+  if (
+    input.version !== 1 ||
+    input.protocol !== 'kungfu-recovery-epoch-diagnostic-v1' ||
+    input.durationMs !== 150 ||
+    input.fixedLiftSign !== 1
+  )
+    throw Error('Unsupported recovery timeline policy');
+  return Object.freeze({
+    version: 1,
+    protocol: 'kungfu-recovery-epoch-diagnostic-v1',
+    durationMs: durationMs(150),
+    fixedLiftSign: 1,
+  });
+}
+export interface RecoveryPoseEpoch {
+  readonly kind: 'recovery';
+  readonly version: 'recovery-diagnostic-matrix-v3';
+  readonly law: 'radius-fixed-lift-positive-diagonal-v1';
+  readonly runId: RunId;
+  readonly actorId: ActorId;
+  readonly outgoing: LivingPoseStamp;
+  readonly destination: LivingPoseStamp;
+  readonly startMs: GameTimeMs;
+  readonly endMs: GameTimeMs;
+  readonly durationMs: DurationMs;
+  readonly fixedLiftSign: 1;
+  readonly identity: string;
+}
+export type PoseEpoch = LivingPoseStamp | RecoveryPoseEpoch;
+export function isRecoveryPoseEpoch(
+  input: PoseEpoch,
+): input is RecoveryPoseEpoch {
+  return 'kind' in input && input.kind === 'recovery';
+}
+export function createRecoveryPoseEpoch(
+  input: Pick<
+    RecoveryPoseEpoch,
+    'runId' | 'actorId' | 'outgoing' | 'destination'
+  >,
+): RecoveryPoseEpoch {
+  const outgoing = createLivingPoseStamp(input.outgoing),
+    destination = createLivingPoseStamp(input.destination);
+  const startMs = gameTimeMs(outgoing.startedAt + outgoing.binding.durationMs),
+    endMs = gameTimeMs(startMs + 150);
+  if (
+    !nonempty(input.runId) ||
+    !nonempty(input.actorId) ||
+    outgoing.mode !== 'attack' ||
+    outgoing.binding.clipId !== 'KungFuStraight' ||
+    destination.mode !== 'idle' ||
+    destination.binding.clipId !== 'Idle' ||
+    destination.startedAt !== startMs ||
+    endMs <= startMs
+  )
+    throw Error('Unsupported natural recovery epoch');
+  const value = {
+    kind: 'recovery' as const,
+    version: 'recovery-diagnostic-matrix-v3' as const,
+    law: 'radius-fixed-lift-positive-diagonal-v1' as const,
+    runId: input.runId,
+    actorId: input.actorId,
+    outgoing,
+    destination,
+    startMs,
+    endMs,
+    durationMs: durationMs(150),
+    fixedLiftSign: 1 as const,
+  };
+  return Object.freeze({
+    ...value,
+    identity: `synthetic-recovery-epoch:${JSON.stringify(value, (_key, v) => (typeof v === 'number' && Object.is(v, -0) ? { rawNumber: 'negative-zero' } : v))}`,
+  });
+}
+export function capturePoseEpoch(input: PoseEpoch): PoseEpoch {
+  if (!isRecoveryPoseEpoch(input)) return createLivingPoseStamp(input);
+  const captured = createRecoveryPoseEpoch(input);
+  if (
+    input.identity !== captured.identity ||
+    input.version !== captured.version ||
+    input.law !== captured.law ||
+    input.startMs !== captured.startMs ||
+    input.endMs !== captured.endMs ||
+    input.durationMs !== captured.durationMs ||
+    input.fixedLiftSign !== captured.fixedLiftSign
+  )
+    throw Error('Conflicting recovery epoch identity');
+  return captured;
+}
+export type ResolvedPoseEpoch =
+  | Readonly<{
+      kind: 'canonical';
+      stamp: LivingPoseStamp;
+      clipTime: DurationMs;
+      side: PoseSampleSide;
+    }>
+  | Readonly<{
+      kind: 'recovery';
+      epoch: RecoveryPoseEpoch;
+      at: GameTimeMs;
+      side: PoseSampleSide;
+    }>;
+export function resolvePoseEpoch(
+  input: PoseEpoch,
+  at: GameTimeMs,
+  side: PoseSampleSide,
+): ResolvedPoseEpoch {
+  const epoch = capturePoseEpoch(input);
+  gameTimeMs(at);
+  if (!['left', 'right'].includes(side)) throw Error('Invalid pose side');
+  if (!isRecoveryPoseEpoch(epoch))
+    return Object.freeze({
+      kind: 'canonical',
+      stamp: epoch,
+      clipTime: poseClipTime(epoch, at, side),
+      side,
+    });
+  if (at < epoch.startMs || at > epoch.endMs)
+    throw Error('Outside recovery epoch');
+  if (at === epoch.startMs)
+    return Object.freeze({
+      kind: 'canonical',
+      stamp: epoch.outgoing,
+      clipTime: poseClipTime(epoch.outgoing, at, 'left'),
+      side: 'left',
+    });
+  if (at === epoch.endMs)
+    return Object.freeze({
+      kind: 'canonical',
+      stamp: epoch.destination,
+      clipTime: poseClipTime(epoch.destination, at, side),
+      side,
+    });
+  return Object.freeze({ kind: 'recovery', epoch, at, side });
 }

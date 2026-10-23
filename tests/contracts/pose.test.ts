@@ -8,10 +8,10 @@ import {
 } from '../../src/contracts';
 import {
   capturePoseRunPolicy,
-  createLivingPoseStamp,
   createDefeatPoseStamp,
-  poseClipTime,
+  createLivingPoseStamp,
   poseClipIntervals,
+  poseClipTime,
 } from '../../src/contracts/pose';
 
 const binding = {
@@ -253,6 +253,7 @@ describe('immutable deterministic pose contract (not anatomy readiness)', () => 
       entryAt: gameTimeMs(110),
       defeatStartedAt: presentationTimeMs(900),
     });
+    if ('kind' in stamp.entry) throw Error('Expected canonical entry');
     expect(poseClipTime(stamp.entry, stamp.entryAt, 'left')).toBe(100);
     expect(stamp.defeatStartedAt).toBe(900);
     expect(Object.isFrozen(stamp.entry.binding)).toBe(true);
@@ -319,4 +320,107 @@ describe('immutable deterministic pose contract (not anatomy readiness)', () => 
       ...poseClipIntervals(tiny, gameTimeMs(10), gameTimeMs(11)),
     ]).toThrow('representable');
   });
+});
+
+// Stage-1 diagnostic epoch contract: no source sampler or app activation.
+import { actorId, runId } from '../../src/contracts';
+import {
+  captureRecoveryTimelinePolicy,
+  createRecoveryPoseEpoch,
+  resolvePoseEpoch,
+} from '../../src/contracts/pose';
+
+const recoveryInput = () => ({
+  runId: runId('r'),
+  actorId: actorId('a'),
+  outgoing: createLivingPoseStamp({
+    version: 1,
+    binding: { ...binding, clipId: clipId('KungFuStraight') },
+    mode: 'attack',
+    startedAt: gameTimeMs(0),
+    playback: 'clamp',
+    activationId: attackActivationId('hit'),
+  }),
+  destination: createLivingPoseStamp({ ...idle(), startedAt: gameTimeMs(100) }),
+});
+it('recovery epoch is detached immutable and exact natural 150ms', () => {
+  const i = recoveryInput(),
+    r = createRecoveryPoseEpoch(i);
+  expect(r).toMatchObject({
+    kind: 'recovery',
+    startMs: 100,
+    endMs: 250,
+    durationMs: 150,
+    fixedLiftSign: 1,
+  });
+  expect(Object.isFrozen(r.outgoing.binding)).toBe(true);
+  expect(r.outgoing.binding).not.toBe(i.outgoing.binding);
+  expect(createRecoveryPoseEpoch({ ...i, actorId: i.actorId })).toEqual(r);
+});
+it('recovery resolution retains exact old source and destination clocks/sides', () => {
+  const r = createRecoveryPoseEpoch(recoveryInput());
+  expect(resolvePoseEpoch(r, gameTimeMs(100), 'right')).toMatchObject({
+    kind: 'canonical',
+    clipTime: 100,
+    side: 'left',
+  });
+  expect(resolvePoseEpoch(r, gameTimeMs(175), 'right')).toMatchObject({
+    kind: 'recovery',
+    at: 175,
+    side: 'right',
+    epoch: r,
+  });
+  expect(resolvePoseEpoch(r, gameTimeMs(250), 'right')).toMatchObject({
+    kind: 'canonical',
+    clipTime: 50,
+    side: 'right',
+  });
+  expect(resolvePoseEpoch(r, gameTimeMs(200), 'left')).toMatchObject({
+    kind: 'recovery',
+  });
+  expect(resolvePoseEpoch(r, gameTimeMs(250), 'left')).toMatchObject({
+    kind: 'canonical',
+    clipTime: 50,
+    side: 'left',
+  });
+});
+it('recovery rejects retimed destination and forged epoch identity', () => {
+  const i = recoveryInput();
+  expect(() =>
+    createRecoveryPoseEpoch({
+      ...i,
+      destination: { ...i.destination, startedAt: gameTimeMs(101) },
+    }),
+  ).toThrow();
+  const r = createRecoveryPoseEpoch(i);
+  expect(() =>
+    resolvePoseEpoch({ ...r, identity: 'forged' }, gameTimeMs(175), 'right'),
+  ).toThrow();
+});
+it('recovery diagnostic capability is explicit and cannot be inferred from v1', () => {
+  expect(() =>
+    captureRecoveryTimelinePolicy({
+      version: 1,
+      protocol: 'deterministic-pose-v1',
+    } as never),
+  ).toThrow();
+  expect(
+    captureRecoveryTimelinePolicy({
+      version: 1,
+      protocol: 'kungfu-recovery-epoch-diagnostic-v1',
+      durationMs: durationMs(150),
+      fixedLiftSign: 1,
+    }),
+  ).toMatchObject({ durationMs: 150 });
+});
+it('defeat captures immutable composite left entry and distinct presentation epoch', () => {
+  const r = createRecoveryPoseEpoch(recoveryInput());
+  const d = createDefeatPoseStamp({
+    kind: 'defeat',
+    entry: r,
+    entryAt: gameTimeMs(175),
+    defeatStartedAt: presentationTimeMs(999),
+  });
+  expect(d).toMatchObject({ entry: r, entryAt: 175, defeatStartedAt: 999 });
+  expect(Object.isFrozen(d.entry)).toBe(true);
 });

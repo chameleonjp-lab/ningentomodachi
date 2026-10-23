@@ -1,19 +1,20 @@
 import { expect, test } from 'vitest';
 import {
+  type ActorState,
   actorId,
+  attackActivationId,
+  batchId,
   clipId,
+  domainEventId,
   durationMs,
   gameTimeMs,
-  attackActivationId,
-  domainEventId,
-  batchId,
-  presentationTimeMs,
-  poseClipTime,
-  type ActorState,
   type PoseCatalogBindings,
+  poseClipTime,
+  presentationTimeMs,
 } from '../../src/contracts';
 import { createPoseTimeline } from '../../src/world/pose-timeline';
 import { actor, run, state } from './fixtures';
+
 function bindings(): PoseCatalogBindings {
   return {
     version: 1,
@@ -154,7 +155,7 @@ test('exact attack end has prior attack left limit at simultaneous death, with d
     entryAt: 120,
     defeatStartedAt: 99,
   });
-  if (entry.kind === 'defeat')
+  if (entry.kind === 'defeat' && !('kind' in entry.entry))
     expect(poseClipTime(entry.entry, entry.entryAt, 'left')).toBe(100);
   timeline.prepareCommit({ ...output, events: [] }, gameTimeMs(140))();
   expect(timeline.read(actorId('white'))).toEqual(entry);
@@ -174,7 +175,7 @@ test('death at locomotion transition uses previous mode and loop left endpoint',
     kind: 'defeat',
     entry: { mode: 'idle', startedAt: 0 },
   });
-  if (pose.kind === 'defeat')
+  if (pose.kind === 'defeat' && !('kind' in pose.entry))
     expect(poseClipTime(pose.entry, pose.entryAt, 'left')).toBe(100);
 });
 test('missing death event and activation-own-left sample reject without mutation', () => {
@@ -462,3 +463,375 @@ for (const active of [false, true])
         timeline.prepareCommit({ ...output, events: [] }, gameTimeMs(now))();
         expect(timeline.read(actorId('white'))).toEqual(first);
       });
+
+const recoveryPolicy = {
+  version: 1,
+  protocol: 'kungfu-recovery-epoch-diagnostic-v1',
+  durationMs: durationMs(150),
+  fixedLiftSign: 1,
+} as const;
+function recoveryReady() {
+  const t = createPoseTimeline(run, recoveryPolicy),
+    b = bindings();
+  const names: Record<string, string> = {
+    idle: 'Idle',
+    attack: 'KungFuStraight',
+  };
+  t.bindPreparedCatalog({
+    ...b,
+    clips: b.clips.map((c) => ({
+      ...c,
+      clipId: clipId(names[c.clipId] ?? c.clipId),
+    })),
+    locomotion: { ...b.locomotion, idle: clipId('Idle') },
+  });
+  t.prepareCommit({ snapshot: state(), events: [] }, gameTimeMs(0))();
+  const original = attacking(20);
+  const a = {
+    ...original,
+    attack: { ...original.attack!, clipId: clipId('KungFuStraight') },
+  };
+  t.prepareCommit(
+    { snapshot: state(1, { actors: [a, actor('blue')] }), events: [] },
+    gameTimeMs(20),
+  )();
+  return { t, a };
+}
+function recoveredStep(
+  t: ReturnType<typeof createPoseTimeline>,
+  a: ActorState,
+  to = 140,
+  mode: 'idle' | 'walk' | 'run' | 'jump' = 'idle',
+) {
+  const snapshot = state(to / 20, { actors: [a, actor('blue')] });
+  return t.prepareStep(
+    { snapshot, step: { durationMs: durationMs(to - 20) }, intents: [] },
+    new Map([[actorId('white'), mode]]),
+  );
+}
+test('diagnostic natural completion is C-owned exact epoch and preparation has no effects', () => {
+  const { t, a } = recoveryReady(),
+    install = recoveredStep(t, a);
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'attack' },
+  });
+  install();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'recovery',
+    epoch: {
+      startMs: 120,
+      endMs: 270,
+      destination: { startedAt: 120 },
+      outgoing: { activationId: 'a' },
+    },
+  });
+  expect(t.recoveryCapability).toEqual(recoveryPolicy);
+});
+test('recovery survives skipped draws then completes without restarting Idle', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a)();
+  t.prepareCommit(
+    {
+      snapshot: state(7, { actors: [actor('white'), actor('blue')] }),
+      events: [],
+    },
+    gameTimeMs(140),
+  )();
+  t.prepareStep(
+    { snapshot: state(20), step: { durationMs: durationMs(260) }, intents: [] },
+    new Map(),
+  )();
+  t.prepareCommit({ snapshot: state(20), events: [] }, gameTimeMs(400))();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle', startedAt: 120 },
+  });
+});
+test.each(['walk', 'run', 'jump'] as const)(
+  'recovery interruption to %s is immediate canonical with original boundary',
+  (mode) => {
+    const { t, a } = recoveryReady();
+    recoveredStep(t, a, 140, mode)();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'living',
+      living: { mode, startedAt: 140 },
+    });
+  },
+);
+test('inside-step finalization removes future recovery and restores exact attack authority', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a, 200)();
+  t.prepareCommit(
+    { snapshot: state(5, { actors: [a, actor('blue')] }), events: [] },
+    gameTimeMs(100),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'attack', startedAt: 20 },
+  });
+});
+test.each([120, 160, 270])(
+  'death at recovery boundary/interior %s retains exact left entry',
+  (at) => {
+    const { t, a } = recoveryReady();
+    recoveredStep(t, a, 300)();
+    const snapshot = {
+      ...state(15, { actors: [fallen(), actor('blue')] }),
+      clocks: { ...state(15).clocks, gameTimeMs: gameTimeMs(at) },
+    };
+    t.prepareCommit({ snapshot, events: [death(at)] }, gameTimeMs(at))();
+    const d = t.read(actorId('white'));
+    expect(d).toMatchObject({
+      kind: 'defeat',
+      entryAt: at,
+      defeatStartedAt: 99,
+    });
+    if (d?.kind !== 'defeat') throw Error('Missing defeat');
+    if (at === 120)
+      expect(d.entry).toMatchObject({ mode: 'attack', startedAt: 20 });
+    else
+      expect(d.entry).toMatchObject({
+        kind: 'recovery',
+        startMs: 120,
+        endMs: 270,
+      });
+    t.prepareCommit({ snapshot, events: [] }, gameTimeMs(at))();
+    expect(t.read(actorId('white'))).toEqual(d);
+  },
+);
+test('new attack immediately interrupts recovery without changing its activation clock', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a)();
+  const next = {
+    ...a,
+    attack: {
+      ...a.attack!,
+      activationId: attackActivationId('second'),
+      startedAt: gameTimeMs(160),
+    },
+  };
+  t.prepareCommit(
+    { snapshot: state(8, { actors: [next, actor('blue')] }), events: [] },
+    gameTimeMs(160),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'attack', startedAt: 160, activationId: 'second' },
+  });
+});
+test('encounter cancellation interrupts recovery to canonical rather than manufacturing new recovery', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a)();
+  const blue = {
+    ...fallen(),
+    actorId: actorId('blue'),
+    color: 'blue' as const,
+  };
+  t.prepareCommit(
+    {
+      snapshot: state(8, { actors: [actor('white'), blue] }),
+      events: [{ ...death(160), actorId: actorId('blue') }],
+    },
+    gameTimeMs(160),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle', startedAt: 160 },
+  });
+});
+test('stale prepared closure cannot resurrect an earlier recipe state', () => {
+  const { t, a } = recoveryReady(),
+    old = recoveredStep(t, a),
+    fresh = recoveredStep(t, a, 160);
+  fresh();
+  expect(() => old()).toThrow('Stale');
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'recovery',
+    epoch: { startMs: 120 },
+  });
+});
+test('retired actor cannot reacquire a recipe and disposed reads reject', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a)();
+  t.prepareCommit(
+    { snapshot: state(8, { actors: [actor('blue')] }), events: [] },
+    gameTimeMs(160),
+  )();
+  expect(() =>
+    t.prepareCommit({ snapshot: state(9), events: [] }, gameTimeMs(180)),
+  ).toThrow();
+  t.dispose();
+  expect(() => t.read(actorId('white'))).toThrow('disposed');
+});
+
+test('cancelled tentative preparation and failed validation cannot create a recovery epoch', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a);
+  expect(() =>
+    t.prepareCommit(
+      {
+        snapshot: state(8, { actors: [a, actor('blue')] }),
+        events: [{ ...death(170), actorId: actorId('missing') }],
+      },
+      gameTimeMs(160),
+    ),
+  ).toThrow();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'attack' },
+  });
+});
+test('repeated activations retain only the current admitted recovery identity', () => {
+  const { t, a } = recoveryReady();
+  for (let i = 0; i < 12; i++) {
+    const start = 20 + i * 120;
+    const next = {
+      ...a,
+      attack: {
+        ...a.attack!,
+        activationId: attackActivationId(`series:${i}`),
+        startedAt: gameTimeMs(start),
+      },
+    };
+    t.prepareCommit(
+      {
+        snapshot: state(start / 20, { actors: [next, actor('blue')] }),
+        events: [],
+      },
+      gameTimeMs(start),
+    )();
+    const end = start + 100;
+    t.prepareStep(
+      {
+        snapshot: state(end / 20, { actors: [next, actor('blue')] }),
+        step: { durationMs: durationMs(100) },
+        intents: [],
+      },
+      new Map(),
+    )();
+    t.prepareCommit(
+      { snapshot: state(end / 20), events: [] },
+      gameTimeMs(end),
+    )();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'recovery',
+      epoch: { startMs: end, outgoing: { activationId: `series:${i}` } },
+    });
+  }
+});
+
+test('inside-step finalization during recovery removes future locomotion but retains active recipe', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a, 200, 'walk')();
+  t.prepareCommit({ snapshot: state(8), events: [] }, gameTimeMs(160))();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'recovery',
+    epoch: { startMs: 120, endMs: 270 },
+  });
+});
+test('death exactly at canonical interruption preserves preceding recovery left limit', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a, 140, 'walk')();
+  t.prepareCommit(
+    {
+      snapshot: state(7, { actors: [fallen(), actor('blue')] }),
+      events: [death(140)],
+    },
+    gameTimeMs(140),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'defeat',
+    entry: { kind: 'recovery', startMs: 120 },
+    entryAt: 140,
+  });
+});
+test('encounter cancellation before natural endpoint never manufactures recovery', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a, 140)();
+  const blue = {
+    ...fallen(),
+    actorId: actorId('blue'),
+    color: 'blue' as const,
+  };
+  const snapshot = {
+    ...state(7, { actors: [actor('white'), blue] }),
+    clocks: { ...state(7).clocks, gameTimeMs: gameTimeMs(100) },
+  };
+  t.prepareCommit(
+    { snapshot, events: [{ ...death(100), actorId: actorId('blue') }] },
+    gameTimeMs(100),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle', startedAt: 100 },
+  });
+});
+
+test.each([119, 120, 121, 160])(
+  'review regression: authoritative cancellation at %s never re-matches recovery on right',
+  (at) => {
+    const { t, a } = recoveryReady();
+    recoveredStep(t, a, 200)();
+    const blue = {
+      ...fallen(),
+      actorId: actorId('blue'),
+      color: 'blue' as const,
+    };
+    const snapshot = {
+      ...state(10, { actors: [actor('white'), blue] }),
+      clocks: { ...state(10).clocks, gameTimeMs: gameTimeMs(at) },
+    };
+    t.prepareCommit(
+      { snapshot, events: [{ ...death(at), actorId: actorId('blue') }] },
+      gameTimeMs(at),
+    )();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'living',
+      living: { mode: 'idle', startedAt: at },
+    });
+    // A same-boundary authoritative death still requires the historical LEFT pose.
+    const dead = { ...snapshot, actors: [fallen(), blue] };
+    t.prepareCommit({ snapshot: dead, events: [death(at)] }, gameTimeMs(at))();
+    const entry = t.read(actorId('white'));
+    expect(entry).toMatchObject({ kind: 'defeat', entryAt: at });
+    if (at <= 120)
+      expect(entry).toMatchObject({ entry: { mode: 'attack', startedAt: 20 } });
+    else
+      expect(entry).toMatchObject({
+        entry: { kind: 'recovery', startMs: 120 },
+      });
+  },
+);
+
+test('cancelled right selection retains composite left entry through next provisional step rollback', () => {
+  const { t, a } = recoveryReady();
+  recoveredStep(t, a, 200)();
+  const blue = {
+    ...fallen(),
+    actorId: actorId('blue'),
+    color: 'blue' as const,
+  };
+  const live = state(8, { actors: [actor('white'), blue] });
+  t.prepareCommit(
+    { snapshot: live, events: [{ ...death(160), actorId: actorId('blue') }] },
+    gameTimeMs(160),
+  )();
+  t.prepareStep(
+    {
+      snapshot: state(10, { actors: live.actors }),
+      step: { durationMs: durationMs(40) },
+      intents: [],
+    },
+    new Map([[actorId('white'), 'walk']]),
+  )();
+  t.prepareCommit(
+    { snapshot: { ...live, actors: [fallen(), blue] }, events: [death(160)] },
+    gameTimeMs(160),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'defeat',
+    entryAt: 160,
+    entry: { kind: 'recovery', startMs: 120, endMs: 270 },
+  });
+});

@@ -1,27 +1,38 @@
 import {
-  createLivingPoseStamp,
-  createDefeatPoseStamp,
-  type DefeatPoseStamp,
-  type SpatialStepRequest,
-  type ActorState,
-  type MotionCatalogPort,
-  type GameSnapshot,
-  gameTimeMs,
   type ActorId,
   type ActorPoseStamp,
+  type ActorState,
   type CoreOutput,
+  captureRecoveryTimelinePolicy,
+  createDefeatPoseStamp,
+  createLivingPoseStamp,
+  createRecoveryPoseEpoch,
+  type DefeatPoseStamp,
+  type GameSnapshot,
   type GameTimeMs,
+  gameTimeMs,
   type LivingPoseMode,
   type LivingPoseStamp,
+  type MotionCatalogPort,
   type PoseCatalogBindings,
   type PoseClipBinding,
+  type PoseEpoch,
+  type RecoveryPoseEpoch,
+  type RecoveryTimelinePolicy,
   type RunId,
+  type SpatialStepRequest,
 } from '../contracts';
 
 type Mode = Exclude<LivingPoseMode, 'attack'>;
 interface Resident {
   readonly activationAt: GameTimeMs;
   readonly mode: Mode;
+  readonly at: GameTimeMs;
+  readonly recoveries: readonly Readonly<{
+    readonly epoch: RecoveryPoseEpoch;
+    /** Exact immutable selection installed by natural completion, not value equality. */
+    readonly selection: LivingPoseStamp;
+  }>[];
   readonly selections: readonly LivingPoseStamp[];
   readonly defeat?: DefeatPoseStamp;
   readonly step?:
@@ -33,7 +44,15 @@ interface Resident {
     | undefined;
 }
 /** One run's simulation authority. No rig, renderer, clock or geometry is owned here. */
-export function createPoseTimeline(run: RunId) {
+export function createPoseTimeline(
+  run: RunId,
+  diagnostic?: RecoveryTimelinePolicy,
+) {
+  const recoveryPolicy = diagnostic
+    ? captureRecoveryTimelinePolicy(diagnostic)
+    : undefined;
+  const retired = new Set<ActorId>();
+  let generation = 0;
   let residents = new Map<ActorId, Resident>();
   let bindings: PoseCatalogBindings | undefined;
   let provider: PoseCatalogBindings | undefined;
@@ -100,14 +119,35 @@ export function createPoseTimeline(run: RunId) {
     if (
       current?.mode === 'attack' &&
       current.startedAt + current.binding.durationMs <= at
-    )
-      resident = select(
-        resident,
-        stamp(
-          resident.mode,
-          gameTimeMs(current.startedAt + current.binding.durationMs),
-        ),
+    ) {
+      const destination = stamp(
+        resident.mode,
+        gameTimeMs(current.startedAt + current.binding.durationMs),
       );
+      resident = select(resident, destination);
+      if (
+        recoveryPolicy &&
+        current.binding.clipId === 'KungFuStraight' &&
+        destination.mode === 'idle' &&
+        destination.binding.clipId === 'Idle'
+      ) {
+        const epoch = createRecoveryPoseEpoch({
+          runId: run,
+          actorId: actor.actorId,
+          outgoing: current,
+          destination,
+        });
+        resident = {
+          ...resident,
+          recoveries: [
+            ...resident.recoveries.filter(
+              (r) => r.epoch.startMs < epoch.startMs,
+            ),
+            Object.freeze({ epoch, selection: destination }),
+          ],
+        };
+      }
+    }
     return resident;
   }
   function seed(output: CoreOutput, activationAt: GameTimeMs) {
@@ -119,6 +159,7 @@ export function createPoseTimeline(run: RunId) {
       throw new Error('Pose catalog not bound');
     const ids = state.residentActorIds ?? state.actors.map((a) => a.actorId);
     if (
+      ids.some((id) => retired.has(id)) ||
       new Set(ids).size !== ids.length ||
       ids.some((id) => !state.actors.some((a) => a.actorId === id))
     )
@@ -135,6 +176,8 @@ export function createPoseTimeline(run: RunId) {
         resident = {
           activationAt,
           mode: 'idle',
+          at: activationAt,
+          recoveries: [],
           selections: bindings ? [stamp('idle', activationAt)] : [],
         };
       }
@@ -142,7 +185,37 @@ export function createPoseTimeline(run: RunId) {
     }
     return next;
   }
+  function entryAt(
+    resident: Resident,
+    at: GameTimeMs,
+    side: 'left' | 'right',
+  ): PoseEpoch | undefined {
+    const selected = resident.selections
+      .filter((s) => (side === 'left' ? s.startedAt < at : s.startedAt <= at))
+      .at(-1);
+    if (!selected) return undefined;
+    return (
+      resident.recoveries.find(
+        (r) =>
+          selected === r.selection &&
+          at >= r.epoch.startMs &&
+          (side === 'left' ? at <= r.epoch.endMs : at < r.epoch.endMs),
+      )?.epoch ?? selected
+    );
+  }
+  function installer(next: Map<ActorId, Resident>) {
+    const preparedGeneration = generation;
+    return () => {
+      alive();
+      if (preparedGeneration !== generation)
+        throw Error('Stale pose preparation');
+      for (const id of residents.keys()) if (!next.has(id)) retired.add(id);
+      residents = next;
+      generation++;
+    };
+  }
   return {
+    recoveryCapability: recoveryPolicy,
     bindPreparedCatalog(input: PoseCatalogBindings) {
       alive();
       if (provider) {
@@ -179,6 +252,7 @@ export function createPoseTimeline(run: RunId) {
         next.set(id, {
           ...resident,
           selections: [stamp(resident.mode, resident.activationAt, captured)],
+          recoveries: [],
         });
       // Every descriptor and pending resident is valid before installation.
       const value = JSON.stringify(input);
@@ -186,6 +260,7 @@ export function createPoseTimeline(run: RunId) {
       provider = input;
       providerValue = value;
       residents = next;
+      generation++;
     },
     validateAttackCatalog(snapshot: GameSnapshot, catalog: MotionCatalogPort) {
       alive();
@@ -251,6 +326,9 @@ export function createPoseTimeline(run: RunId) {
               ...resident,
               mode: resident.step.held,
               selections: resident.selections.filter((s) => s.startedAt <= now),
+              recoveries: resident.recoveries.filter(
+                (r) => r.epoch.startMs <= now,
+              ),
             };
           }
           const event = deaths.find((e) => e.actorId === actor.actorId);
@@ -266,9 +344,7 @@ export function createPoseTimeline(run: RunId) {
                 throw new Error('Conflicting death provenance');
             } else {
               if (!event) throw new Error('Missing authoritative death event');
-              const entry = resident.selections
-                .filter((s) => s.startedAt < event.at)
-                .at(-1);
+              const entry = entryAt(resident, event.at, 'left');
               if (!entry) throw new Error('No living left-limit entry');
               const defeat = createDefeatPoseStamp({
                 kind: 'defeat',
@@ -279,7 +355,8 @@ export function createPoseTimeline(run: RunId) {
               resident = {
                 ...resident,
                 defeat,
-                selections: [entry],
+                selections: ['kind' in entry ? entry.destination : entry],
+                recoveries: [],
                 step: undefined,
               };
             }
@@ -290,18 +367,28 @@ export function createPoseTimeline(run: RunId) {
             const cancellation = deaths
               .map((e) => e.at)
               .sort((a, b) => a - b)
-              .find((at) =>
-                resident!.selections.some(
-                  (s) =>
-                    s.mode === 'attack' &&
-                    s.startedAt <= at &&
-                    s.startedAt + s.binding.durationMs > at,
-                ),
+              .find(
+                (at) =>
+                  resident!.selections.some(
+                    (s) =>
+                      s.mode === 'attack' &&
+                      s.startedAt <= at &&
+                      s.startedAt + s.binding.durationMs > at,
+                  ) ||
+                  resident!.recoveries.some(
+                    (r) =>
+                      r.epoch.startMs <= at &&
+                      at < r.epoch.endMs &&
+                      entryAt(resident!, at, 'right') === r.epoch,
+                  ),
               );
             if (cancellation !== undefined) {
               if (actor.attack)
                 throw new Error('Attack survived authoritative cancellation');
               const mode = resident.step?.held ?? resident.mode;
+              // A new canonical selection invalidates the recovery on the right,
+              // even when its values equal the natural destination at the seam.
+              // Keep the old selection/record for a same-time strict-left death.
               resident = select(resident, stamp(mode, cancellation));
               if (
                 resident.step &&
@@ -319,15 +406,18 @@ export function createPoseTimeline(run: RunId) {
             resident = {
               ...resident,
               selections: resident.selections.slice(-2),
+              recoveries: resident.recoveries.filter(
+                (r) =>
+                  r.epoch.endMs >= now &&
+                  (entryAt(resident!, now, 'right') === r.epoch ||
+                    entryAt(resident!, now, 'left') === r.epoch),
+              ),
               step: undefined,
             };
           }
-          next.set(actor.actorId, resident);
+          next.set(actor.actorId, { ...resident, at: now });
         }
-      return () => {
-        alive();
-        residents = next;
-      };
+      return installer(next);
     },
     prepareStep(
       request: SpatialStepRequest,
@@ -349,27 +439,31 @@ export function createPoseTimeline(run: RunId) {
             ...resident.selections.filter((s) => s.startedAt >= from),
           ],
           step: { from, to: now, held: resident.mode },
+          recoveries: resident.recoveries.filter((r) => r.epoch.endMs >= from),
         };
         resident = attackSelection(resident, actor, now);
         const mode = motorEnds.get(actor.actorId) ?? resident.mode;
         const current = resident.selections.at(-1)!;
         if (current.mode !== 'attack' && current.mode !== mode)
           resident = select(resident, stamp(mode, now));
-        next.set(actor.actorId, { ...resident, mode });
+        next.set(actor.actorId, { ...resident, mode, at: now });
       }
-      return () => {
-        alive();
-        residents = next;
-      };
+      return installer(next);
     },
     read(id: ActorId): ActorPoseStamp | undefined {
+      alive();
       const resident = residents.get(id);
       if (resident?.defeat) return resident.defeat;
-      const living = resident?.selections.at(-1);
-      return living ? Object.freeze({ kind: 'living', living }) : undefined;
+      const epoch = resident && entryAt(resident, resident.at, 'right');
+      if (!epoch) return undefined;
+      return 'kind' in epoch
+        ? Object.freeze({ kind: 'recovery', epoch })
+        : Object.freeze({ kind: 'living', living: epoch });
     },
     dispose() {
       residents.clear();
+      retired.clear();
+      generation++;
       bindings = undefined;
       provider = undefined;
       disposed = true;

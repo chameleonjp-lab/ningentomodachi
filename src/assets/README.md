@@ -130,3 +130,55 @@ providers must explicitly support this mode or reject it before their old binary
 root branches. This asset checkpoint must not be promoted with an old provider
 that interprets the new mode as full extraction or grounded-Y. Numeric provider
 qualification and actual C world/contact qualification remain separate gates.
+
+### Isolated opt-in C recovery consumer candidate (Stage 2)
+
+This candidate is not enabled by the application. `PoseRunPolicy.recovery` must
+explicitly negotiate `kungfu-recovery-epoch-diagnostic-v1` separately from the
+legacy deterministic-pose-v1 descriptor. The only admitted transition is the
+C-owned natural KungFuStraight → Idle epoch, diagnostic 150 ms, fixed +1 lift.
+Default canonical/death display, timing, input, contact capsule and physical root
+remain unchanged. This does not fix the separate attack-start stance seam.
+
+B prepares every actor before mounting, retiring, emitting or writing visible
+TRS. A preparation evaluates an ephemeral private Object3D/Bone hierarchy and
+AnimationMixer. It creates no Mesh, SkinnedMesh, geometry, material or texture
+clone. The private hierarchy is disposed in `finally`, including failures; only
+an immutable local-pose/support receipt remains until the frame applies or is
+abandoned. CPU-only `stageActor` handles do not allocate a full display rig.
+After every actor has prepared successfully, old residents retire before new
+full rigs materialize; the initial two-resident budget remains peak two. Failed
+preparation disposes staged CPU handles without retiring existing actors. A
+materialization failure releases its CPU handle but does not undo prior valid
+retirement. The prepared driver transfers exactly once into the display rig.
+WeakMap receipts cannot be forged or resurrected after disposal. Every prepare
+attempt invalidates earlier receipts, including failed attempts; successful
+receipts are one-use. Generations are independent of snapshot revision, so a
+fresh historical frame remains replayable during the same resident lifetime.
+Callbacks after preparation fail closed; this is not rollback of arbitrary
+host callbacks, material failures, or externally mutated visible hierarchies.
+
+Support measurement reuses the existing certified-hull plan and unchanged arithmetic in
+`skinBounds.ts`. Default SkinnedMesh measurement keeps its original direct matrix
+path with no new matrix snapshots; only opt-in private preparation snapshots bindings. One immutable numeric support plan is owned by each pack and
+shared with its owned actors. It is released only after pack disposal and the
+last actor disposal. Numeric payload accounting excludes JS object/Map overhead:
+- a temporary transform graph has N nodes, each with 42 numeric TRS/local/world
+  slots, estimated 336 N bytes, plus the mixer/interpolant overhead;
+- shared support numeric payload is 8 times the number of stored position,
+  joint, weight, hull joint/weight and hull point components;
+- each retained frame pose contains 10 numeric TRS components per sampled node,
+  estimated 80 N bytes, plus IDs, topology, support, containers and engine overhead.
+  Private preparation is sequential, so one private graph is live at a time, not
+  one hidden actor per resident. Per-frame receipts scale only with C's bounded
+  resident set. No production numeric-H resource, original source fetch, or extra
+  asset download is introduced.
+
+Composite defeat entry samples the same C epoch at its strict left side and then
+uses the unchanged death/settlement implementation. Optional offline numeric H
+accepts that same epoch/entry. Recovery intervals are explicitly unresolved and
+split from canonical spans; post-defeat numeric queries are unsupported. These
+APIs are not used by current live combat and do not certify continuous intervals.
+Real-source parity, aggregate tests and any activation remain separate release
+gates. Local source test flags remain gated; publication must resolve pending
+policy without weakening CI or restoring obsolete source gates.
