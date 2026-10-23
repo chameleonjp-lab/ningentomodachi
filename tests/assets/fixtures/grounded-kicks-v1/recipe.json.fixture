@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "status": "diagnostic-broadphase-only",
+  "acceptance": null,
+  "source": {
+    "sourcePath": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "manifestPath": "assets/android/motions/completed42-speed15/kick/manifest.json",
+    "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed"
+  },
+  "selection": "heel: foot influence>=.5,z<=-.035,y<=.120,normal.z<=-.25; sole: foot+toe influence>=.5,y<=.035,normal.y<=-.35; original faces clipped in barycentrics; overlapping region polygons retained and separately counted",
+  "fit": "mesh-bind +Z axis in foot bind-reference; XY bounds midpoint; maximum radial distance plus 1e-7m CPU guard; shortest feasible segment at fixed radius; one fit over finite active source points",
+  "purpose": "Source-pinned single-fit diagnostic. Not HP geometry, accepted contact, or production catalog readiness.",
+  "clips": [
+    {
+      "clipId": "FrontThrustKick",
+      "durationMs": 1444.4445371627808,
+      "side": "L",
+      "supportSide": "R",
+      "sourceFrames": [
+        31,
+        36
+      ],
+      "sourceClipPointer": "/clips/8",
+      "sourceEventPointer": "/clips/8/attack_and_timeline_events/attack_events/0",
+      "sourceDirection": "forward heel/sole thrust; Blender -Y maps to glTF +Z",
+      "sourceEvent": {
+        "type": "heel_sole_thrust",
+        "side": "L",
+        "active_frames": [
+          31,
+          36
+        ],
+        "peak_frame": 33,
+        "hit_count": 1
+      },
+      "sourceSupport": {
+        "side": "R",
+        "frames": [
+          1,
+          65
+        ],
+        "type": "flat planted bent-knee support"
+      },
+      "sourceRoot": {
+        "root_motion": "In-place attack with small continuous pelvis counterbalance and forward pressure; returns smoothly to starting guard with zero net travel. No endpoint teleport. Blender forward -Y maps to glTF +Z."
+      },
+      "sourceTimesSeconds": [
+        0.02222222276031971,
+        0.04444444552063942,
+        0.06666667014360428,
+        0.08888889104127884,
+        0.1111111119389534,
+        0.13333334028720856,
+        0.15555556118488312,
+        0.17777778208255768,
+        0.20000000298023224,
+        0.2222222238779068,
+        0.24444444477558136,
+        0.2666666805744171,
+        0.2888889014720917,
+        0.31111112236976624,
+        0.3333333432674408,
+        0.35555556416511536,
+        0.3777777850627899,
+        0.4000000059604645,
+        0.42222222685813904,
+        0.4444444477558136,
+        0.46666666865348816,
+        0.4888888895511627,
+        0.5111110806465149,
+        0.5333333611488342,
+        0.555555522441864,
+        0.5777778029441833,
+        0.5999999642372131,
+        0.6222222447395325,
+        0.6444444060325623,
+        0.6666666865348816,
+        0.6888888478279114,
+        0.7111111283302307,
+        0.7333333492279053,
+        0.7555555701255798,
+        0.7777777314186096,
+        0.800000011920929,
+        0.8222222328186035,
+        0.8444444537162781,
+        0.8666666150093079,
+        0.8888888955116272,
+        0.9111111164093018,
+        0.9333333373069763,
+        0.9555554986000061,
+        0.9777777791023254,
+        1,
+        1.0222221612930298,
+        1.0444444417953491,
+        1.0666667222976685,
+        1.0888888835906982,
+        1.111111044883728,
+        1.1333333253860474,
+        1.1555556058883667,
+        1.1777777671813965,
+        1.1999999284744263,
+        1.2222222089767456,
+        1.244444489479065,
+        1.2666666507720947,
+        1.2888888120651245,
+        1.3111110925674438,
+        1.3333333730697632,
+        1.355555534362793,
+        1.3777776956558228,
+        1.399999976158142,
+        1.4222222566604614,
+        1.4444445371627808
+      ],
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 688.8888478279114,
+        "endMs": 822.2222328186035,
+        "peakMs": 733.3333492279053,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 666.6666666666666,
+          "endMs": 800,
+          "peakMs": 711.1111111111111
+        },
+        "initialHoldEndMs": 22.22222276031971
+      },
+      "rootPolicy": {
+        "version": 1,
+        "clipId": "FrontThrustKick",
+        "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+        "mode": "grounded-posture-y",
+        "provenance": {
+          "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+          "clipPointer": "/clips/8",
+          "supportPointer": "/clips/8/support_contacts/support_contacts/0"
+        }
+      },
+      "rootPolicyAcceptance": null,
+      "acceptance": null
+    },
+    {
+      "clipId": "SideKick",
+      "durationMs": 1177.7777671813965,
+      "side": "R",
+      "supportSide": "L",
+      "sourceFrames": [
+        24,
+        27
+      ],
+      "sourceClipPointer": "/clips/1",
+      "sourceEventPointer": "/clips/1/attack_and_timeline_events/attack_events/0",
+      "sourceDirection": "lateral side kick toward character right (source Blender -X)",
+      "sourceEvent": {
+        "frame": 26,
+        "active_frames": [
+          24,
+          27
+        ],
+        "limb": "right heel/sole",
+        "kind": "lateral side kick toward character right (-X)"
+      },
+      "sourceSupport": {
+        "limb": "left foot",
+        "frames": [
+          1,
+          53
+        ],
+        "ankle_armature": [
+          0.23,
+          -0.05,
+          0.168
+        ],
+        "pivot": "Toe pivots from forward (-Y) toward +X, opposite the lateral strike. Fixed ankle pivot, not a traveling step."
+      },
+      "sourceRoot": {
+        "root_motion": "In-place one-shot, lateral weight shift onto left support, no net translation or yaw, no teleport. No gameplay velocity."
+      },
+      "sourceTimesSeconds": [
+        0.02222222276031971,
+        0.04444444552063942,
+        0.06666667014360428,
+        0.08888889104127884,
+        0.1111111119389534,
+        0.13333334028720856,
+        0.15555556118488312,
+        0.17777778208255768,
+        0.20000000298023224,
+        0.2222222238779068,
+        0.24444444477558136,
+        0.2666666805744171,
+        0.2888889014720917,
+        0.31111112236976624,
+        0.3333333432674408,
+        0.35555556416511536,
+        0.3777777850627899,
+        0.4000000059604645,
+        0.42222222685813904,
+        0.4444444477558136,
+        0.46666666865348816,
+        0.4888888895511627,
+        0.5111110806465149,
+        0.5333333611488342,
+        0.555555522441864,
+        0.5777778029441833,
+        0.5999999642372131,
+        0.6222222447395325,
+        0.6444444060325623,
+        0.6666666865348816,
+        0.6888888478279114,
+        0.7111111283302307,
+        0.7333333492279053,
+        0.7555555701255798,
+        0.7777777314186096,
+        0.800000011920929,
+        0.8222222328186035,
+        0.8444444537162781,
+        0.8666666150093079,
+        0.8888888955116272,
+        0.9111111164093018,
+        0.9333333373069763,
+        0.9555554986000061,
+        0.9777777791023254,
+        1,
+        1.0222221612930298,
+        1.0444444417953491,
+        1.0666667222976685,
+        1.0888888835906982,
+        1.111111044883728,
+        1.1333333253860474,
+        1.1555556058883667,
+        1.1777777671813965
+      ],
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 533.3333611488342,
+        "endMs": 622.2222447395325,
+        "peakMs": 577.7778029441833,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 511.1111111111111,
+          "endMs": 600,
+          "peakMs": 555.5555555555555
+        },
+        "initialHoldEndMs": 22.22222276031971
+      },
+      "rootPolicy": {
+        "version": 1,
+        "clipId": "SideKick",
+        "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+        "mode": "grounded-posture-y",
+        "provenance": {
+          "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+          "clipPointer": "/clips/1",
+          "supportPointer": "/clips/1/support_contacts/support/0"
+        }
+      },
+      "rootPolicyAcceptance": null,
+      "acceptance": null
+    }
+  ],
+  "clockPolicy": "Inclusive source cells: first annotated accessor key through key immediately after inclusive last frame, runtime half-open. Preserve exact accessor times; runtime speed one.",
+  "numericQualification": {
+    "additionalInterpolationEnclosureTargetM": 0.00025,
+    "cpuArithmeticGuardM": 1e-07,
+    "sourceEquivalenceM": 1e-10,
+    "continuousCertificate": null,
+    "interpolationPaddingAppliedM": 0,
+    "finiteQuarterKeyEscapesRetained": true
+  },
+  "gameplayAllowance": null,
+  "refinementGate": "Proxy hits must not be promoted to damage without intended source-patch qualification. Vertical support excess is measured, not an accepted gameplay allowance.",
+  "topologySemantics": "Original triangle IDs; closed barycentric clipping of source vertex-normal fields; full and clipped polygons retained. Heel/sole overlap explicitly recorded, not disjoint. Cuts are developer source-only anatomy proposals, not accepted visible contact.",
+  "fitPolicy": "One fixed source-bind Z-axis capsule per clip, chosen before any target test. No iterative refit or Uppercut allowance transfer."
+}
