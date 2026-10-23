@@ -13,6 +13,7 @@ import type {
   InputGate,
   MovementBasisSnapshot,
   MovementSessionPort,
+  PresentationLayout,
   ViewportReader,
   ViewportSnapshot,
 } from './interaction';
@@ -49,6 +50,7 @@ export interface CoreOutput {
 }
 /** All adapters read one committed frame; B never guesses C's collision-resolved transform. */
 export interface CommittedFrame extends CoreOutput {
+  readonly presentationLayout?: PresentationLayout | undefined;
   readonly spatial: SpatialSnapshot;
   readonly viewport: ViewportSnapshot;
 }
@@ -106,6 +108,8 @@ export interface SpatialModule<Node> extends SpatialPort {
   readonly renderHost: ActorRenderHostPort<Node>;
 }
 export interface UiPort extends Disposable {
+  /** Structural/text synchronization only: no timeline, events, intents or camera feedback. */
+  prepareLayout?(frame: CommittedFrame): PresentationLayout | undefined;
   render(frame: CommittedFrame, projections: readonly Projection[]): void;
 }
 export interface InputPort extends Disposable {

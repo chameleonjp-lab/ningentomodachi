@@ -4,6 +4,8 @@ import type {
   HostSnapshot,
   PauseReason,
   ViewportReader,
+  ViewportSnapshot,
+  PresentationExclusionId,
 } from '../contracts';
 import type { ControlElements } from '../input';
 import { button, element } from './elements';
@@ -170,9 +172,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         command: { type, runId: state.game.runId, reason },
       });
   };
-  const layout = () => {
-    if (!viewport) return;
-    const v = viewport.read();
+  const layout = (captured?: ViewportSnapshot) => {
+    const v = captured ?? viewport?.read();
+    if (!v) return;
     const result = resolveLayout(settings, v);
     layoutUsable = result.usable;
     notice.textContent = result.warning ?? '';
@@ -637,5 +639,93 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       },
     };
   };
-  return { host, hud, effects, fade, controls };
+  const buttonText = new WeakMap<
+    HTMLElement,
+    { label: HTMLElement; glyphs: HTMLElement }
+  >();
+  const measureButtonText = (node: HTMLElement) => {
+    const text = node.textContent ?? '';
+    if (!['設定', '一時停止', 'パンチ', 'キック', 'ジャンプ'].includes(text))
+      return undefined;
+    const prior = buttonText.get(node);
+    if (
+      prior?.label.parentElement === node &&
+      prior.glyphs.parentElement === node &&
+      prior.label.textContent === text
+    )
+      return prior;
+    const label = element(document, 'span', 'nt-button-label', text);
+    const glyphs = element(document, 'span', 'nt-button-glyphs');
+    glyphs.setAttribute('aria-hidden', 'true');
+    glyphs.setAttribute('inert', '');
+    for (const glyph of Array.from(text)) {
+      const sample = element(document, 'span');
+      sample.dataset.glyph = glyph;
+      glyphs.append(sample);
+    }
+    node.replaceChildren(label, glyphs);
+    const result = { label, glyphs };
+    buttonText.set(node, result);
+    return result;
+  };
+  const presentationElements = (v: ViewportSnapshot) => {
+    if (
+      disposed ||
+      !state ||
+      state.phase !== 'playing' ||
+      state.startup ||
+      settingsOpen ||
+      state.game?.pauseReasons.length ||
+      !wrapper.isConnected
+    )
+      return undefined;
+    layout(v);
+    if (!layoutUsable || controlsLayer.hidden) return undefined;
+    const nodes: { id: PresentationExclusionId; node: HTMLElement }[] = [];
+    const navigation = [...tools.querySelectorAll<HTMLButtonElement>('button')];
+    if (navigation.length > 2) return undefined;
+    navigation.forEach((node, index) => {
+      nodes.push({ id: index === 0 ? 'settings' : 'pause', node });
+    });
+    for (const name of buttonNames)
+      nodes.push({ id: name, node: controls[name] });
+    if (!notice.hidden) nodes.push({ id: 'notice', node: notice });
+    if (nodes.some(({ node }) => !node.isConnected || node.hidden))
+      return undefined;
+    const textNodes: {
+      node: HTMLElement;
+      label: HTMLElement;
+      glyphs: HTMLElement;
+    }[] = [];
+    for (const { id, node } of nodes)
+      if (id !== 'notice') {
+        const measured = measureButtonText(node);
+        if (!measured) return undefined;
+        textNodes.push({ node, ...measured });
+      }
+    return {
+      runId: state.game?.runId,
+      nodes,
+      textNodes,
+      typographyKey: JSON.stringify([
+        v,
+        style.textContent,
+        textNodes.map(({ node, label }) => [
+          node.style.cssText,
+          label.textContent,
+        ]),
+      ]),
+      key: JSON.stringify([
+        v,
+        header.dataset.layout,
+        nodes.map(({ id, node }) => [
+          id,
+          node.style.cssText,
+          id === 'notice' ? node.textContent : null,
+        ]),
+        style.textContent,
+      ]),
+    };
+  };
+  return { host, hud, effects, fade, controls, presentationElements };
 }

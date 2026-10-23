@@ -96,3 +96,28 @@ export type HostRequest = { readonly requestId: string } & (
     }
   | { readonly type: 'CommandRequested'; readonly command: GameCommand }
 );
+
+/** Measured visible UI occupancy, in the captured viewport's local CSS pixels. */
+export type PresentationExclusionId =
+  | 'player-status'
+  | 'opponent-status'
+  | 'settings'
+  | 'pause'
+  | 'punch'
+  | 'kick'
+  | 'jump'
+  | 'notice';
+export interface PresentationExclusionRect {
+  readonly id: PresentationExclusionId;
+  readonly left: number;
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+}
+export interface PresentationLayout {
+  readonly runId: RunId;
+  readonly viewportRevision: number;
+  readonly layoutRevision: number;
+  /** At most eight unique visible rectangles; empty is measured, undefined is unavailable. */
+  readonly rects: readonly PresentationExclusionRect[];
+}

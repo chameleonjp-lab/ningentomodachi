@@ -9,6 +9,7 @@ import {
   type ViewportReader,
 } from '../contracts';
 import { immutableDto } from './immutableDto';
+import { createPresentationLayoutCapture } from './presentationLayout';
 export interface FrameLoopPorts {
   readonly core: CorePort;
   readonly catalog: MotionCatalogPort;
@@ -38,17 +39,30 @@ export function createFrameLoop(
   )
     throw new RangeError('maxStepsPerFrame must be a positive integer');
   let accumulator = 0;
+  const captureLayout = createPresentationLayoutCapture();
   function publish(original: CoreOutput) {
-    const output = immutableDto(original);
-    const viewport = ports.viewport.read();
+    const output = immutableDto({
+      snapshot: original.snapshot,
+      events: original.events,
+    });
+    const viewport = immutableDto(ports.viewport.read());
     const spatial = immutableDto(ports.spatial.commit(output, viewport));
     if (
       spatial.runId !== output.snapshot.runId ||
       spatial.tick !== output.snapshot.clocks.tick
     )
       throw new Error('Committed spatial frame does not match Core');
-    const frame = Object.freeze({ ...output, spatial, viewport });
+    const baseFrame = Object.freeze({ ...output, spatial, viewport });
     hooks.committed?.(output);
+    const presentationLayout = captureLayout(
+      ports.ui.prepareLayout?.(baseFrame),
+      output.snapshot.runId,
+      viewport,
+    );
+    const frame =
+      presentationLayout === undefined
+        ? baseFrame
+        : Object.freeze({ ...baseFrame, presentationLayout });
     ports.animation.render(frame);
     ports.spatial.render(frame);
     ports.ui.render(frame, ports.spatial.project(frame));

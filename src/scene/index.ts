@@ -1,4 +1,3 @@
-import { deathClipSeconds } from '../assets';
 import {
   type Camera,
   Color,
@@ -10,33 +9,35 @@ import {
   Scene,
   WebGLRenderer,
 } from 'three';
+import { deathClipSeconds } from '../assets';
 import {
-  CAMERA_NEAR,
   CAMERA_FAR,
+  CAMERA_NEAR,
   createCameraRig,
   initialCamera,
   projectPoint,
 } from '../camera/camera-rig';
+import type { ActorPresentationBounds } from '../camera/presentation-fit';
 import type {
   ActorId,
-  DefeatPoseSupportObservation,
-  Vector3,
   CommittedFrame,
-  ModuleContext,
+  DefeatPoseSupportObservation,
   GameSnapshot,
-  SpatialActor,
+  ModuleContext,
   Projection,
+  SpatialActor,
   SpatialModule,
   SpatialSnapshot,
+  Vector3,
 } from '../contracts';
 import { createSpatialEngine } from '../world/spatial-engine';
 import {
   createParisStreetLayout,
   type StreetLayout,
 } from '../world/street-layout';
+import { supportedPose, validSupport } from './defeat-support';
 import { createParisStreet } from './paris-street';
 import { createWorldImpactFx } from './world-impact-fx';
-import { validSupport, supportedPose } from './defeat-support';
 
 export type { StreetLayout } from '../world/street-layout';
 export { createParisStreetLayout } from '../world/street-layout';
@@ -309,6 +310,7 @@ export function createSceneAdapter(
       // Validate every opted-in defeated mount before mutating presentation or drawing.
       const offsets = new Map<ActorId, number>();
       const framingPoints: Vector3[] = [];
+      const presentationBounds: ActorPresentationBounds[] = [];
       for (const [id, mount] of mounts) {
         const state = frame.snapshot.actors.find((a) => a.actorId === id);
         if (
@@ -339,6 +341,11 @@ export function createSceneAdapter(
         };
         offsets.set(id, supported.offset);
         framingPoints.push(...supported.corners);
+        presentationBounds.push({
+          actorId: id,
+          corners: supported.corners,
+          kind: 'pose-bounds',
+        });
       }
       const displayActors = frame.spatial.actors.map((actor) =>
         offsets.has(actor.actorId)
@@ -365,18 +372,25 @@ export function createSceneAdapter(
             ? 0
             : Math.max(0, time - lastPresentation);
       lastPresentation = time;
-      if (framingPoints.length) {
-        for (const actor of [player, opponent])
-          if (actor && !offsets.has(actor.actorId))
-            for (const x of [-0.35, 0.35])
-              for (const y of [0, 1.85])
-                for (const z of [-0.35, 0.35])
-                  framingPoints.push({
-                    x: actor.position.x + x,
-                    y: actor.position.y + y,
-                    z: actor.position.z + z,
-                  });
-      }
+      const hasPoseBounds = framingPoints.length > 0;
+      for (const actor of [player, opponent])
+        if (actor && !offsets.has(actor.actorId)) {
+          const corners: Vector3[] = [];
+          for (const x of [-0.35, 0.35])
+            for (const y of [0, 1.85])
+              for (const z of [-0.35, 0.35])
+                corners.push({
+                  x: actor.position.x + x,
+                  y: actor.position.y + y,
+                  z: actor.position.z + z,
+                });
+          presentationBounds.push({
+            actorId: actor.actorId,
+            corners,
+            kind: 'actor-proxy',
+          });
+          if (hasPoseBounds) framingPoints.push(...corners);
+        }
       if (player)
         frameCamera = rig.update(
           player,
@@ -384,6 +398,11 @@ export function createSceneAdapter(
           frame.viewport,
           elapsed,
           framingPoints,
+          {
+            runId: context.runId,
+            layout: frame.presentationLayout,
+            bounds: presentationBounds,
+          },
         );
       camera.position.set(
         frameCamera.position.x,
