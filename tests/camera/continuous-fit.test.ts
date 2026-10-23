@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { expect, test } from 'vitest';
-import { createCameraRig, type CameraFrame } from '../../src/camera/camera-rig';
+import { type CameraFrame, createCameraRig } from '../../src/camera/camera-rig';
 import type { Vector3 as Point } from '../../src/contracts';
 import { createParisStreetLayout } from '../../src/world/street-layout';
 
@@ -48,9 +48,16 @@ function clear(frame: CameraFrame) {
     return Math.min(sq(0), sq(1), sq((l + h) / 2)) > (0.2 + 1e-8) ** 2;
   });
 }
-function witness(frame: CameraFrame, points: readonly Point[], upper: number) {
+function witness(
+  frame: CameraFrame,
+  points: readonly Point[],
+  upper: number,
+  combat: boolean,
+) {
   const at = (d: number): CameraFrame => {
-    let h = 0.94 * d;
+    // Compare achievable motion within the selected preferred profile, not a
+    // different 20-degree exploration composition. Safety oracles are unchanged.
+    let h = (combat ? Math.cos(Math.PI / 30) : 0.94) * d;
     for (const k of ['x', 'z'] as const) {
       const direction = -frame.depth[k];
       if (Math.abs(direction) > 1e-12)
@@ -70,7 +77,7 @@ function witness(frame: CameraFrame, points: readonly Point[], upper: number) {
       },
     };
   };
-  let low = 7,
+  let low = combat ? 2.5 : 7,
     high = upper;
   expect(contains(at(high), points)).toBe(true);
   for (let i = 0; i < 50; i++) {
@@ -112,7 +119,8 @@ for (const [name, culprit] of [
       );
       expect(frame.position.z).toBeLessThanOrEqual(layout.bounds.max.z + 1e-10);
       const range = vector(frame.position).distanceTo(frame.target);
-      expect(range).toBeGreaterThanOrEqual(7 - 1e-10);
+      // Preserve the exploration floor; combat may use the closer profile.
+      expect(range).toBeGreaterThanOrEqual((row.args[1] ? 2.5 : 7) - 1e-10);
       expect(range).toBeLessThanOrEqual(180 + 1e-10);
       if (row.label.startsWith('death:') && previous) {
         if (!previous) throw Error('Missing preceding frame');
@@ -120,6 +128,7 @@ for (const [name, culprit] of [
           frame,
           points,
           vector(row.originalPosition).distanceTo(frame.target),
+          Boolean(row.args[1]),
         );
         const achievable = vector(previous.position).distanceTo(
             alternative.position,

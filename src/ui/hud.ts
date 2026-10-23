@@ -64,6 +64,10 @@ export function createHud(
         let bar = bars.get(actor.actorId);
         if (!bar) {
           const root = element(document, 'section', 'nt-actor');
+          const player = actor.color === 'white';
+          root.dataset.hudSide = player ? 'player' : 'enemy';
+          root.style.gridColumn = player ? '1' : '2';
+          root.style.gridRow = '1';
           root.setAttribute(
             'aria-label',
             actor.color === 'white' ? 'プレイヤー' : '現在の敵',

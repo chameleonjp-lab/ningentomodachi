@@ -47,16 +47,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   const notice = element(document, 'div', 'nt-notice');
   notice.setAttribute('role', 'status');
   notice.hidden = true;
-  wrapper.append(
-    style,
-    hud,
-    effects,
-    controlsLayer,
-    fade,
-    chrome,
-    tools,
-    notice,
-  );
+  const header = element(document, 'div', 'nt-battle-header');
+  header.append(hud, tools);
+  wrapper.append(style, header, effects, controlsLayer, fade, chrome, notice);
   root.append(wrapper);
   let state: HostSnapshot | null = null;
   let viewport: ViewportReader | null = null;
@@ -184,11 +177,12 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     layoutUsable = result.usable;
     notice.textContent = result.warning ?? '';
     notice.hidden = !result.warning;
-    tools.style.top = `${v.safeAreaCssPx.top + 8}px`;
-    tools.style.right = `${v.safeAreaCssPx.right + 8}px`;
-    hud.style.top = `${v.safeAreaCssPx.top + 66}px`;
-    hud.style.left = `${v.safeAreaCssPx.left + 12}px`;
-    hud.style.right = `${v.safeAreaCssPx.right + 12}px`;
+    header.style.top = `${v.safeAreaCssPx.top + 8}px`;
+    header.style.left = `${v.safeAreaCssPx.left + 12}px`;
+    header.style.right = `${v.safeAreaCssPx.right + 12}px`;
+    const headerWidth =
+      v.widthCssPx - v.safeAreaCssPx.left - v.safeAreaCssPx.right - 24;
+    header.dataset.layout = headerWidth >= 640 ? 'wide' : 'narrow';
     for (const name of buttonNames) {
       const b = result.buttons[name];
       const style = controls[name].style;
