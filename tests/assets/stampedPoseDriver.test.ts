@@ -30,7 +30,7 @@ function qualified(rig: ActorRig<Object3D>) {
 }
 
 // Tiny authored test source, not a runtime substitute for the immutable Android.
-function source() {
+function source(includeRecovery = false) {
   const chunks: Uint8Array[] = [];
   const views: { buffer: number; byteOffset: number; byteLength: number }[] =
     [];
@@ -102,16 +102,24 @@ function source() {
     { name: 'Run', tracks: [track(2, 'scale', [1, 1, 1, 2, 2, 2])] },
     { name: 'Jump', tracks: [track(0, 'translation', [0.4, 0, 0, 1.4, 2, 0])] },
   ];
+  if (includeRecovery)
+    definitions.push({
+      name: 'KungFuStraight',
+      tracks: [track(2, 'rotation', q)],
+    });
   const document = {
     asset: { version: '2.0' },
     scene: 0,
-    scenes: [{ nodes: [0, 3, 4] }],
+    scenes: [{ nodes: includeRecovery ? [5] : [0, 3, 4] }],
     nodes: [
       { name: 'root', children: [1] },
       { name: 'pelvis', children: [2] },
       { name: 'hand' },
       { name: 'surface', mesh: 0, skin: 0 },
       { name: 'nonBoneAnimated' },
+      ...(includeRecovery
+        ? [{ name: 'stage2Hierarchy', children: [0, 3, 4] }]
+        : []),
     ],
     meshes: [
       {
@@ -757,3 +765,281 @@ test('real new timing-binding cancellation and scheduler rejection dispose alrea
       }
     }
 }, 30000);
+
+import {
+  createLivingPoseStamp,
+  createRecoveryPoseEpoch,
+  attackActivationId,
+  gameTimeMs,
+} from '../../src/contracts';
+import { Group, Mesh, Matrix4 } from 'three';
+import { createPrivatePoseHierarchy } from '../../src/assets/threeAssetPack';
+import {
+  prepareSkinBounds,
+  createSkinBounds,
+} from '../../src/assets/skinBounds';
+function syntheticEpoch(
+  pack: Awaited<ReturnType<typeof createThreeAssetPack>>,
+) {
+  const bindings = required(pack.poseBindings),
+    binding = (name: string) =>
+      required(bindings.clips.find((b) => b.clipId === name));
+  return createRecoveryPoseEpoch({
+    runId: runId('stage2'),
+    actorId: actorId('white'),
+    outgoing: createLivingPoseStamp({
+      version: 1,
+      binding: binding('KungFuStraight'),
+      mode: 'attack',
+      startedAt: gameTimeMs(0),
+      playback: 'clamp',
+      activationId: attackActivationId('hit'),
+    }),
+    destination: createLivingPoseStamp({
+      version: 1,
+      binding: binding('Idle'),
+      mode: 'idle',
+      startedAt: gameTimeMs(1000),
+      playback: 'loop',
+      activationId: null,
+    }),
+  });
+}
+test('synthetic stage2 private hierarchy has no mesh clones and matches matrix support under nontrivial parent', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white');
+  try {
+    const plan = prepareSkinBounds(rig.node),
+      privateRig = createPrivatePoseHierarchy(rig.node, plan);
+    const parent = new Group();
+    parent.position.set(4, 2, -7);
+    parent.rotation.y = 0.7;
+    parent.add(rig.node);
+    parent.updateMatrixWorld(true);
+    privateRig.node.updateMatrixWorld(true);
+    let meshes = 0;
+    privateRig.node.traverse((n) => {
+      if (n instanceof Mesh) meshes++;
+    });
+    expect(meshes).toBe(0);
+    expect(privateRig.stats.meshClones).toBe(0);
+    expect(privateRig.stats.sourceVertices).toBe(3);
+    expect(privateRig.stats.transformNodes).toBe(7);
+    expect(privateRig.stats.retainedSupportPoints).toBe(3);
+    expect(privateRig.stats.transformNumericBytesEstimate).toBe(2352);
+    expect(privateRig.stats.sharedSupportNumericBytesEstimate).toBe(400);
+    const visible = createSkinBounds(rig.node, plan).measure(
+      new Matrix4().copy(rig.node.matrixWorld).invert(),
+    );
+    const hidden = privateRig.bounds.measure(
+      new Matrix4().copy(privateRig.node.matrixWorld).invert(),
+    );
+    expect(hidden.min.y).toBeCloseTo(visible.min.y, 12);
+    expect(hidden.max.x).toBeCloseTo(visible.max.x, 12);
+    privateRig.dispose();
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('synthetic stage2 recovery preparation leaves visible TRS and physical parent untouched until apply', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white');
+  try {
+    const parent = new Group();
+    parent.position.set(4, 2, -7);
+    parent.rotation.y = 0.7;
+    parent.add(rig.node);
+    parent.updateMatrixWorld(true);
+    const epoch = syntheticEpoch(pack),
+      driver = required(rig.poseFrame),
+      before = pose(rig.node),
+      parentBefore = parent.matrixWorld.toArray();
+    const command = driver.prepare({
+      kind: 'living',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      epoch,
+      at: gameTimeMs(1075),
+      side: 'right',
+    });
+    expect(pose(rig.node)).toEqual(before);
+    expect(parent.matrixWorld.toArray()).toEqual(parentBefore);
+    driver.apply(command);
+    expect(pose(rig.node)).not.toEqual(before);
+    expect(parent.matrixWorld.toArray()).toEqual(parentBefore);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('synthetic stage2 composite defeat zero retains recovery left pose and support', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white');
+  try {
+    const epoch = syntheticEpoch(pack),
+      driver = required(rig.poseFrame);
+    driver.apply(
+      driver.prepare({
+        kind: 'living',
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        revision: 1,
+        epoch,
+        at: gameTimeMs(1075),
+        side: 'left',
+      }),
+    );
+    const entry = pose(rig.node);
+    const command = driver.prepare({
+      kind: 'defeat',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 2,
+      input: {
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        defeatStartedAt: presentationTimeMs(2000),
+        deathClipId: clipId('DefeatPunch'),
+        deathClipTime: durationMs(0),
+        entry: {
+          kind: 'recovery',
+          epoch,
+          at: gameTimeMs(1075),
+          sampleSide: 'left',
+        },
+      },
+    });
+    expect(pose(rig.node)).toEqual(entry);
+    driver.apply(command);
+    const after = pose(rig.node);
+    after.forEach((row, i) => {
+      row.forEach((n, j) => {
+        expect(n).toBeCloseTo(required(required(entry[i])[j]), 12);
+      });
+    });
+    expect(rig.defeatPoseSupport?.()).toBeDefined();
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('synthetic stage2 owned prepared actor survives pack disposal but rejects after actor disposal', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    epoch = syntheticEpoch(pack),
+    driver = required(rig.poseFrame);
+  pack.dispose();
+  try {
+    const token = driver.prepare({
+      kind: 'living',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      epoch,
+      at: gameTimeMs(1075),
+      side: 'right',
+    });
+    driver.apply(token);
+    rig.dispose();
+    expect(() => driver.apply(token)).toThrow();
+    expect(() => pack.create('white')).toThrow();
+  } finally {
+    rig.dispose();
+  }
+});
+
+test('synthetic stage2 R2 CPU stage transfers the exact prepared driver without a second source sample', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    epoch = syntheticEpoch(pack),
+    stage = required(pack.stageActor)('white');
+  let rig: ActorRig<Object3D> | undefined;
+  try {
+    const token = stage.poseFrame.prepare({
+      kind: 'living',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 2,
+      epoch,
+      at: gameTimeMs(1075),
+      side: 'right',
+    });
+    rig = stage.materialize();
+    expect(rig.poseFrame).toBe(stage.poseFrame);
+    stage.poseFrame.apply(token);
+    expect(() => stage.poseFrame.apply(token)).toThrow('consumed');
+    expect(() => stage.materialize()).toThrow();
+    stage.dispose();
+    expect(() =>
+      stage.poseFrame.prepare({
+        kind: 'living',
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        revision: 1,
+        epoch,
+        at: gameTimeMs(1050),
+        side: 'right',
+      }),
+    ).not.toThrow();
+    rig.dispose();
+    expect(() => stage.poseFrame.apply(token)).toThrow();
+  } finally {
+    rig?.dispose();
+    stage.dispose();
+    pack.dispose();
+  }
+});
+test('synthetic stage2 R2 abandoned CPU stage revokes receipt without creating display geometry', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    epoch = syntheticEpoch(pack),
+    stage = required(pack.stageActor)('white');
+  try {
+    const token = stage.poseFrame.prepare({
+      kind: 'living',
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      epoch,
+      at: gameTimeMs(1075),
+      side: 'right',
+    });
+    stage.dispose();
+    expect(() => stage.materialize()).toThrow();
+    expect(() => stage.poseFrame.apply(token)).toThrow();
+  } finally {
+    stage.dispose();
+    pack.dispose();
+  }
+});
+test('synthetic stage2 R2 default bounds use zero matrix clones while opt-in snapshots match exactly', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white');
+  try {
+    rig.node.updateMatrixWorld(true);
+    const plan = prepareSkinBounds(rig.node),
+      legacy = createSkinBounds(rig.node, plan),
+      privateRig = createPrivatePoseHierarchy(rig.node, plan);
+    privateRig.node.updateMatrixWorld(true);
+    const inverse = new Matrix4();
+    let clones = 0;
+    const original = Matrix4.prototype.clone;
+    Matrix4.prototype.clone = function () {
+      clones++;
+      return original.call(this);
+    };
+    try {
+      const direct = legacy.measure(inverse);
+      expect(clones).toBe(0);
+      const snapshot = privateRig.bounds.measure(inverse);
+      expect(clones).toBeGreaterThan(0);
+      expect(snapshot).toEqual(direct);
+    } finally {
+      Matrix4.prototype.clone = original;
+      privateRig.dispose();
+    }
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});

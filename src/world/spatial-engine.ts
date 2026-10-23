@@ -1,12 +1,13 @@
 import {
   type ActorId,
-  capturePoseRunPolicy,
-  type PoseRunPolicy,
   type CoreOutput,
+  capturePoseRunPolicy,
   durationMs,
   type GameSnapshot,
   type MotionCatalogPort,
   type MovementBasisSnapshot,
+  type PoseRunPolicy,
+  type RecoveryTimelinePolicy,
   type RunId,
   type SpatialActor,
   type SpatialSnapshot,
@@ -26,17 +27,29 @@ import {
   streetContacts,
 } from './contact-candidates';
 import { add, dot, finite, length, mul, sub, unit, v } from './math';
+import { createPoseTimeline } from './pose-timeline';
 import type { StreetLayout } from './street-layout';
 import { createVehicleSystem } from './vehicle-system';
-import { createPoseTimeline } from './pose-timeline';
 export function createSpatialEngine(
   run: RunId,
   layout: StreetLayout,
   policy?: PoseRunPolicy,
+  recoveryDiagnostic?: RecoveryTimelinePolicy,
 ) {
   const mode = capturePoseRunPolicy(policy);
+  const recovery = recoveryDiagnostic ?? mode.recovery;
+  if (
+    recoveryDiagnostic &&
+    mode.recovery &&
+    JSON.stringify(recoveryDiagnostic) !== JSON.stringify(mode.recovery)
+  )
+    throw Error('Conflicting recovery policy');
+  if (recovery && mode.mode !== 'deterministic-pose-v1')
+    throw Error('Recovery requires explicit deterministic diagnostic mode');
   const timeline =
-    mode.mode === 'deterministic-pose-v1' ? createPoseTimeline(run) : undefined;
+    mode.mode === 'deterministic-pose-v1'
+      ? createPoseTimeline(run, recovery)
+      : undefined;
   const vehicles = createVehicleSystem(run, layout);
   const poses = new Map<ActorId, SpatialActor>();
   const attacks = new Map<ActorId, string>();
@@ -155,6 +168,9 @@ export function createSpatialEngine(
       ? Object.freeze({
           version: 1 as const,
           protocol: 'deterministic-pose-v1' as const,
+          ...(timeline.recoveryCapability
+            ? { recovery: timeline.recoveryCapability }
+            : {}),
           bindPreparedCatalog: timeline.bindPreparedCatalog,
         })
       : undefined,

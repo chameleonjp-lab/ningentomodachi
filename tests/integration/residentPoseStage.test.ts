@@ -209,3 +209,91 @@ test('pose descriptor is captured once before staging yields and is detached fro
     f.core.dispose();
   }
 });
+
+import {
+  RECOVERY_FRAME_CAPABILITY,
+  createPoseFrameDriver,
+} from '../../src/assets/poseFramePreparation';
+const recoveryPolicy = {
+  version: 1 as const,
+  mode: 'deterministic-pose-v1' as const,
+  recovery: RECOVERY_FRAME_CAPABILITY,
+};
+test('synthetic stage2 resident capability failure occurs before actor allocation', () => {
+  const f = fixture();
+  expect(() =>
+    createResidentAssetStage(
+      f.core.read(),
+      f.source,
+      async () => {},
+      recoveryPolicy,
+    ),
+  ).toThrow();
+  expect(f.created).toHaveLength(0);
+  f.stage.dispose();
+  f.core.dispose();
+});
+test('synthetic stage2 resident stage requires actual per-actor prepare capability', async () => {
+  const f = fixture(),
+    stage = createResidentAssetStage(
+      f.core.read(),
+      {
+        ...f.source,
+        recoveryCapability: RECOVERY_FRAME_CAPABILITY,
+        stageActor() {
+          throw Error('not invoked during readiness');
+        },
+      },
+      async () => {},
+      recoveryPolicy,
+    );
+  await expect(stage.prepare(new AbortController().signal)).rejects.toThrow(
+    'recovery',
+  );
+  expect(f.created).toHaveLength(1);
+  expect(f.created[0]?.dispose).toHaveBeenCalledOnce();
+  stage.dispose();
+  f.stage.dispose();
+  f.core.dispose();
+});
+test('synthetic stage2 resident readiness does not invoke private evaluators or allocate numeric H', async () => {
+  const f = fixture(),
+    evaluate = vi.fn(() => ({
+      pose: [
+        {
+          id: 'root',
+          parent: null,
+          t: [0, 0, 0],
+          q: [0, 0, 0, 1],
+          s: [1, 1, 1],
+        },
+      ],
+    }));
+  const stage = createResidentAssetStage(
+    f.core.read(),
+    {
+      ...f.source,
+      recoveryCapability: RECOVERY_FRAME_CAPABILITY,
+      stageActor() {
+        throw Error('not invoked during readiness');
+      },
+      create: (color) => ({
+        ...f.source.create(color),
+        poseFrame: createPoseFrameDriver(
+          evaluate,
+          () => {},
+          () => {},
+        ),
+      }),
+    },
+    async () => {},
+    recoveryPolicy,
+  );
+  await stage.prepare(new AbortController().signal);
+  expect(f.created).toHaveLength(2);
+  expect(evaluate).not.toHaveBeenCalled();
+  expect(stage.assets.recoveryCapability).toEqual(RECOVERY_FRAME_CAPABILITY);
+  stage.dispose();
+  f.stage.dispose();
+  f.core.dispose();
+});

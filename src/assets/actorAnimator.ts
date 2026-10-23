@@ -6,26 +6,40 @@ import type {
   ClipId,
   DefeatPoseSupportObservation,
   DurationMs,
-  PresentationTimeMs,
+  LivingPoseStamp,
+  PoseEpoch,
+  RecoveryTimelinePolicy,
   PoseCatalogBindings,
   PoseClipBinding,
-  LivingPoseStamp,
-  StampedDefeatSeek,
+  PresentationTimeMs,
   SpatialActor,
+  StampedDefeatSeek,
 } from '../contracts';
 import {
-  clipId,
-  durationMs,
   capturePoseRunPolicy,
-  createLivingPoseStamp,
+  capturePoseEpoch,
+  captureRecoveryTimelinePolicy,
+  isRecoveryPoseEpoch,
+  clipId,
   createDefeatPoseStamp,
+  createLivingPoseStamp,
+  durationMs,
   poseClipTime,
 } from '../contracts';
-import { capturePoseBindings } from './poseBindings';
+import type {
+  PoseFrameDriver,
+  PreparedPoseFrame,
+  PoseFrameRequest,
+} from './poseFramePreparation';
 import { deathClipSeconds } from './deathAnimation';
+import { capturePoseBindings } from './poseBindings';
+import type { RecoveryRigDiagnostic } from './recoveryDiagnostic';
 /** B-owned engine driver. The engine node is only shared via the public generic render host. */
 export interface ActorRig<Node> {
   readonly node: Node;
+  readonly poseFrame?: PoseFrameDriver;
+  /** Offline opt-in only; never selected by the live animator. */
+  readonly recoveryDiagnostic?: RecoveryRigDiagnostic;
   /** Exact absolute clip seconds; driver removes extracted translation, not visual rotation. */
   seek(
     clipId: ClipId,
@@ -46,7 +60,14 @@ export interface ActorRig<Node> {
   setEmissiveEnabled(enabled: boolean): void;
   dispose(): void;
 }
+export interface StagedActorRig<Node> {
+  readonly poseFrame: PoseFrameDriver;
+  materialize(): ActorRig<Node>;
+  dispose(): void;
+}
 export interface AnimatorAssets<Node> {
+  stageActor?(color: ActorColor): StagedActorRig<Node>;
+  readonly recoveryCapability?: RecoveryTimelinePolicy;
   readonly poseBindings?: PoseCatalogBindings;
   create(color: ActorColor): ActorRig<Node>;
   clipDuration(clipId: ClipId): DurationMs | undefined;
@@ -337,6 +358,17 @@ function createStampedActorAnimator<Node>(
   assets: AnimatorAssets<Node>,
 ): AnimationPort {
   const run = context.runId;
+  const recovery = capturePoseRunPolicy(context.posePolicy).recovery;
+  if (
+    recovery &&
+    (!assets.recoveryCapability ||
+      JSON.stringify(
+        captureRecoveryTimelinePolicy(assets.recoveryCapability),
+      ) !== JSON.stringify(recovery))
+  )
+    throw Error('Missing matching recovery assets capability');
+  if (recovery && typeof assets.stageActor !== 'function')
+    throw Error('Missing CPU staged actor capability');
   const host = context.renderHost;
   if (run !== host.runId) throw new Error('Mismatched render host run');
   const descriptor = capturePoseBindings(assets.poseBindings);
@@ -374,9 +406,16 @@ function createStampedActorAnimator<Node>(
     support: ActorRig<Node>['defeatPoseSupport'];
     emission: (enabled: boolean) => void;
     provenance: string | undefined;
+    frameDriver: PoseFrameDriver | undefined;
   };
   type Plan = { id: ActorId; color: ActorColor } & (
-    | { kind: 'living'; binding: PoseClipBinding; time: DurationMs }
+    | {
+        kind: 'living';
+        binding: PoseClipBinding;
+        time: DurationMs;
+        epoch: PoseEpoch;
+      }
+    | { kind: 'recovery'; epoch: PoseEpoch }
     | { kind: 'defeat'; input: StampedDefeatSeek; provenance: string }
   );
   const actors = new Map<ActorId, Entry>();
@@ -386,6 +425,7 @@ function createStampedActorAnimator<Node>(
   let residencyMode: 'legacy' | 'explicit' | undefined;
   let frontier = -1;
   let disposed = false;
+  const cpuStages = new Set<StagedActorRig<Node>>();
   let rendering = false;
   const active = () => {
     if (disposed) throw new Error('Animation disposed during render');
@@ -425,8 +465,8 @@ function createStampedActorAnimator<Node>(
       throw new Error('Pose locomotion binding mismatch');
     return stamp;
   };
-  const acquire = (color: ActorColor): Entry => {
-    const rig = create(color);
+  const acquire = (color: ActorColor, stagedRig?: ActorRig<Node>): Entry => {
+    const rig = stagedRig ?? create(color);
     // Capture the disposer before any optional capability getter. A rig returned
     // after create reentrantly disposes us is still an owned acquisition.
     const disposeRig = rig.dispose;
@@ -446,6 +486,18 @@ function createStampedActorAnimator<Node>(
     active();
     const seekDefeat = rig.seekDefeat;
     active();
+    const frameDriver = recovery ? rig.poseFrame : undefined;
+    active();
+    if (
+      recovery &&
+      (!frameDriver ||
+        typeof frameDriver.prepare !== 'function' ||
+        typeof frameDriver.apply !== 'function' ||
+        JSON.stringify(
+          captureRecoveryTimelinePolicy(frameDriver.capability),
+        ) !== JSON.stringify(recovery))
+    )
+      throw Error('Rig lacks staged recovery capability');
     const support = rig.defeatPoseSupport;
     active();
     const emission = rig.setEmissiveEnabled;
@@ -467,12 +519,14 @@ function createStampedActorAnimator<Node>(
       support: support?.bind(rig),
       emission: emission.bind(rig),
       provenance: undefined as string | undefined,
+      frameDriver,
     });
   };
   return {
     poseProtocol: Object.freeze({
       version: 1,
       protocol: 'deterministic-pose-v1',
+      ...(recovery ? { recovery } : {}),
     }),
     render(frame) {
       if (
@@ -550,6 +604,20 @@ function createStampedActorAnimator<Node>(
           const pose = spatial.get(id)?.pose;
           if (!pose) throw new Error('Missing resident pose stamp');
           if (!actor.defeated) {
+            if (pose.kind === 'recovery') {
+              if (!recovery) throw Error('Recovery capability not admitted');
+              const epoch = capturePoseEpoch(pose.epoch);
+              if (
+                !isRecoveryPoseEpoch(epoch) ||
+                epoch.runId !== run ||
+                epoch.actorId !== id
+              )
+                throw Error('Recovery actor/run mismatch');
+              captureLiving(epoch.outgoing);
+              captureLiving(epoch.destination);
+              plans.push({ id, color, kind: 'recovery', epoch });
+              continue;
+            }
             if (pose.kind !== 'living')
               throw new Error('Living actor requires living pose stamp');
             const stamp = captureLiving(pose.living);
@@ -557,6 +625,7 @@ function createStampedActorAnimator<Node>(
               id,
               color,
               kind: 'living',
+              epoch: stamp,
               binding: stamp.binding,
               time: poseClipTime(stamp, now, 'right'),
             });
@@ -564,7 +633,16 @@ function createStampedActorAnimator<Node>(
             if (pose.kind !== 'defeat')
               throw new Error('Defeated actor requires defeat pose stamp');
             const stamp = createDefeatPoseStamp(pose);
-            captureLiving(stamp.entry);
+            if (isRecoveryPoseEpoch(stamp.entry)) {
+              if (
+                !recovery ||
+                stamp.entry.runId !== run ||
+                stamp.entry.actorId !== id
+              )
+                throw Error('Composite defeat capability/owner mismatch');
+              captureLiving(stamp.entry.outgoing);
+              captureLiving(stamp.entry.destination);
+            } else captureLiving(stamp.entry);
             const state = actor.defeatPresentation;
             if (!state)
               throw new Error('Missing authoritative defeat presentation');
@@ -592,11 +670,18 @@ function createStampedActorAnimator<Node>(
               deathClipTime: durationMs(
                 deathClipSeconds(clock, shownAt) * 1000,
               ),
-              entry: Object.freeze({
-                binding: stamp.entry.binding,
-                clipTime: poseClipTime(stamp.entry, stamp.entryAt, 'left'),
-                sampleSide: 'left',
-              }),
+              entry: isRecoveryPoseEpoch(stamp.entry)
+                ? Object.freeze({
+                    kind: 'recovery',
+                    epoch: stamp.entry,
+                    at: stamp.entryAt,
+                    sampleSide: 'left',
+                  })
+                : Object.freeze({
+                    binding: stamp.entry.binding,
+                    clipTime: poseClipTime(stamp.entry, stamp.entryAt, 'left'),
+                    sampleSide: 'left',
+                  }),
             });
             const provenance = JSON.stringify({ run, id, stamp, clock });
             if (
@@ -605,6 +690,48 @@ function createStampedActorAnimator<Node>(
             )
               throw new Error('Conflicting immutable defeat provenance');
             plans.push({ id, color, kind: 'defeat', input, provenance });
+          }
+        }
+        const staged = new Map<ActorId, Entry>();
+        const prepared = new Map<ActorId, PreparedPoseFrame>();
+        const handles = new Map<ActorId, StagedActorRig<Node>>();
+        if (recovery) {
+          // Acquire without mounting, then prepare EVERY actor before retirement,
+          // mounting, emissions or pose writes. Preparation owns private CPU data.
+          for (const plan of plans)
+            if (!actors.has(plan.id)) {
+              const handle = assets.stageActor?.(plan.color);
+              if (!handle) throw Error('Missing CPU stage');
+              cpuStages.add(handle);
+              handles.set(plan.id, handle);
+              active();
+            }
+          for (const plan of plans) {
+            active();
+            const frameDriver =
+              actors.get(plan.id)?.frameDriver ??
+              handles.get(plan.id)?.poseFrame;
+            if (!frameDriver) throw Error('Missing staged recovery driver');
+            const request: PoseFrameRequest =
+              plan.kind === 'defeat'
+                ? {
+                    runId: run,
+                    actorId: plan.id,
+                    revision,
+                    kind: 'defeat',
+                    input: plan.input,
+                  }
+                : {
+                    runId: run,
+                    actorId: plan.id,
+                    revision,
+                    kind: 'living',
+                    epoch: plan.epoch,
+                    at: now,
+                    side: 'right',
+                  };
+            prepared.set(plan.id, frameDriver.prepare(request));
+            active();
           }
         }
         active();
@@ -634,9 +761,19 @@ function createStampedActorAnimator<Node>(
           throw new AggregateError(retirementErrors, 'Actor retirement failed');
         // Capture and validate actual methods before mounting or seeking any
         // remaining actor. These are required actors, never capability probes.
-        const staged = new Map<ActorId, Entry>();
         for (const plan of plans)
-          if (!actors.has(plan.id)) staged.set(plan.id, acquire(plan.color));
+          if (!actors.has(plan.id) && !staged.has(plan.id)) {
+            const handle = handles.get(plan.id);
+            const rig = handle?.materialize();
+            if (handle && !rig)
+              throw Error('Staged actor materialization returned no rig');
+            // Ownership starts before any node/capability getter or transfer check.
+            const entry = acquire(plan.color, rig);
+            if (handle && entry.frameDriver !== handle.poseFrame)
+              throw Error('Staged receipt driver transfer mismatch');
+            if (handle) cpuStages.delete(handle);
+            staged.set(plan.id, entry);
+          }
         for (const [id, entry] of staged) {
           active();
           entry.mounting = true;
@@ -667,13 +804,25 @@ function createStampedActorAnimator<Node>(
           active();
           const entry = actors.get(plan.id);
           if (!entry) throw new Error('Resident rig unavailable');
-          if (plan.kind === 'living') {
-            entry.seekPose(plan.binding, plan.time);
+          if (plan.kind !== 'defeat') {
+            if (recovery) {
+              const token = prepared.get(plan.id);
+              if (!token || !entry.frameDriver)
+                throw Error('Missing prepared living pose');
+              entry.frameDriver.apply(token);
+            } else if (plan.kind === 'living')
+              entry.seekPose(plan.binding, plan.time);
+            else throw Error('Unadmitted recovery');
             active();
             entry.emission(true);
             active();
           } else {
-            entry.seekDefeat(plan.input);
+            if (recovery) {
+              const token = prepared.get(plan.id);
+              if (!token || !entry.frameDriver)
+                throw Error('Missing prepared defeat');
+              entry.frameDriver.apply(token);
+            } else entry.seekDefeat(plan.input);
             active();
             entry.provenance = plan.provenance;
             if (entry.support) {
@@ -724,6 +873,14 @@ function createStampedActorAnimator<Node>(
         }
       } catch (error) {
         const errors = [error];
+        for (const handle of [...cpuStages]) {
+          cpuStages.delete(handle);
+          try {
+            handle.dispose();
+          } catch (cleanup) {
+            errors.push(cleanup);
+          }
+        }
         for (const entry of [...pending])
           try {
             release(entry);
@@ -743,11 +900,19 @@ function createStampedActorAnimator<Node>(
     dispose() {
       if (disposed) return;
       disposed = true;
+      const errors: unknown[] = [];
+      for (const handle of [...cpuStages]) {
+        cpuStages.delete(handle);
+        try {
+          handle.dispose();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
       const owned = [...actors.values(), ...pending];
       actors.clear();
       residents.clear();
       retired.clear();
-      const errors: unknown[] = [];
       for (const entry of owned)
         try {
           release(entry);

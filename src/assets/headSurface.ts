@@ -1,32 +1,49 @@
 /** Standalone pinned CPU point provider. No scene, actor, GPU, solid-volume or CCD authority. */
 import {
   DiscreteInterpolant,
+  type Interpolant,
   LinearInterpolant,
   Matrix4,
   Quaternion,
   QuaternionLinearInterpolant,
   Vector3,
-  type Interpolant,
 } from 'three';
 import {
   clipId,
-  durationMs,
+  createDefeatPoseStamp,
+  type DefeatPoseStamp,
+  type PoseEpoch,
+  type GameTimeMs,
+  type PoseSampleSide,
   type DurationMs,
+  durationMs,
   type PoseCatalogBindings,
   type PoseClipBinding,
 } from '../contracts';
 import { ANDROID_DERIVED_PACK_V1 } from './derivedPackManifest';
-import { ANDROID_RUNTIME_ARTIFACT_V1 } from './runtimeArtifactManifest';
-import { loadVerifiedSource } from './loadVerifiedSource';
-import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
-import { copyRootPolicy, type ClipRootPolicy } from './rootPolicy';
-
 import {
   createHeadIntervalDiagnostics,
   type IntervalChannel,
   type IntervalValue,
   type SourceHeadIntervalDiagnostics,
 } from './headIntervals';
+import { loadVerifiedSource } from './loadVerifiedSource';
+import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
+import {
+  capturePose,
+  composePoseMatrices,
+  type LocalPose,
+} from './poseRecipeMath';
+import {
+  type CanonicalPoseQuery,
+  samplePoseEpoch,
+  poseEpochIntervals,
+  captureCanonicalSnapshot,
+  type RecoveryHeadDiagnostic,
+  validateCanonicalQuery,
+} from './recoveryDiagnostic';
+import { type ClipRootPolicy, copyRootPolicy } from './rootPolicy';
+import { ANDROID_RUNTIME_ARTIFACT_V1 } from './runtimeArtifactManifest';
 
 type Point = Readonly<{ x: number; y: number; z: number }>;
 export interface SourceHeadDescriptor {
@@ -76,6 +93,23 @@ export type SourceHeadSample =
         | 'unsupported-root-policy';
     }>;
 export interface SourceHeadProvider {
+  /** Optional diagnostic consumer of the SAME C epoch; never live collision authority. */
+  readonly epochDiagnostic: {
+    point(
+      epoch: PoseEpoch,
+      at: GameTimeMs,
+      side: PoseSampleSide,
+    ): SourceHeadSample;
+    entry(defeat: DefeatPoseStamp): SourceHeadSample;
+    intervals: typeof poseEpochIntervals;
+    postDefeat(): Readonly<{
+      kind: 'unsupported';
+      reason: 'post-defeat';
+      resolution: 'unresolved';
+    }>;
+  };
+  /** Offline opt-in finite TRS adapter only; no live head/interval dispatch. */
+  readonly recoveryDiagnostic?: RecoveryHeadDiagnostic;
   readonly intervalDiagnostics?: SourceHeadIntervalDiagnostics;
   readonly descriptor: SourceHeadDescriptor;
   readonly poseBindings: PoseCatalogBindings;
@@ -935,11 +969,102 @@ function numericProvider(
       intervalScope,
     );
   }
+  const recoveryDiagnostic: RecoveryHeadDiagnostic = Object.freeze({
+    sampleCanonical(query: CanonicalPoseQuery) {
+      if (disposed) throw new Error('Numeric provider disposed');
+      const captured = validateCanonicalQuery(query);
+      const found = resolve(captured.stamp.binding);
+      if (!found) throw new Error('Invalid numeric binding');
+      const result = evaluate(captured.stamp.binding, captured.clipTime);
+      if (result.kind !== 'transform')
+        throw new Error(`Unavailable numeric canonical pose: ${result.reason}`);
+      return captureCanonicalSnapshot(
+        captured,
+        found.plan.origin.rootPolicy?.mode ?? 'full-translation',
+        nodes.map((n) => ({
+          id: `gltf:${n.sourceIndex}`,
+          parent: n.parent === undefined ? null : `gltf:${n.parent}`,
+          t: n.position.toArray(),
+          q: n.rotation.toArray(),
+          s: n.scale.toArray(),
+        })),
+        `numeric-head-closure:${descriptor.geometryId}`,
+      );
+    },
+    matrix(input: LocalPose) {
+      if (disposed) throw new Error('Numeric provider disposed');
+      const pose = capturePose(input);
+      if (
+        pose.length !== nodes.length ||
+        pose.some(
+          (n, i) =>
+            n.id !== `gltf:${required(nodes[i]).sourceIndex}` ||
+            n.parent !==
+              (required(nodes[i]).parent === undefined
+                ? null
+                : `gltf:${required(nodes[i]).parent}`),
+        )
+      )
+        throw new Error('Unsupported numeric closure hierarchy');
+      const world = composePoseMatrices(pose),
+        headPose = world.find((n) => n.id === 'gltf:0');
+      if (!headPose) throw new Error('Missing numeric head');
+      const matrix = new Matrix4()
+        .fromArray(headPose.matrix)
+        .multiply(referenceAdjustment);
+      if (!affine(matrix))
+        throw new Error('Unsupported numeric recovery affine');
+      return matrixArray(matrix);
+    },
+  });
   return Object.freeze({
     descriptor,
     poseBindings,
     clipSources,
     evaluate,
+    recoveryDiagnostic,
+    epochDiagnostic: Object.freeze({
+      point(
+        epoch: PoseEpoch,
+        at: GameTimeMs,
+        side: PoseSampleSide,
+      ): SourceHeadSample {
+        if (disposed) return { kind: 'unavailable', reason: 'disposed' };
+        const sample = samplePoseEpoch(
+          epoch,
+          at,
+          side,
+          recoveryDiagnostic.sampleCanonical,
+        );
+        return Object.freeze({
+          kind: 'transform',
+          matrix: recoveryDiagnostic.matrix(sample.pose),
+          numerics: 'cpu-float64-not-certified',
+        });
+      },
+      entry(input: DefeatPoseStamp): SourceHeadSample {
+        if (disposed) return { kind: 'unavailable', reason: 'disposed' };
+        const d = createDefeatPoseStamp(input),
+          sample = samplePoseEpoch(
+            d.entry,
+            d.entryAt,
+            'left',
+            recoveryDiagnostic.sampleCanonical,
+          );
+        return Object.freeze({
+          kind: 'transform',
+          matrix: recoveryDiagnostic.matrix(sample.pose),
+          numerics: 'cpu-float64-not-certified',
+        });
+      },
+      intervals: poseEpochIntervals,
+      postDefeat: () =>
+        Object.freeze({
+          kind: 'unsupported' as const,
+          reason: 'post-defeat' as const,
+          resolution: 'unresolved' as const,
+        }),
+    }),
     ...(intervalScope ? { intervalDiagnostics: makeIntervals() } : {}),
     dispose() {
       disposed = true;

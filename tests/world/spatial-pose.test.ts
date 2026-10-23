@@ -8,7 +8,8 @@ import {
 } from '../../src/contracts';
 import { createSpatialEngine } from '../../src/world/spatial-engine';
 import { createParisStreetLayout } from '../../src/world/street-layout';
-import { actor, run, state, catalog } from './fixtures';
+import { actor, catalog, run, state } from './fixtures';
+
 const policy: PoseRunPolicy = { version: 1, mode: 'deterministic-pose-v1' };
 const descriptor = (): PoseCatalogBindings => ({
   version: 1,
@@ -173,20 +174,21 @@ test('captured binding duration mismatch rejects before physical advancement and
   }
 });
 
-// Real Core clocks/outcomes, synthetic contact candidates: no anatomical collision claim.
-import {
-  setup as coreSetup,
-  fixtureCatalog,
-  attack as requestAttack,
-  reference,
-  envelope,
-  run as coreRun,
-} from '../core/fixtures/scenarios';
 import {
   commandId,
   gameTimeMs,
   type SpatialCandidate,
 } from '../../src/contracts';
+// Real Core clocks/outcomes, synthetic contact candidates: no anatomical collision claim.
+import {
+  run as coreRun,
+  setup as coreSetup,
+  envelope,
+  fixtureCatalog,
+  reference,
+  attack as requestAttack,
+} from '../core/fixtures/scenarios';
+
 function coreTrace(drawEvery: number) {
   const core = coreSetup();
   const config = fixtureCatalog();
@@ -414,6 +416,7 @@ import {
   type MotionCatalogPort,
   type SpatialSnapshot,
 } from '../../src/contracts';
+
 test('real Core terminal death inside step truncates survivor timing without rewriting motor result', () => {
   const core = coreSetup();
   const config = fixtureCatalog();
@@ -511,5 +514,36 @@ test('real Core terminal death inside step truncates survivor timing without rew
   } finally {
     core.dispose();
     e.dispose();
+  }
+});
+
+test('recovery is a separately explicit constructor capability, never inferred from v1', () => {
+  const diagnostic = {
+    version: 1,
+    protocol: 'kungfu-recovery-epoch-diagnostic-v1',
+    durationMs: durationMs(150),
+    fixedLiftSign: 1,
+  } as const;
+  const ordinary = engine(),
+    enabled = createSpatialEngine(
+      run,
+      createParisStreetLayout(),
+      policy,
+      diagnostic,
+    );
+  try {
+    expect(ordinary.poseProtocol?.recovery).toBeUndefined();
+    expect(enabled.poseProtocol?.recovery).toEqual(diagnostic);
+    expect(() =>
+      createSpatialEngine(
+        run,
+        createParisStreetLayout(),
+        undefined,
+        diagnostic,
+      ),
+    ).toThrow('explicit');
+  } finally {
+    ordinary.dispose();
+    enabled.dispose();
   }
 });

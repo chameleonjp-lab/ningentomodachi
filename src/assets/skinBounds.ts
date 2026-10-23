@@ -274,63 +274,155 @@ export function createSkinBounds(
     boneMatrix = new Matrix4();
   return {
     measure(spaceInverse) {
-      const min = new Vector3(Infinity, Infinity, Infinity),
-        max = new Vector3(-Infinity, -Infinity, -Infinity);
-      for (const { mesh, groups } of attached)
-        for (const group of groups) {
-          const e = combined.elements;
-          e.fill(0);
-          e[15] = 1;
-          for (let i = 0; i < 4; i++) {
-            const weight = group.weights[i],
-              index = group.joints[i];
-            if (weight === undefined || index === undefined)
-              throw new Error('Missing support tuple');
-            if (weight === 0) continue;
-            const bone = mesh.skeleton.bones[index],
-              inverse = mesh.skeleton.boneInverses[index];
-            if (!bone || !inverse) throw new Error('Missing support bone');
-            boneMatrix.multiplyMatrices(bone.matrixWorld, inverse);
-            for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14])
-              e[k] = (e[k] ?? 0) + (boneMatrix.elements[k] ?? 0) * weight;
-          }
-          // Do not normalize weights or divide by their sum. Three's Vector3 skinning
-          // adds weighted XYZ and then applies bindMatrixInverse with homogeneous w=1.
-          combined
-            .multiply(mesh.bindMatrix)
-            .premultiply(mesh.bindMatrixInverse)
-            .premultiply(mesh.matrixWorld)
-            .premultiply(spaceInverse);
-          for (const p of group.points) {
-            const x =
-                (e[0] ?? 0) * p.x +
-                (e[4] ?? 0) * p.y +
-                (e[8] ?? 0) * p.z +
-                (e[12] ?? 0),
-              y =
-                (e[1] ?? 0) * p.x +
-                (e[5] ?? 0) * p.y +
-                (e[9] ?? 0) * p.z +
-                (e[13] ?? 0),
-              z =
-                (e[2] ?? 0) * p.x +
-                (e[6] ?? 0) * p.y +
-                (e[10] ?? 0) * p.z +
-                (e[14] ?? 0);
-            min.x = Math.min(min.x, x);
-            min.y = Math.min(min.y, y);
-            min.z = Math.min(min.z, z);
-            max.x = Math.max(max.x, x);
-            max.y = Math.max(max.y, y);
-            max.z = Math.max(max.z, z);
-          }
-        }
-      if (![min.x, min.y, min.z, max.x, max.y, max.z].every(Number.isFinite))
-        throw new Error('Unavailable finite support');
-      return {
-        min: { x: min.x, y: min.y, z: min.z },
-        max: { x: max.x, y: max.y, z: max.z },
+      return measureBoundSkin(attached, spaceInverse, combined, boneMatrix);
+    },
+  };
+}
+type BoundSkin = Readonly<{
+  groups: readonly GroupPlan[];
+  mesh: Readonly<{
+    matrixWorld: Matrix4;
+    bindMatrix: Matrix4;
+    bindMatrixInverse: Matrix4;
+    skeleton: Readonly<{
+      bones: readonly Readonly<{ matrixWorld: Matrix4 }>[];
+      boneInverses: readonly Matrix4[];
+    }>;
+  }>;
+}>;
+function measureBoundSkin(
+  attached: readonly BoundSkin[],
+  spaceInverse: Matrix4,
+  combined: Matrix4,
+  boneMatrix: Matrix4,
+): Bounds {
+  const min = new Vector3(Infinity, Infinity, Infinity),
+    max = new Vector3(-Infinity, -Infinity, -Infinity);
+  for (const { mesh, groups } of attached)
+    for (const group of groups) {
+      const e = combined.elements;
+      e.fill(0);
+      e[15] = 1;
+      for (let i = 0; i < 4; i++) {
+        const weight = group.weights[i],
+          index = group.joints[i];
+        if (weight === undefined || index === undefined)
+          throw new Error('Missing support tuple');
+        if (weight === 0) continue;
+        const bone = mesh.skeleton.bones[index],
+          inverse = mesh.skeleton.boneInverses[index];
+        if (!bone || !inverse) throw new Error('Missing support bone');
+        boneMatrix.multiplyMatrices(bone.matrixWorld, inverse);
+        for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14])
+          e[k] = (e[k] ?? 0) + (boneMatrix.elements[k] ?? 0) * weight;
+      }
+      // Do not normalize weights or divide by their sum. Three's Vector3 skinning
+      // adds weighted XYZ and then applies bindMatrixInverse with homogeneous w=1.
+      combined
+        .multiply(mesh.bindMatrix)
+        .premultiply(mesh.bindMatrixInverse)
+        .premultiply(mesh.matrixWorld)
+        .premultiply(spaceInverse);
+      for (const p of group.points) {
+        const x =
+            (e[0] ?? 0) * p.x +
+            (e[4] ?? 0) * p.y +
+            (e[8] ?? 0) * p.z +
+            (e[12] ?? 0),
+          y =
+            (e[1] ?? 0) * p.x +
+            (e[5] ?? 0) * p.y +
+            (e[9] ?? 0) * p.z +
+            (e[13] ?? 0),
+          z =
+            (e[2] ?? 0) * p.x +
+            (e[6] ?? 0) * p.y +
+            (e[10] ?? 0) * p.z +
+            (e[14] ?? 0);
+        min.x = Math.min(min.x, x);
+        min.y = Math.min(min.y, y);
+        min.z = Math.min(min.z, z);
+        max.x = Math.max(max.x, x);
+        max.y = Math.max(max.y, y);
+        max.z = Math.max(max.z, z);
+      }
+    }
+  if (![min.x, min.y, min.z, max.x, max.y, max.z].every(Number.isFinite))
+    throw new Error('Unavailable finite support');
+  return {
+    min: { x: min.x, y: min.y, z: min.z },
+    max: { x: max.x, y: max.y, z: max.z },
+  };
+}
+/** CPU transform bindings only. No Mesh, Skeleton, materials or geometry ownership. */
+export interface SkinMatrixBinding {
+  readonly matrixWorld: Matrix4;
+  readonly bindMatrix: Matrix4;
+  readonly bindMatrixInverse: Matrix4;
+  readonly bones: readonly Readonly<{ world: Matrix4; inverse: Matrix4 }>[];
+}
+export function createMatrixSkinBounds(
+  plan: SkinBoundsPlan,
+  bindings: () => readonly SkinMatrixBinding[],
+): { measure(spaceInverse: Matrix4): Bounds } {
+  const combined = new Matrix4(),
+    boneMatrix = new Matrix4();
+  return {
+    measure(spaceInverse) {
+      // Capture every binding before arithmetic so a late malformed binding never
+      // produces a partially measured result. Clones detach mutable callers.
+      const finiteMatrix = (m: Matrix4): Matrix4 => {
+        if (
+          m?.elements.length !== 16 ||
+          !Array.from(
+            { length: 16 },
+            (_, i) =>
+              Object.hasOwn(m.elements, i) && Number.isFinite(m.elements[i]),
+          ).every(Boolean)
+        )
+          throw Error('Invalid support matrix binding');
+        return m.clone();
       };
+      const space = finiteMatrix(spaceInverse),
+        source = bindings();
+      if (source.length !== plan.meshes.length)
+        throw Error('Support matrix layout mismatch');
+      const captured = Array.from(source, (mesh, index) => {
+        const meshPlan = plan.meshes[index];
+        if (!mesh || !meshPlan) throw Error('Missing support matrix binding');
+        const bones = Array.from(mesh.bones, (bone) => {
+          if (!bone) throw Error('Missing support bone matrix');
+          return {
+            world: finiteMatrix(bone.world),
+            inverse: finiteMatrix(bone.inverse),
+          };
+        });
+        const groups = meshPlan.groups;
+        for (const group of groups)
+          for (let i = 0; i < 4; i++)
+            if (group.weights[i] !== 0 && !bones[group.joints[i] ?? -1])
+              throw Error('Missing support bone');
+        return {
+          matrixWorld: finiteMatrix(mesh.matrixWorld),
+          bindMatrix: finiteMatrix(mesh.bindMatrix),
+          bindMatrixInverse: finiteMatrix(mesh.bindMatrixInverse),
+          bones,
+          groups,
+        };
+      });
+      const attached = captured.map((mesh) => ({
+        groups: mesh.groups,
+        mesh: {
+          matrixWorld: mesh.matrixWorld,
+          bindMatrix: mesh.bindMatrix,
+          bindMatrixInverse: mesh.bindMatrixInverse,
+          skeleton: {
+            bones: mesh.bones.map((bone) => ({ matrixWorld: bone.world })),
+            boneInverses: mesh.bones.map((bone) => bone.inverse),
+          },
+        },
+      }));
+      return measureBoundSkin(attached, space, combined, boneMatrix);
     },
   };
 }

@@ -1,11 +1,13 @@
 import {
   capturePoseRunPolicy,
+  captureRecoveryTimelinePolicy,
   type PoseRunPolicy,
   type ActorColor,
   type ActorId,
   type GameSnapshot,
 } from '../contracts';
 import type { ActorRig, AnimatorAssets } from '../assets';
+import type { StagedActorRig } from '../assets/actorAnimator';
 import { immutableDto } from './immutableDto';
 
 /** Per-run resource ownership, not a replacement for B/C retirement guards.
@@ -23,6 +25,17 @@ export function createResidentAssetStage<Node>(
   const poseBindings = suppliedPoseBindings
     ? immutableDto(suppliedPoseBindings)
     : undefined;
+  const recovery = policy.recovery;
+  if (
+    recovery &&
+    (!source.recoveryCapability ||
+      JSON.stringify(
+        captureRecoveryTimelinePolicy(source.recoveryCapability),
+      ) !== JSON.stringify(recovery))
+  )
+    throw Error('Missing recovery asset capability');
+  if (recovery && typeof source.stageActor !== 'function')
+    throw Error('Missing CPU staged actor capability');
   const run = initial.runId;
   const roster = new Map<ActorId, ActorColor>();
   const colors = new Set<ActorColor>();
@@ -40,6 +53,7 @@ export function createResidentAssetStage<Node>(
   )
     throw new Error('Required resident plan is unavailable');
   const pending = new Map<ActorId, ActorRig<Node>>();
+  const cpuStages = new Set<StagedActorRig<Node>>();
   const transferred = new Set<ActorId>();
   let disposed = false;
   let started = false;
@@ -63,6 +77,16 @@ export function createResidentAssetStage<Node>(
         throw new Error(
           'Required rig lacks deterministic pose driver capability',
         );
+      if (
+        recovery &&
+        (!rig.poseFrame ||
+          typeof rig.poseFrame.prepare !== 'function' ||
+          typeof rig.poseFrame.apply !== 'function' ||
+          JSON.stringify(
+            captureRecoveryTimelinePolicy(rig.poseFrame.capability),
+          ) !== JSON.stringify(recovery))
+      )
+        throw Error('Required rig lacks recovery preparation');
       if (disposed) throw new Error('Run assets cancelled');
       return rig;
     } catch (error) {
@@ -82,6 +106,14 @@ export function createResidentAssetStage<Node>(
     pending.clear();
     transferred.clear();
     const errors: unknown[] = [];
+    for (const handle of [...cpuStages]) {
+      cpuStages.delete(handle);
+      try {
+        handle.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
     for (const rig of rigs) {
       try {
         rig.dispose();
@@ -93,6 +125,77 @@ export function createResidentAssetStage<Node>(
       throw new AggregateError(errors, 'Pending rig cleanup failed');
   };
   const assets: AnimatorAssets<Node> = {
+    ...(recovery
+      ? {
+          recoveryCapability: recovery,
+          stageActor(color: ActorColor): StagedActorRig<Node> {
+            if (disposed || !prepared || !lease)
+              throw Error('CPU stage requires an active render lease');
+            const id = lease.get(color);
+            if (!id || roster.get(id) !== color || transferred.has(id))
+              throw Error('Invalid or repeated actor staging');
+            const cached = pending.get(id);
+            let handle: StagedActorRig<Node>;
+            if (cached) {
+              if (!cached.poseFrame)
+                throw Error('Missing cached pose preparation');
+              let released = false,
+                made = false;
+              handle = {
+                poseFrame: cached.poseFrame,
+                materialize() {
+                  if (released || made) throw Error('Cached stage consumed');
+                  made = true;
+                  return cached;
+                },
+                dispose() {
+                  if (released || made) return;
+                  released = true;
+                  cached.dispose();
+                },
+              };
+              pending.delete(id);
+            } else {
+              const staged = source.stageActor?.(color);
+              if (!staged) throw Error('Missing source CPU stage');
+              handle = staged;
+            }
+            transferred.add(id);
+            cpuStages.add(handle);
+            let frameDriver: StagedActorRig<Node>['poseFrame'];
+            try {
+              if (disposed) throw Error('CPU stage cancelled');
+              frameDriver = handle.poseFrame;
+              if (
+                !frameDriver ||
+                JSON.stringify(
+                  captureRecoveryTimelinePolicy(frameDriver.capability),
+                ) !== JSON.stringify(recovery)
+              )
+                throw Error('Invalid CPU stage capability');
+              if (disposed) throw Error('CPU stage cancelled');
+            } catch (error) {
+              cpuStages.delete(handle);
+              handle.dispose();
+              throw error;
+            }
+            return {
+              poseFrame: frameDriver,
+              materialize() {
+                if (disposed || !lease)
+                  throw Error('CPU materialization requires active lease');
+                const rig = acceptCreated(handle.materialize());
+                cpuStages.delete(handle);
+                return rig;
+              },
+              dispose() {
+                cpuStages.delete(handle);
+                handle.dispose();
+              },
+            };
+          },
+        }
+      : {}),
     ...(poseBindings ? { poseBindings } : {}),
     locomotionClips: source.locomotionClips,
     clipDuration: (id) => source.clipDuration(id),

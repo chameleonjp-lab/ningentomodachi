@@ -657,6 +657,15 @@ export function createGame<Node>(
             typeof producer.bindPreparedCatalog !== 'function'
           )
             throw new Error('Required pose protocol capability is unavailable');
+          const recovery = context.posePolicy.recovery;
+          if (
+            recovery &&
+            (JSON.stringify(display.recovery) !== JSON.stringify(recovery) ||
+              JSON.stringify(producer.recovery) !== JSON.stringify(recovery))
+          )
+            throw new Error(
+              'Required composite recovery capability is unavailable',
+            );
           const bindings = new Map<ClipId, PoseClipBinding>();
           for (const binding of descriptor.clips) {
             if (
