@@ -327,7 +327,7 @@ test('visual wrapper forwards the actual final pack pose descriptor without allo
 
 // Source-free wrapper boundary only: no GLB parse, actual model, or pose work.
 async function forwardingFixture(
-  options: { absent?: boolean; lateAbort?: boolean } = {},
+  options: { absent?: boolean; lateAbort?: boolean; startup?: boolean } = {},
 ) {
   const { RECOVERY_FRAME_CAPABILITY } = await import(
     '../../src/assets/poseFramePreparation'
@@ -369,6 +369,16 @@ async function forwardingFixture(
     }),
   };
   const owned: AssetModule.ThreeAssetPack = {
+    ...(options.startup
+      ? {
+          startupCapability: {
+            version: 1 as const,
+            protocol: 'side-kick-startup-matrix-v1' as const,
+            fixedLiftSign: 1 as const,
+            deathLayerPolicy: 'freeze-entry-through-local-death-v1' as const,
+          },
+        }
+      : {}),
     create: vi.fn(() => rig),
     clipDuration: () => undefined,
     clipNames: () => [],
@@ -503,4 +513,14 @@ test('recovery forwarding close keeps a live unmaterialized stage owned until it
   handle.dispose();
   expect(f.driver.dispose).toHaveBeenCalledTimes(1);
   expect(f.rig.dispose).not.toHaveBeenCalled();
+});
+
+test('startup wrapper forwards exact distinct capability without source work', async () => {
+  const f = await forwardingFixture({ startup: true });
+  const pack = await f.loading;
+  try {
+    expect(pack.startupCapability).toBe(f.owned.startupCapability);
+  } finally {
+    pack.dispose();
+  }
 });

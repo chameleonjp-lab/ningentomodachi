@@ -37,6 +37,7 @@ import {
 import {
   type CanonicalPoseQuery,
   samplePoseEpoch,
+  composeBasisLayer,
   poseEpochIntervals,
   captureCanonicalSnapshot,
   type RecoveryHeadDiagnostic,
@@ -1038,7 +1039,10 @@ function numericProvider(
         );
         return Object.freeze({
           kind: 'transform',
-          matrix: recoveryDiagnostic.matrix(sample.pose),
+          matrix: composeBasisLayer(
+            recoveryDiagnostic.matrix(sample.pose),
+            sample.basisLayer,
+          ),
           numerics: 'cpu-float64-not-certified',
         });
       },
@@ -1053,7 +1057,10 @@ function numericProvider(
           );
         return Object.freeze({
           kind: 'transform',
-          matrix: recoveryDiagnostic.matrix(sample.pose),
+          matrix: composeBasisLayer(
+            recoveryDiagnostic.matrix(sample.pose),
+            sample.basisLayer,
+          ),
           numerics: 'cpu-float64-not-certified',
         });
       },

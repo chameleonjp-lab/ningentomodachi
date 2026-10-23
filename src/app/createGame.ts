@@ -1,3 +1,4 @@
+import { requireStartupCapability } from '../contracts';
 import {
   capturePoseRunPolicy,
   type PoseRunPolicy,
@@ -657,6 +658,10 @@ export function createGame<Node>(
             typeof producer.bindPreparedCatalog !== 'function'
           )
             throw new Error('Required pose protocol capability is unavailable');
+          if (context.posePolicy.startup) {
+            requireStartupCapability(context.posePolicy.startup, display);
+            requireStartupCapability(context.posePolicy.startup, producer);
+          }
           const recovery = context.posePolicy.recovery;
           if (
             recovery &&

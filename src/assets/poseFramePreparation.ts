@@ -1,11 +1,15 @@
+import { captureBasisLayer } from './recoveryDiagnostic';
 /** Opt-in staged local pose preparation. No source loader, visible rig or world authority. */
 import {
   capturePoseEpoch,
+  captureStartupTimelinePolicy,
+  type StartupTimelinePolicy,
   captureRecoveryTimelinePolicy,
   createLivingPoseStamp,
   durationMs,
   gameTimeMs,
   isRecoveryPoseEpoch,
+  isStartupPoseEpoch,
   resolvePoseEpoch,
   type ActorId,
   type DefeatPoseSupportObservation,
@@ -40,6 +44,7 @@ export interface PreparedPoseFrame {
 }
 export type PoseFrameResult = Readonly<{
   pose: LocalPose;
+  basisLayer?: readonly number[];
   support?: Pick<
     DefeatPoseSupportObservation,
     'entryLocalMinY' | 'currentLocalBounds'
@@ -47,6 +52,7 @@ export type PoseFrameResult = Readonly<{
 }>;
 export interface PoseFrameDriver {
   readonly capability: RecoveryTimelinePolicy;
+  readonly startupCapability?: StartupFrameCapability;
   prepare(request: PoseFrameRequest): PreparedPoseFrame;
   apply(command: PreparedPoseFrame): void;
   dispose(): void;
@@ -57,6 +63,73 @@ export const RECOVERY_FRAME_CAPABILITY: RecoveryTimelinePolicy = Object.freeze({
   durationMs: durationMs(150),
   fixedLiftSign: 1,
 });
+
+export interface StartupFrameCapabilityV1 {
+  readonly version: 1;
+  readonly protocol: 'side-kick-startup-matrix-v1';
+  readonly fixedLiftSign: 1;
+  readonly deathLayerPolicy: 'freeze-entry-through-local-death-v1';
+}
+export interface StartupFrameCapabilityV2 {
+  readonly version: 2;
+  readonly protocol: 'startup-frame-laws-v2';
+  readonly fixedLiftSign: 1;
+  readonly deathLayerPolicy: 'freeze-entry-through-local-death-v1';
+  readonly supportedProtocols: readonly [
+    'side-kick-startup-matrix-v1',
+    'side-kick-startup-matrix-v2',
+  ];
+  readonly domain: 'fixed-positive-lift-midpoint-half-v1';
+}
+export type StartupFrameCapability =
+  | StartupFrameCapabilityV1
+  | StartupFrameCapabilityV2;
+export const STARTUP_FRAME_CAPABILITY_V2: StartupFrameCapabilityV2 =
+  Object.freeze({
+    version: 2,
+    protocol: 'startup-frame-laws-v2',
+    fixedLiftSign: 1,
+    deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+    supportedProtocols: Object.freeze([
+      'side-kick-startup-matrix-v1',
+      'side-kick-startup-matrix-v2',
+    ] as const),
+    domain: 'fixed-positive-lift-midpoint-half-v1',
+  });
+export const STARTUP_FRAME_CAPABILITY: StartupFrameCapability = Object.freeze({
+  version: 1,
+  protocol: 'side-kick-startup-matrix-v1',
+  fixedLiftSign: 1,
+  deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+});
+/** Without requiredPolicy this only captures a declaration, never authorizes execution. */
+export function captureStartupFrameCapability(
+  value: StartupFrameCapability | undefined,
+  requiredPolicy?: StartupTimelinePolicy,
+): StartupFrameCapability {
+  const policy = requiredPolicy
+    ? captureStartupTimelinePolicy(requiredPolicy)
+    : undefined;
+  const validCommon =
+    value &&
+    value.fixedLiftSign === 1 &&
+    value.deathLayerPolicy === 'freeze-entry-through-local-death-v1';
+  const validV1 =
+    validCommon &&
+    value.version === 1 &&
+    value.protocol === 'side-kick-startup-matrix-v1';
+  const validV2 =
+    validCommon &&
+    value.version === 2 &&
+    value.protocol === 'startup-frame-laws-v2' &&
+    value.domain === 'fixed-positive-lift-midpoint-half-v1' &&
+    JSON.stringify(value.supportedProtocols) ===
+      JSON.stringify(STARTUP_FRAME_CAPABILITY_V2.supportedProtocols);
+  if ((!validV1 && !validV2) || (policy?.version === 2 && !validV2))
+    throw Error('Missing matching startup frame capability');
+  return validV2 ? STARTUP_FRAME_CAPABILITY_V2 : STARTUP_FRAME_CAPABILITY;
+}
+
 export function captureDefeatSeek(input: StampedDefeatSeek): StampedDefeatSeek {
   if (
     !input?.runId?.trim() ||
@@ -72,18 +145,22 @@ export function captureDefeatSeek(input: StampedDefeatSeek): StampedDefeatSeek {
     throw Error('Invalid composite defeat request');
   let entry: StampedDefeatSeek['entry'];
   if ('kind' in input.entry) {
-    if (input.entry.kind !== 'recovery')
+    if (input.entry.kind !== 'recovery' && input.entry.kind !== 'startup')
       throw Error('Unsupported defeat entry');
     const epoch = capturePoseEpoch(input.entry.epoch),
       at = gameTimeMs(input.entry.at);
     if (
-      !isRecoveryPoseEpoch(epoch) ||
+      !(isRecoveryPoseEpoch(epoch) || isStartupPoseEpoch(epoch)) ||
       epoch.runId !== input.runId ||
       epoch.actorId !== input.actorId
     )
       throw Error('Composite entry actor/run mismatch');
+    if (input.entry.kind !== epoch.kind)
+      throw Error('Composite entry kind mismatch');
     resolvePoseEpoch(epoch, at, 'left');
-    entry = Object.freeze({ kind: 'recovery', epoch, at, sampleSide: 'left' });
+    entry = isStartupPoseEpoch(epoch)
+      ? Object.freeze({ kind: 'startup', epoch, at, sampleSide: 'left' })
+      : Object.freeze({ kind: 'recovery', epoch, at, sampleSide: 'left' });
   } else {
     const binding = createLivingPoseStamp({
       version: 1,
@@ -129,7 +206,7 @@ function captureRequest(input: PoseFrameRequest): PoseFrameRequest {
   const epoch = capturePoseEpoch(input.epoch),
     at = gameTimeMs(input.at);
   if (
-    isRecoveryPoseEpoch(epoch) &&
+    (isRecoveryPoseEpoch(epoch) || isStartupPoseEpoch(epoch)) &&
     (epoch.runId !== owner.runId || epoch.actorId !== owner.actorId)
   )
     throw Error('Epoch owner mismatch');
@@ -144,8 +221,13 @@ function captureRequest(input: PoseFrameRequest): PoseFrameRequest {
 }
 function captureResult(input: PoseFrameResult): PoseFrameResult {
   const pose = capturePose(input.pose);
-  composePoseMatrices(pose);
-  if (!input.support) return Object.freeze({ pose });
+  const basisLayer =
+    input.basisLayer === undefined
+      ? undefined
+      : captureBasisLayer(input.basisLayer);
+  composePoseMatrices(pose, basisLayer);
+  const captured = { pose, ...(basisLayer ? { basisLayer } : {}) };
+  if (!input.support) return Object.freeze(captured);
   const {
     entryLocalMinY,
     currentLocalBounds: { min, max },
@@ -160,7 +242,7 @@ function captureResult(input: PoseFrameResult): PoseFrameResult {
   )
     throw Error('Invalid prepared support');
   return Object.freeze({
-    pose,
+    ...captured,
     support: Object.freeze({
       entryLocalMinY,
       currentLocalBounds: Object.freeze({
@@ -174,7 +256,11 @@ export function createPoseFrameDriver(
   evaluate: (request: PoseFrameRequest) => PoseFrameResult,
   write: (result: PoseFrameResult, request: PoseFrameRequest) => void,
   assertAlive: () => void,
+  startupCapability?: StartupFrameCapability,
 ): PoseFrameDriver {
+  const capturedStartupCapability = startupCapability
+    ? captureStartupFrameCapability(startupCapability)
+    : undefined;
   let receipts = new WeakMap<
       PreparedPoseFrame,
       { request: PoseFrameRequest; result: PoseFrameResult; generation: number }
@@ -189,6 +275,9 @@ export function createPoseFrameDriver(
   };
   return Object.freeze({
     capability: captureRecoveryTimelinePolicy(RECOVERY_FRAME_CAPABILITY),
+    ...(capturedStartupCapability
+      ? { startupCapability: capturedStartupCapability }
+      : {}),
     prepare(input: PoseFrameRequest) {
       alive();
       generation++;
@@ -197,6 +286,23 @@ export function createPoseFrameDriver(
         key = JSON.stringify([request.runId, request.actorId]);
       if (owner !== undefined && owner !== key)
         throw Error('Stale or foreign prepared authority');
+      const startupRequest =
+        request.kind === 'living'
+          ? isStartupPoseEpoch(request.epoch)
+          : 'kind' in request.input.entry &&
+            request.input.entry.kind === 'startup';
+      if (startupRequest) {
+        const epoch =
+          request.kind === 'living'
+            ? request.epoch
+            : 'kind' in request.input.entry &&
+                request.input.entry.kind === 'startup'
+              ? request.input.entry.epoch
+              : undefined;
+        if (!epoch || !isStartupPoseEpoch(epoch))
+          throw Error('Missing startup epoch policy');
+        captureStartupFrameCapability(capturedStartupCapability, epoch.policy);
+      }
       const result = captureResult(evaluate(request));
       alive();
       const token = Object.freeze({

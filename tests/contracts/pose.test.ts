@@ -424,3 +424,356 @@ it('defeat captures immutable composite left entry and distinct presentation epo
   expect(d).toMatchObject({ entry: r, entryAt: 175, defeatStartedAt: 999 });
   expect(Object.isFrozen(d.entry)).toBe(true);
 });
+
+import {
+  STARTUP_SOURCES,
+  createStartupPoseEpoch,
+  capturePoseEpoch,
+  captureStartupTimelinePolicy,
+} from '../../src/contracts/pose';
+const startupPolicy = () =>
+  captureStartupTimelinePolicy({
+    version: 1,
+    protocol: 'side-kick-startup-matrix-v1',
+    durationMs: durationMs(100),
+    fixedLiftSign: 1,
+  });
+function startupInput(start = 1000, duration = 100) {
+  return {
+    runId: runId('startup'),
+    actorId: actorId('white'),
+    outgoing: idle(),
+    destination: createLivingPoseStamp({
+      version: 1,
+      mode: 'attack',
+      playback: 'clamp',
+      binding: STARTUP_SOURCES.SideKick.binding,
+      startedAt: gameTimeMs(start),
+      activationId: attackActivationId('kick'),
+    }),
+    basis: {
+      authority: 'activation-stance-v1' as const,
+      oldYaw: 0,
+      admittedYaw: Math.PI / 2,
+    },
+    policy: { ...startupPolicy(), durationMs: durationMs(duration) },
+  };
+}
+it('startup owns immutable identity, exact prior clock and separate basis authority', () => {
+  const input = startupInput(),
+    epoch = createStartupPoseEpoch(input);
+  expect(epoch.outgoingAt).toBe(1000);
+  expect(epoch.outgoingSide).toBe('left');
+  expect(epoch.firstActiveAt).toBe(1533.3333611488342);
+  expect(epoch.deathLayerPolicy).toBe('freeze-entry-through-local-death-v1');
+  input.basis.oldYaw = 1;
+  expect(epoch.basis.oldYaw).toBe(0);
+  expect(Object.isFrozen(epoch.basis)).toBe(true);
+  expect(capturePoseEpoch(epoch)).toEqual(epoch);
+  expect(createStartupPoseEpoch(startupInput()).identity).toBe(epoch.identity);
+});
+it('startup fractional endpoints are explicit without changing source clock', () => {
+  const epoch = createStartupPoseEpoch(startupInput(1000, 0.1));
+  const start = resolvePoseEpoch(epoch, epoch.startMs, 'right');
+  const end = resolvePoseEpoch(epoch, epoch.endMs, 'right');
+  expect(start).toMatchObject({
+    kind: 'startup',
+    weight: 0,
+    sourceClipTime: 0,
+  });
+  expect(end).toMatchObject({
+    kind: 'startup',
+    weight: 1,
+    sourceClipTime: epoch.endMs - 1000,
+  });
+  expect(epoch.endMs - 1000).not.toBe(0.1);
+});
+it('startup reverse/repeat queries retain advancing authored clock', () => {
+  const epoch = createStartupPoseEpoch(startupInput());
+  const result = [1090, 1020, 1090].map((at) =>
+    resolvePoseEpoch(epoch, gameTimeMs(at), 'right'),
+  );
+  expect(result[0]).toEqual(result[2]);
+  expect(result[1]).toMatchObject({ weight: 0.2, sourceClipTime: 20 });
+});
+it('startup rejects collapsed timestamps and interval reaching active window', () => {
+  for (const [start, duration] of [
+    [2 ** 53, 1],
+    [1000, 533.3333611488342],
+    [1000, 0],
+  ])
+    expect(() =>
+      createStartupPoseEpoch(startupInput(start, duration)),
+    ).toThrow();
+});
+it('startup rejects non-Idle source and mismatched pinned incoming binding', () => {
+  const input = startupInput();
+  expect(() =>
+    createStartupPoseEpoch({
+      ...input,
+      outgoing: { ...input.outgoing, mode: 'walk' },
+    }),
+  ).toThrow();
+  expect(() =>
+    createStartupPoseEpoch({
+      ...input,
+      destination: {
+        ...input.destination,
+        binding: { ...input.destination.binding, sourceBindingId: 'wrong' },
+      },
+    }),
+  ).toThrow();
+});
+it('startup captures all identity fields and rejects forged endpoints/law/basis', () => {
+  const epoch = createStartupPoseEpoch(startupInput());
+  for (const bad of [
+    { ...epoch, endMs: gameTimeMs(1101) },
+    { ...epoch, basis: { ...epoch.basis, oldYaw: 1 } },
+    { ...epoch, fixedLiftSign: -1 },
+  ])
+    expect(() => capturePoseEpoch(bad as typeof epoch)).toThrow();
+});
+it('startup retains strict-left composed defeat with separate presentation epoch', () => {
+  const epoch = createStartupPoseEpoch(startupInput());
+  const death = createDefeatPoseStamp({
+    kind: 'defeat',
+    entry: epoch,
+    entryAt: gameTimeMs(1050),
+    defeatStartedAt: presentationTimeMs(9000),
+  });
+  expect(death.entry).toEqual(epoch);
+  expect(death.defeatStartedAt).toBe(9000);
+});
+it('startup policy requires explicit stance and deterministic mode, never v1 inference', () => {
+  expect(() =>
+    capturePoseRunPolicy({
+      version: 1,
+      mode: 'legacy',
+      startup: startupPolicy(),
+    }),
+  ).toThrow();
+  expect(() =>
+    capturePoseRunPolicy({
+      version: 1,
+      mode: 'deterministic-pose-v1',
+      startup: startupPolicy(),
+    }),
+  ).toThrow();
+  expect(
+    capturePoseRunPolicy({
+      version: 1,
+      mode: 'deterministic-pose-v1',
+      attackStartStance: 'selected-side-kicks-v1',
+      startup: startupPolicy(),
+    }).startup,
+  ).toEqual(startupPolicy());
+});
+it('startup SideThrust retains its own pinned pre-active domain, not the shorter kick window', () => {
+  const i = startupInput(1000, 600);
+  const e = createStartupPoseEpoch({
+    ...i,
+    destination: {
+      ...i.destination,
+      binding: STARTUP_SOURCES.SideThrustKick.binding,
+    },
+  });
+  expect(e.firstActiveAt).toBe(1755.5555701255798);
+  expect(e.rootPolicy).toBe('in-place-posture-xyz');
+  expect(e.endMs).toBe(1600);
+});
+it('startup capture canonicalizes basis field order but rejects negative-zero identity substitution', () => {
+  const e = createStartupPoseEpoch(startupInput());
+  expect(
+    capturePoseEpoch({
+      ...e,
+      basis: {
+        admittedYaw: e.basis.admittedYaw,
+        oldYaw: 0,
+        authority: 'activation-stance-v1',
+      },
+    }),
+  ).toEqual(e);
+  expect(() =>
+    capturePoseEpoch({ ...e, basis: { ...e.basis, oldYaw: -0 } }),
+  ).toThrow();
+});
+it('startup rejects invalid sides, query bounds and nonfinite basis without clamping', () => {
+  const e = createStartupPoseEpoch(startupInput());
+  for (const at of [999, 1101, NaN, Infinity])
+    expect(() => resolvePoseEpoch(e, gameTimeMs(at), 'right')).toThrow();
+  expect(() => resolvePoseEpoch(e, e.startMs, 'bad' as 'right')).toThrow();
+  expect(() =>
+    createStartupPoseEpoch({
+      ...startupInput(),
+      basis: { authority: 'activation-stance-v1', oldYaw: NaN, admittedYaw: 0 },
+    }),
+  ).toThrow();
+});
+import { requireStartupCapability } from '../../src/contracts/pose';
+it('startup capability refuses old v1 and recovery-only consumers explicitly', () => {
+  const p = startupPolicy();
+  expect(() =>
+    requireStartupCapability(p, {
+      version: 1,
+      protocol: 'deterministic-pose-v1',
+    }),
+  ).toThrow('startup capability');
+  expect(() => requireStartupCapability(p, undefined)).toThrow(
+    'startup capability',
+  );
+  expect(() =>
+    requireStartupCapability(p, {
+      version: 1,
+      protocol: 'deterministic-pose-v1',
+      startup: { ...p, durationMs: durationMs(90) },
+    }),
+  ).toThrow();
+  expect(() =>
+    requireStartupCapability(p, {
+      version: 1,
+      protocol: 'deterministic-pose-v1',
+      startup: p,
+    }),
+  ).not.toThrow();
+});
+
+const frozenStartupV1Golden = {
+  kind: 'startup',
+  version: 'startup-shared-matrix-v1',
+  law: 'radius-fixed-lift-positive-diagonal-with-basis-v1',
+  deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+  runId: 'fixture-run',
+  actorId: 'fixture-run:actor:white',
+  outgoing: {
+    version: 1,
+    binding: {
+      clipId: 'Idle',
+      durationMs: 2022.2222805023193,
+      sourceBindingId:
+        'pose-v1:40a42d3a6dfd776b19f48d7d2bcaf115e52e4e2b59c410f75e5d5ae8fc01f889',
+    },
+    mode: 'idle',
+    startedAt: 0,
+    playback: 'loop',
+    activationId: null,
+  },
+  outgoingAt: 7000,
+  outgoingSide: 'left',
+  destination: {
+    version: 1,
+    binding: {
+      clipId: 'SideKick',
+      durationMs: 1177.7777671813965,
+      sourceBindingId:
+        'pose-v1:4fb6ea03f86f501457176d3bcbe0faa092cfdde4c6501c22a77eb99b0d451d43',
+    },
+    mode: 'attack',
+    startedAt: 7000,
+    playback: 'clamp',
+    activationId: 'fixture-run:attack:4',
+  },
+  basis: {
+    authority: 'activation-stance-v1',
+    oldYaw: 0,
+    admittedYaw: 1.5707963267948966,
+  },
+  policy: {
+    version: 1,
+    protocol: 'side-kick-startup-matrix-v1',
+    durationMs: 100,
+    fixedLiftSign: 1,
+  },
+  startMs: 7000,
+  endMs: 7100,
+  firstActiveAt: 7533.333361148834,
+  windowPolicy: 'inclusive-accessor-frame-cells-v1:provisional-policy',
+  rootPolicy: 'grounded-posture-y',
+  fixedLiftSign: 1,
+  identity:
+    'synthetic-startup-epoch:{"kind":"startup","version":"startup-shared-matrix-v1","law":"radius-fixed-lift-positive-diagonal-with-basis-v1","deathLayerPolicy":"freeze-entry-through-local-death-v1","runId":"fixture-run","actorId":"fixture-run:actor:white","outgoing":{"version":1,"binding":{"clipId":"Idle","durationMs":2022.2222805023193,"sourceBindingId":"pose-v1:40a42d3a6dfd776b19f48d7d2bcaf115e52e4e2b59c410f75e5d5ae8fc01f889"},"mode":"idle","startedAt":0,"playback":"loop","activationId":null},"outgoingAt":7000,"outgoingSide":"left","destination":{"version":1,"binding":{"clipId":"SideKick","durationMs":1177.7777671813965,"sourceBindingId":"pose-v1:4fb6ea03f86f501457176d3bcbe0faa092cfdde4c6501c22a77eb99b0d451d43"},"mode":"attack","startedAt":7000,"playback":"clamp","activationId":"fixture-run:attack:4"},"basis":{"authority":"activation-stance-v1","oldYaw":0,"admittedYaw":1.5707963267948966},"policy":{"version":1,"protocol":"side-kick-startup-matrix-v1","durationMs":100,"fixedLiftSign":1},"startMs":7000,"endMs":7100,"firstActiveAt":7533.333361148834,"windowPolicy":"inclusive-accessor-frame-cells-v1:provisional-policy","rootPolicy":"grounded-posture-y","fixedLiftSign":1}',
+} as const;
+
+import {
+  STARTUP_FRAME_CAPABILITY,
+  STARTUP_FRAME_CAPABILITY_V2,
+  captureStartupFrameCapability,
+} from '../../src/assets/poseFramePreparation';
+const startupV2Policy = () =>
+  captureStartupTimelinePolicy({
+    version: 2,
+    protocol: 'side-kick-startup-matrix-v2',
+    durationMs: durationMs(100),
+    fixedLiftSign: 1,
+    domain: 'fixed-positive-lift-midpoint-half-v1',
+  });
+it('startup v2 wire preserves frozen v1 identity bytes', () => {
+  expect(
+    createStartupPoseEpoch(
+      frozenStartupV1Golden as unknown as Parameters<
+        typeof createStartupPoseEpoch
+      >[0],
+    ).identity,
+  ).toBe(frozenStartupV1Golden.identity);
+});
+it('startup v2 wire uses distinct immutable epoch law and identity', () => {
+  const epoch = createStartupPoseEpoch({
+    ...startupInput(),
+    policy: startupV2Policy(),
+  });
+  expect(epoch.version).toBe('startup-shared-matrix-v2');
+  expect(epoch.law).toBe('radius-fixed-positive-midpoint-half-with-basis-v2');
+  expect(capturePoseEpoch(epoch)).toEqual(epoch);
+  expect(epoch.identity).not.toBe(
+    createStartupPoseEpoch(startupInput()).identity,
+  );
+  expect(Object.isFrozen(epoch.policy)).toBe(true);
+});
+it('startup v2 wire rejects mismatched policy protocol and domain', () => {
+  for (const patch of [
+    { protocol: 'side-kick-startup-matrix-v1' },
+    { domain: 'other' },
+  ])
+    expect(() =>
+      captureStartupTimelinePolicy({
+        ...startupV2Policy(),
+        ...patch,
+      } as Parameters<typeof captureStartupTimelinePolicy>[0]),
+    ).toThrow('Unsupported startup policy');
+});
+it('startup v2 wire rejects forged epoch law', () => {
+  const epoch = createStartupPoseEpoch({
+    ...startupInput(),
+    policy: startupV2Policy(),
+  });
+  expect(() =>
+    capturePoseEpoch({
+      ...epoch,
+      law: 'radius-fixed-lift-positive-diagonal-with-basis-v1',
+    }),
+  ).toThrow('Conflicting startup epoch identity');
+});
+it('startup v2 wire v1-only frame capability rejects v2', () => {
+  expect(() =>
+    captureStartupFrameCapability(STARTUP_FRAME_CAPABILITY, startupV2Policy()),
+  ).toThrow('Missing matching startup frame capability');
+  expect(
+    captureStartupFrameCapability(STARTUP_FRAME_CAPABILITY, startupPolicy()),
+  ).toEqual(STARTUP_FRAME_CAPABILITY);
+});
+it('startup v2 wire declared dual support preserves exact requested law', () => {
+  expect(
+    captureStartupFrameCapability(
+      STARTUP_FRAME_CAPABILITY_V2,
+      startupV2Policy(),
+    ),
+  ).toEqual(STARTUP_FRAME_CAPABILITY_V2);
+  expect(
+    captureStartupFrameCapability(STARTUP_FRAME_CAPABILITY_V2, startupPolicy()),
+  ).toEqual(STARTUP_FRAME_CAPABILITY_V2);
+});
+it('startup v2 wire default and legacy remain unchanged', () => {
+  expect(capturePoseRunPolicy()).toEqual({ version: 1, mode: 'legacy' });
+  expect(
+    capturePoseRunPolicy({ version: 1, mode: 'deterministic-pose-v1' }).startup,
+  ).toBeUndefined();
+});

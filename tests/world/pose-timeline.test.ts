@@ -835,3 +835,291 @@ test('cancelled right selection retains composite left entry through next provis
     entry: { kind: 'recovery', startMs: 120, endMs: 270 },
   });
 });
+
+import {
+  STARTUP_SOURCES,
+  type StartupTimelinePolicy,
+  resolvePoseEpoch,
+} from '../../src/contracts';
+const startup: StartupTimelinePolicy = {
+  version: 1,
+  protocol: 'side-kick-startup-matrix-v1',
+  durationMs: durationMs(100),
+  fixedLiftSign: 1,
+};
+const startupBasis = new Map([
+  [
+    actorId('white'),
+    {
+      authority: 'activation-stance-v1' as const,
+      oldYaw: 0,
+      admittedYaw: Math.PI / 2,
+    },
+  ],
+]);
+function startupReady() {
+  const t = createPoseTimeline(run, undefined, startup);
+  const b = bindings();
+  t.bindPreparedCatalog({
+    ...b,
+    clips: [
+      ...b.clips.filter((x) => x.clipId !== 'idle'),
+      {
+        clipId: clipId('Idle'),
+        durationMs: durationMs(100),
+        sourceBindingId: 'idle-source',
+      },
+      STARTUP_SOURCES.SideKick.binding,
+      STARTUP_SOURCES.SideThrustKick.binding,
+    ],
+    locomotion: { ...b.locomotion, idle: clipId('Idle') },
+  });
+  t.prepareCommit({ snapshot: state(), events: [] }, gameTimeMs(0))();
+  return t;
+}
+function startupActor(at = 20, activation = 's') {
+  const a = attacking(at, activation);
+  return { ...a, attack: { ...a.attack!, clipId: clipId('SideKick') } };
+}
+function startupStep(
+  t: ReturnType<typeof startupReady>,
+  to: number,
+  a = startupActor(),
+  held: 'idle' | 'walk' = 'idle',
+) {
+  const snap = {
+    ...state(1, { actors: [a, actor('blue')] }),
+    clocks: { ...state(1).clocks, gameTimeMs: gameTimeMs(to) },
+  };
+  t.prepareStep(
+    { snapshot: snap, step: { durationMs: durationMs(to - 20) }, intents: [] },
+    new Map([[a.actorId, held]]),
+    startupBasis,
+  )();
+  return snap;
+}
+test('startup timeline selects exact activation prior left stamp and expires on original source clock', () => {
+  const t = startupReady();
+  const s = startupStep(t, 40);
+  const read = t.read(actorId('white'));
+  expect(read).toMatchObject({
+    kind: 'startup',
+    epoch: {
+      startMs: 20,
+      endMs: 120,
+      outgoing: { startedAt: 0 },
+      destination: { startedAt: 20 },
+    },
+  });
+  t.prepareCommit({ snapshot: s, events: [] }, gameTimeMs(40))();
+  startupStep(t, 120);
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { startedAt: 20, mode: 'attack' },
+  });
+  expect(
+    read?.kind === 'startup' &&
+      resolvePoseEpoch(read.epoch, gameTimeMs(60), 'right'),
+  ).toMatchObject({ sourceClipTime: 40 });
+});
+test('startup prepare is uncommitted until install and stale install rejects', () => {
+  const t = startupReady(),
+    s = state(2, { actors: [startupActor(), actor('blue')] });
+  const install = t.prepareStep(
+    { snapshot: s, step: { durationMs: durationMs(20) }, intents: [] },
+    new Map(),
+    startupBasis,
+  );
+  expect(t.read(actorId('white'))?.kind).toBe('living');
+  install();
+  expect(t.read(actorId('white'))?.kind).toBe('startup');
+  expect(install).toThrow('Stale');
+});
+test('startup unqualified moving or missing-basis selections are explicit canonical, not smooth fallback', () => {
+  for (const moving of [false, true]) {
+    const t = startupReady();
+    if (moving)
+      t.prepareStep(
+        {
+          snapshot: state(1),
+          step: { durationMs: durationMs(20) },
+          intents: [],
+        },
+        new Map([[actorId('white'), 'walk']]),
+      )();
+    t.prepareStep(
+      {
+        snapshot: state(2, { actors: [startupActor(30), actor('blue')] }),
+        step: { durationMs: durationMs(20) },
+        intents: [],
+      },
+      new Map(),
+      moving ? startupBasis : undefined,
+    )();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'living',
+      startupQualification: 'unqualified-outgoing-or-basis',
+    });
+  }
+});
+test('startup inside-step finalization rolls back future attack and composite selection', () => {
+  const t = startupReady();
+  startupStep(t, 40, startupActor(30));
+  const s = {
+    ...state(),
+    clocks: { ...state().clocks, gameTimeMs: gameTimeMs(25) },
+  };
+  t.prepareCommit({ snapshot: s, events: [] }, gameTimeMs(25))();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle' },
+  });
+});
+test('startup strict-left death retains layer recipe at start/interior/end', () => {
+  for (const at of [20, 50, 120]) {
+    const t = startupReady();
+    startupStep(t, 140);
+    const a = {
+      ...actor('white'),
+      defeated: true,
+      hp: 0,
+      defeatPresentation: {
+        startedAt: presentationTimeMs(900),
+        category: 'kick' as const,
+        slowDurationMs: durationMs(1500),
+        playbackRate: 0.25 as const,
+      },
+    };
+    const s = {
+      ...state(7, { actors: [a, actor('blue')] }),
+      clocks: { ...state(7).clocks, gameTimeMs: gameTimeMs(at) },
+    };
+    t.prepareCommit({ snapshot: s, events: [death(at)] }, gameTimeMs(at))();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'defeat',
+      entry: {
+        kind: 'startup',
+        deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+      },
+      entryAt: at,
+      defeatStartedAt: 900,
+    });
+  }
+});
+test('startup cancellation replaces right selection without erasing strict-left entry', () => {
+  const t = startupReady();
+  startupStep(t, 100);
+  const blue = {
+    ...actor('blue'),
+    defeated: true,
+    hp: 0,
+    defeatPresentation: {
+      startedAt: presentationTimeMs(50),
+      category: 'kick' as const,
+      slowDurationMs: durationMs(1500),
+      playbackRate: 0.25 as const,
+    },
+  };
+  const s = {
+    ...state(3, { actors: [actor('white'), blue] }),
+    clocks: { ...state(3).clocks, gameTimeMs: gameTimeMs(50) },
+  };
+  t.prepareCommit(
+    { snapshot: s, events: [{ ...death(50), actorId: blue.actorId }] },
+    gameTimeMs(50),
+  )();
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    living: { mode: 'idle', startedAt: 50 },
+  });
+});
+test('startup resident retirement rejects resurrection and disposal rejects all reads', () => {
+  const t = startupReady();
+  const s = startupStep(t, 40);
+  t.prepareCommit(
+    { snapshot: { ...s, residentActorIds: [actorId('blue')] }, events: [] },
+    gameTimeMs(40),
+  )();
+  expect(t.read(actorId('white'))).toBeUndefined();
+  expect(() =>
+    t.prepareCommit({ snapshot: s, events: [] }, gameTimeMs(40)),
+  ).toThrow();
+  t.dispose();
+  expect(() => t.read(actorId('white'))).toThrow();
+});
+test('startup cancellation at exact start and endpoint never rematches a right-side recipe', () => {
+  for (const at of [20, 120]) {
+    const t = startupReady();
+    startupStep(t, 140);
+    const blue = {
+      ...actor('blue'),
+      defeated: true,
+      hp: 0,
+      defeatPresentation: {
+        startedAt: presentationTimeMs(at),
+        category: 'kick' as const,
+        slowDurationMs: durationMs(1500),
+        playbackRate: 0.25 as const,
+      },
+    };
+    const s = {
+      ...state(7, { actors: [actor('white'), blue] }),
+      clocks: { ...state(7).clocks, gameTimeMs: gameTimeMs(at) },
+    };
+    t.prepareCommit(
+      { snapshot: s, events: [{ ...death(at), actorId: blue.actorId }] },
+      gameTimeMs(at),
+    )();
+    expect(t.read(actorId('white'))).toMatchObject({
+      kind: 'living',
+      living: { mode: 'idle', startedAt: at },
+    });
+  }
+});
+test('startup fresh attack during composite is immediately canonical and explicitly unqualified', () => {
+  const t = startupReady();
+  startupStep(t, 40);
+  startupStep(t, 60, startupActor(50, 'second'));
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    startupQualification: 'unqualified-outgoing-or-basis',
+    living: { startedAt: 50, activationId: 'second' },
+  });
+});
+test('startup skipped observations preserve active epoch and immutable replay after end', () => {
+  const t = startupReady();
+  startupStep(t, 40);
+  const saved = t.read(actorId('white'));
+  startupStep(t, 110);
+  expect(t.read(actorId('white'))).toEqual(saved);
+  startupStep(t, 160);
+  expect(t.read(actorId('white'))?.kind).toBe('living');
+  expect(
+    saved?.kind === 'startup' &&
+      resolvePoseEpoch(saved.epoch, gameTimeMs(40), 'right'),
+  ).toMatchObject({ weight: 0.2, sourceClipTime: 20 });
+});
+test('startup SideThrust selects its exact original duration and pre-active source clock', () => {
+  const t = startupReady(),
+    a = startupActor();
+  const thrust = {
+    ...a,
+    attack: { ...a.attack!, clipId: clipId('SideThrustKick') },
+  };
+  startupStep(t, 80, thrust);
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'startup',
+    epoch: {
+      firstActiveAt: 775.5555701255798,
+      destination: { binding: { durationMs: 1577.7777433395386 } },
+    },
+  });
+});
+test('startup activation at resident origin is explicitly unqualified without invented left history', () => {
+  const t = startupReady();
+  startupStep(t, 20, startupActor(0));
+  expect(t.read(actorId('white'))).toMatchObject({
+    kind: 'living',
+    startupQualification: 'unqualified-outgoing-or-basis',
+  });
+});

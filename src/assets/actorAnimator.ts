@@ -20,12 +20,17 @@ import {
   capturePoseEpoch,
   captureRecoveryTimelinePolicy,
   isRecoveryPoseEpoch,
+  isStartupPoseEpoch,
   clipId,
   createDefeatPoseStamp,
   createLivingPoseStamp,
   durationMs,
   poseClipTime,
 } from '../contracts';
+import {
+  captureStartupFrameCapability,
+  type StartupFrameCapability,
+} from './poseFramePreparation';
 import type {
   PoseFrameDriver,
   PreparedPoseFrame,
@@ -68,6 +73,7 @@ export interface StagedActorRig<Node> {
 export interface AnimatorAssets<Node> {
   stageActor?(color: ActorColor): StagedActorRig<Node>;
   readonly recoveryCapability?: RecoveryTimelinePolicy;
+  readonly startupCapability?: StartupFrameCapability;
   readonly poseBindings?: PoseCatalogBindings;
   create(color: ActorColor): ActorRig<Node>;
   clipDuration(clipId: ClipId): DurationMs | undefined;
@@ -358,7 +364,11 @@ function createStampedActorAnimator<Node>(
   assets: AnimatorAssets<Node>,
 ): AnimationPort {
   const run = context.runId;
-  const recovery = capturePoseRunPolicy(context.posePolicy).recovery;
+  const policy = capturePoseRunPolicy(context.posePolicy);
+  const recovery = policy.recovery,
+    startup = policy.startup,
+    composite = !!(recovery || startup);
+  if (startup) captureStartupFrameCapability(assets.startupCapability, startup);
   if (
     recovery &&
     (!assets.recoveryCapability ||
@@ -367,7 +377,7 @@ function createStampedActorAnimator<Node>(
       ) !== JSON.stringify(recovery))
   )
     throw Error('Missing matching recovery assets capability');
-  if (recovery && typeof assets.stageActor !== 'function')
+  if (composite && typeof assets.stageActor !== 'function')
     throw Error('Missing CPU staged actor capability');
   const host = context.renderHost;
   if (run !== host.runId) throw new Error('Mismatched render host run');
@@ -415,7 +425,7 @@ function createStampedActorAnimator<Node>(
         time: DurationMs;
         epoch: PoseEpoch;
       }
-    | { kind: 'recovery'; epoch: PoseEpoch }
+    | { kind: 'recovery' | 'startup'; epoch: PoseEpoch }
     | { kind: 'defeat'; input: StampedDefeatSeek; provenance: string }
   );
   const actors = new Map<ActorId, Entry>();
@@ -486,18 +496,21 @@ function createStampedActorAnimator<Node>(
     active();
     const seekDefeat = rig.seekDefeat;
     active();
-    const frameDriver = recovery ? rig.poseFrame : undefined;
+    const frameDriver = composite ? rig.poseFrame : undefined;
     active();
     if (
-      recovery &&
+      composite &&
       (!frameDriver ||
         typeof frameDriver.prepare !== 'function' ||
         typeof frameDriver.apply !== 'function' ||
-        JSON.stringify(
-          captureRecoveryTimelinePolicy(frameDriver.capability),
-        ) !== JSON.stringify(recovery))
+        (recovery &&
+          JSON.stringify(
+            captureRecoveryTimelinePolicy(frameDriver.capability),
+          ) !== JSON.stringify(recovery)))
     )
-      throw Error('Rig lacks staged recovery capability');
+      throw Error('Rig lacks staged recovery/startup capability');
+    if (startup)
+      captureStartupFrameCapability(frameDriver?.startupCapability, startup);
     const support = rig.defeatPoseSupport;
     active();
     const emission = rig.setEmissiveEnabled;
@@ -527,6 +540,7 @@ function createStampedActorAnimator<Node>(
       version: 1,
       protocol: 'deterministic-pose-v1',
       ...(recovery ? { recovery } : {}),
+      ...(startup ? { startup } : {}),
     }),
     render(frame) {
       if (
@@ -604,18 +618,26 @@ function createStampedActorAnimator<Node>(
           const pose = spatial.get(id)?.pose;
           if (!pose) throw new Error('Missing resident pose stamp');
           if (!actor.defeated) {
-            if (pose.kind === 'recovery') {
-              if (!recovery) throw Error('Recovery capability not admitted');
+            if (pose.kind === 'recovery' || pose.kind === 'startup') {
+              if (pose.kind === 'recovery' ? !recovery : !startup)
+                throw Error('Composite capability not admitted');
               const epoch = capturePoseEpoch(pose.epoch);
               if (
-                !isRecoveryPoseEpoch(epoch) ||
+                (!isRecoveryPoseEpoch(epoch) && !isStartupPoseEpoch(epoch)) ||
                 epoch.runId !== run ||
                 epoch.actorId !== id
               )
                 throw Error('Recovery actor/run mismatch');
+              if (pose.kind !== epoch.kind)
+                throw Error('Composite pose kind mismatch');
+              if (
+                isStartupPoseEpoch(epoch) &&
+                JSON.stringify(epoch.policy) !== JSON.stringify(startup)
+              )
+                throw Error('Startup run policy mismatch');
               captureLiving(epoch.outgoing);
               captureLiving(epoch.destination);
-              plans.push({ id, color, kind: 'recovery', epoch });
+              plans.push({ id, color, kind: pose.kind, epoch });
               continue;
             }
             if (pose.kind !== 'living')
@@ -633,13 +655,21 @@ function createStampedActorAnimator<Node>(
             if (pose.kind !== 'defeat')
               throw new Error('Defeated actor requires defeat pose stamp');
             const stamp = createDefeatPoseStamp(pose);
-            if (isRecoveryPoseEpoch(stamp.entry)) {
+            if (
+              isRecoveryPoseEpoch(stamp.entry) ||
+              isStartupPoseEpoch(stamp.entry)
+            ) {
               if (
-                !recovery ||
+                (isStartupPoseEpoch(stamp.entry) ? !startup : !recovery) ||
                 stamp.entry.runId !== run ||
                 stamp.entry.actorId !== id
               )
                 throw Error('Composite defeat capability/owner mismatch');
+              if (
+                isStartupPoseEpoch(stamp.entry) &&
+                JSON.stringify(stamp.entry.policy) !== JSON.stringify(startup)
+              )
+                throw Error('Startup death run policy mismatch');
               captureLiving(stamp.entry.outgoing);
               captureLiving(stamp.entry.destination);
             } else captureLiving(stamp.entry);
@@ -670,18 +700,29 @@ function createStampedActorAnimator<Node>(
               deathClipTime: durationMs(
                 deathClipSeconds(clock, shownAt) * 1000,
               ),
-              entry: isRecoveryPoseEpoch(stamp.entry)
+              entry: isStartupPoseEpoch(stamp.entry)
                 ? Object.freeze({
-                    kind: 'recovery',
+                    kind: 'startup',
                     epoch: stamp.entry,
                     at: stamp.entryAt,
                     sampleSide: 'left',
                   })
-                : Object.freeze({
-                    binding: stamp.entry.binding,
-                    clipTime: poseClipTime(stamp.entry, stamp.entryAt, 'left'),
-                    sampleSide: 'left',
-                  }),
+                : isRecoveryPoseEpoch(stamp.entry)
+                  ? Object.freeze({
+                      kind: 'recovery',
+                      epoch: stamp.entry,
+                      at: stamp.entryAt,
+                      sampleSide: 'left',
+                    })
+                  : Object.freeze({
+                      binding: stamp.entry.binding,
+                      clipTime: poseClipTime(
+                        stamp.entry,
+                        stamp.entryAt,
+                        'left',
+                      ),
+                      sampleSide: 'left',
+                    }),
             });
             const provenance = JSON.stringify({ run, id, stamp, clock });
             if (
@@ -695,7 +736,7 @@ function createStampedActorAnimator<Node>(
         const staged = new Map<ActorId, Entry>();
         const prepared = new Map<ActorId, PreparedPoseFrame>();
         const handles = new Map<ActorId, StagedActorRig<Node>>();
-        if (recovery) {
+        if (composite) {
           // Acquire without mounting, then prepare EVERY actor before retirement,
           // mounting, emissions or pose writes. Preparation owns private CPU data.
           for (const plan of plans)
@@ -711,7 +752,26 @@ function createStampedActorAnimator<Node>(
             const frameDriver =
               actors.get(plan.id)?.frameDriver ??
               handles.get(plan.id)?.poseFrame;
-            if (!frameDriver) throw Error('Missing staged recovery driver');
+            if (
+              !frameDriver ||
+              typeof frameDriver.prepare !== 'function' ||
+              typeof frameDriver.apply !== 'function'
+            )
+              throw Error(
+                'Missing staged recovery/startup preparation methods',
+              );
+            if (
+              recovery &&
+              JSON.stringify(
+                captureRecoveryTimelinePolicy(frameDriver.capability),
+              ) !== JSON.stringify(recovery)
+            )
+              throw Error('Invalid staged recovery capability');
+            if (startup)
+              captureStartupFrameCapability(
+                frameDriver.startupCapability,
+                startup,
+              );
             const request: PoseFrameRequest =
               plan.kind === 'defeat'
                 ? {
@@ -730,6 +790,24 @@ function createStampedActorAnimator<Node>(
                     at: now,
                     side: 'right',
                   };
+            const requestEpoch =
+              request.kind === 'living'
+                ? request.epoch
+                : 'kind' in request.input.entry &&
+                    request.input.entry.kind === 'startup'
+                  ? request.input.entry.epoch
+                  : undefined;
+            if (requestEpoch && isStartupPoseEpoch(requestEpoch)) {
+              if (
+                !startup ||
+                JSON.stringify(requestEpoch.policy) !== JSON.stringify(startup)
+              )
+                throw Error('Conflicting startup request policy');
+              captureStartupFrameCapability(
+                frameDriver.startupCapability,
+                requestEpoch.policy,
+              );
+            }
             prepared.set(plan.id, frameDriver.prepare(request));
             active();
           }
@@ -805,7 +883,7 @@ function createStampedActorAnimator<Node>(
           const entry = actors.get(plan.id);
           if (!entry) throw new Error('Resident rig unavailable');
           if (plan.kind !== 'defeat') {
-            if (recovery) {
+            if (composite) {
               const token = prepared.get(plan.id);
               if (!token || !entry.frameDriver)
                 throw Error('Missing prepared living pose');
@@ -817,7 +895,7 @@ function createStampedActorAnimator<Node>(
             entry.emission(true);
             active();
           } else {
-            if (recovery) {
+            if (composite) {
               const token = prepared.get(plan.id);
               if (!token || !entry.frameDriver)
                 throw Error('Missing prepared defeat');

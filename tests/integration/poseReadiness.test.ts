@@ -9,7 +9,7 @@ import { createGame, type GameOptions } from '../../src/app/createGame';
 import { createFixturePorts } from '../core/fixtures/ports';
 import { fixtureMotion } from '../core/fixtures/catalog';
 
-function harness(omit?: 'catalog' | 'animation' | 'spatial') {
+function harness(omit?: 'catalog' | 'animation' | 'spatial', startup = false) {
   const fixture = createFixturePorts();
   const order: string[] = [];
   const bindings: PoseCatalogBindings = {
@@ -86,7 +86,21 @@ function harness(omit?: 'catalog' | 'animation' | 'spatial') {
       };
     },
   };
-  const policy: PoseRunPolicy = { version: 1, mode: 'deterministic-pose-v1' };
+  const policy: PoseRunPolicy = {
+    version: 1,
+    mode: 'deterministic-pose-v1',
+    ...(startup
+      ? {
+          attackStartStance: 'selected-side-kicks-v1' as const,
+          startup: {
+            version: 1 as const,
+            protocol: 'side-kick-startup-matrix-v1' as const,
+            durationMs: durationMs(100),
+            fixedLiftSign: 1 as const,
+          },
+        }
+      : {}),
+  };
   const options: GameOptions & { posePolicy: PoseRunPolicy } = {
     sessionId: 'pose-readiness',
     seed: 1,
@@ -219,6 +233,18 @@ test('synchronous stop during binding cannot publish ready', async () => {
   h.release();
   await loading;
   expect(h.game.read()).toBeNull();
+  expect(h.fixture.outputs.some((o) => o.snapshot.phase === 'ready')).toBe(
+    false,
+  );
+  h.game.dispose();
+});
+
+test('startup readiness rejects deterministic-only display before binding or ready', async () => {
+  const h = harness(undefined, true);
+  const loading = h.game.start();
+  h.release();
+  await expect(loading).rejects.toThrow(/startup/i);
+  expect(h.order).not.toContain('bind');
   expect(h.fixture.outputs.some((o) => o.snapshot.phase === 'ready')).toBe(
     false,
   );

@@ -18,6 +18,7 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import {
   type ActorColor,
   isRecoveryPoseEpoch,
+  isStartupPoseEpoch,
   resolvePoseEpoch,
   type ClipId,
   clipId,
@@ -34,6 +35,8 @@ import { buildPoseBindings, type PoseBindingSource } from './poseBindings';
 import {
   applyPoseToLayout,
   capturePose,
+  composePoseMatrices,
+  checkedMatrixProduct,
   type LocalPose,
 } from './poseRecipeMath';
 import {
@@ -41,6 +44,7 @@ import {
   samplePoseEpoch,
   captureCanonicalSnapshot,
   validateCanonicalQuery,
+  captureBasisLayer,
 } from './recoveryDiagnostic';
 import {
   type ClipRootPolicy,
@@ -61,6 +65,7 @@ import {
   type PoseFrameResult,
   captureDefeatSeek,
   RECOVERY_FRAME_CAPABILITY,
+  STARTUP_FRAME_CAPABILITY_V2,
 } from './poseFramePreparation';
 
 // Bounded immutable numeric plans only. No actor, scene, GPU or skeleton resources.
@@ -79,6 +84,7 @@ export interface ThreeAssetPack
     | 'clipDuration'
     | 'poseBindings'
     | 'recoveryCapability'
+    | 'startupCapability'
     | 'stageActor'
   > {
   clipNames(): readonly string[];
@@ -430,6 +436,24 @@ export async function prepareThreeAssetPack(
       throw new Error('Invalid verified palette');
     return palette;
   };
+  // Private validation closures expose no mutation API and own no extra rig.
+  const validateRigFrame = new WeakMap<
+    Object3D,
+    (result: PoseFrameResult) => void
+  >();
+  const localOuterMatrix = (target: Object3D) =>
+    target.matrixAutoUpdate
+      ? new Matrix4().compose(target.position, target.quaternion, target.scale)
+      : target.matrix.clone();
+  const validateOuterPose = (result: PoseFrameResult, outer: Matrix4) => {
+    const prefix = checkedMatrixProduct(
+      result.basisLayer
+        ? captureBasisLayer(result.basisLayer)
+        : new Matrix4().toArray(),
+      outer.toArray(),
+    );
+    composePoseMatrices(result.pose, prefix);
+  };
   const evaluateFrame = (
     color: ActorColor,
     request: PoseFrameRequest,
@@ -437,6 +461,7 @@ export async function prepareThreeAssetPack(
     if (
       request.kind === 'living' &&
       !isRecoveryPoseEpoch(request.epoch) &&
+      !isStartupPoseEpoch(request.epoch) &&
       !disposed
     ) {
       // Reject outside the eviction catch: a nested rejection must not dispose
@@ -462,7 +487,10 @@ export async function prepareThreeAssetPack(
           request.side,
           diagnostic.sampleCanonical,
         );
-        return { pose: sample.pose };
+        return {
+          pose: sample.pose,
+          ...(sample.basisLayer ? { basisLayer: sample.basisLayer } : {}),
+        };
       } catch (error) {
         if (canonicalEvaluator === entry) canonicalEvaluator = undefined;
         entry.retiring = true;
@@ -486,7 +514,10 @@ export async function prepareThreeAssetPack(
           request.side,
           diagnostic.sampleCanonical,
         );
-        return { pose: sample.pose };
+        return {
+          pose: sample.pose,
+          ...(sample.basisLayer ? { basisLayer: sample.basisLayer } : {}),
+        };
       }
       evaluator.seekDefeat?.(request.input);
       const pose: LocalPose = (() => {
@@ -531,7 +562,12 @@ export async function prepareThreeAssetPack(
         return result;
       })();
       const support = evaluator.defeatPoseSupport?.();
-      return { pose, ...(support ? { support } : {}) };
+      const basisLayer = evaluator.recoveryDiagnostic?.basisLayer?.();
+      return {
+        pose,
+        ...(basisLayer ? { basisLayer } : {}),
+        ...(support ? { support } : {}),
+      };
     } finally {
       evaluator.dispose();
     }
@@ -648,8 +684,44 @@ export async function prepareThreeAssetPack(
           scale: part.scale.clone(),
         });
     });
+    // The outer container is outside the source hierarchy. Keep its complete
+    // baseline matrix and ownership, and left-compose the separate yaw layer.
+    let basisLayer: readonly number[] | undefined;
+    let outerBaseline: { matrix: Matrix4; auto: boolean } | undefined;
+    const validateFrame = (result: PoseFrameResult) =>
+      validateOuterPose(
+        result,
+        outerBaseline?.matrix ?? localOuterMatrix(node),
+      );
+    validateRigFrame.set(node, validateFrame);
+    const applyBasisLayer = (input?: readonly number[]) => {
+      const layer = input ? captureBasisLayer(input) : undefined;
+      if (!layer) {
+        if (outerBaseline) {
+          node.matrix.copy(outerBaseline.matrix);
+          node.matrixAutoUpdate = outerBaseline.auto;
+          node.matrixWorldNeedsUpdate = true;
+          outerBaseline = undefined;
+        }
+        basisLayer = undefined;
+        return;
+      }
+      const base = outerBaseline?.matrix ?? localOuterMatrix(node);
+      const product = checkedMatrixProduct(layer, base.toArray());
+      if (!outerBaseline) {
+        outerBaseline = {
+          matrix: base.clone(),
+          auto: node.matrixAutoUpdate,
+        };
+      }
+      node.matrixAutoUpdate = false;
+      node.matrix.fromArray(product);
+      node.matrixWorldNeedsUpdate = true;
+      basisLayer = layer;
+    };
     let qualifiedUsed = false;
     let stampedIdentity: string | undefined;
+    let stampedEntryBasisLayer: readonly number[] | undefined;
     const resetSource = (switchClip: boolean) => {
       mixer.stopAllAction();
       for (const pose of baseline) {
@@ -925,6 +997,7 @@ export async function prepareThreeAssetPack(
     };
     const evaluate = driver.seek;
     const sampleCanonical = (binding: PoseClipBinding, time: DurationMs) => {
+      applyBasisLayer();
       resetSource(true);
       const clip = animations.get(binding.clipId);
       if (!clip) throw new Error('Missing prepared source clip');
@@ -989,8 +1062,16 @@ export async function prepareThreeAssetPack(
     const frameDriver = privateTransformOnly
       ? undefined
       : createPoseFrameDriver(
-          (request) => evaluateFrame(color, request),
+          (request) => {
+            const result = evaluateFrame(color, request);
+            validateFrame(result);
+            return result;
+          },
           (result) => {
+            validateFrame(result);
+            const layer = result.basisLayer
+              ? captureBasisLayer(result.basisLayer)
+              : undefined;
             const layout = diagnosticLayout();
             applyPoseToLayout(result.pose, layout, (value, index) => {
               const part = layout[index]?.part;
@@ -1000,12 +1081,14 @@ export async function prepareThreeAssetPack(
               part.scale.fromArray(value.s);
             });
             beginQualified();
+            applyBasisLayer(layer);
             observation = result.support;
             node.updateMatrixWorld(true);
           },
           () => {
             if (actorDisposed) throw Error('Actor disposed');
           },
+          STARTUP_FRAME_CAPABILITY_V2,
         );
     references++;
     return {
@@ -1026,17 +1109,25 @@ export async function prepareThreeAssetPack(
             `source-hierarchy:${sourceKey}`,
           );
         },
-        apply(input: LocalPose) {
+        basisLayer: () => basisLayer,
+        apply(input: LocalPose, inputLayer?: readonly number[]) {
+          const layer = inputLayer ? captureBasisLayer(inputLayer) : undefined;
           if (actorDisposed) throw new Error('Actor disposed');
-          const layout = diagnosticLayout();
-          // Prevalidate actual raw local/world matrices before any local write.
-          applyPoseToLayout(input, layout, (value, index) => {
+          const layout = diagnosticLayout(),
+            pose = capturePose(input);
+          validateFrame({
+            pose,
+            ...(layer ? { basisLayer: layer } : {}),
+          });
+          // Validate and write the same detached caller snapshot.
+          applyPoseToLayout(pose, layout, (value, index) => {
             const entry = layout[index];
             if (!entry) throw new Error('Missing validated diagnostic entry');
             entry.part.position.fromArray(value.t);
             entry.part.quaternion.fromArray(value.q);
             entry.part.scale.fromArray(value.s);
           });
+          applyBasisLayer(layer);
           beginQualified();
           node.updateWorldMatrix(true, true);
         },
@@ -1126,6 +1217,10 @@ export async function prepareThreeAssetPack(
                 );
               },
             );
+            validateFrame({
+              pose: sample.pose,
+              ...(sample.basisLayer ? { basisLayer: sample.basisLayer } : {}),
+            });
             const layout = diagnosticLayout();
             applyPoseToLayout(sample.pose, layout, (value, index) => {
               const part = layout[index]?.part;
@@ -1134,6 +1229,7 @@ export async function prepareThreeAssetPack(
               part.quaternion.fromArray(value.q);
               part.scale.fromArray(value.s);
             });
+            applyBasisLayer(sample.basisLayer);
             node.updateMatrixWorld(true);
           } else if (binding && canonical)
             sampleCanonical(binding, canonical.clipTime);
@@ -1152,8 +1248,12 @@ export async function prepareThreeAssetPack(
             minY,
             pelvis: actorRotation(pelvis),
           });
+          stampedEntryBasisLayer = basisLayer;
           stampedIdentity = identity;
         }
+        // A canonical historical seek may have cleared the visible layer.
+        // Restore the retained entry layer, never the current rig state.
+        applyBasisLayer(stampedEntryBasisLayer);
         resetSource(
           current !== input.deathClipId || activation !== input.defeatStartedAt,
         );
@@ -1174,6 +1274,9 @@ export async function prepareThreeAssetPack(
         frameDriver?.dispose();
         observation = undefined;
         capturedEntries.clear();
+        stampedEntryBasisLayer = undefined;
+        basisLayer = undefined;
+        outerBaseline = undefined;
         baseline.length = 0;
         defeatEntry = [];
         defeatBase = [];
@@ -1197,6 +1300,7 @@ export async function prepareThreeAssetPack(
   };
   return {
     recoveryCapability: RECOVERY_FRAME_CAPABILITY,
+    startupCapability: STARTUP_FRAME_CAPABILITY_V2,
     stageActor(color) {
       if (disposed || !supportPlan) throw Error('Asset pack disposed');
       references++;
@@ -1205,17 +1309,26 @@ export async function prepareThreeAssetPack(
         rig: ActorRig<Object3D> | undefined,
         support: PoseFrameResult['support'];
       const driver = createPoseFrameDriver(
-        (request) => evaluateFrame(color, request),
+        (request) => {
+          const result = evaluateFrame(color, request);
+          if (rig) {
+            const validate = validateRigFrame.get(rig.node);
+            if (!validate) throw Error('Missing staged outer validator');
+            validate(result);
+          } else validateOuterPose(result, localOuterMatrix(template));
+          return result;
+        },
         (result) => {
           if (!rig?.recoveryDiagnostic)
             throw Error('Staged actor not materialized');
-          rig.recoveryDiagnostic.apply(result.pose);
+          rig.recoveryDiagnostic.apply(result.pose, result.basisLayer);
           rig.node.updateMatrixWorld(true);
           support = result.support;
         },
         () => {
           if (closed) throw Error('CPU stage disposed');
         },
+        STARTUP_FRAME_CAPABILITY_V2,
       );
       const releaseStage = () => {
         references--;

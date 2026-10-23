@@ -1,3 +1,4 @@
+import { STARTUP_FRAME_CAPABILITY } from '../../src/assets/poseFramePreparation';
 function required<T>(value: T | undefined): T {
   if (value === undefined) throw Error('Missing test value');
   return value;
@@ -8,11 +9,14 @@ import { describe, expect, test } from 'vitest';
 import {
   applyPoseToLayout,
   blendPose,
+  blendStartupPoseV2,
+  STARTUP_V2_MATH_DOMAIN,
   capturePose,
   composePoseMatrices,
 } from '../../src/assets/poseRecipeMath';
 import {
   captureCanonicalQuery,
+  composeBasisLayer,
   captureCanonicalSnapshot,
   createRecoveryDiagnostic,
   sampleRecoveryDiagnostic,
@@ -940,4 +944,719 @@ test('synthetic stage2 R2 writer failure consumes its receipt without claiming r
   expect(() => d.apply(t)).toThrow('external writer');
   expect(() => d.apply(t)).toThrow('consumed');
   expect(writes).toBe(1);
+});
+
+import {
+  presentationTimeMs,
+  createStartupPoseEpoch,
+  STARTUP_SOURCES,
+} from '../../src/contracts';
+const startupFixture = (start = 1000, duration = 100) =>
+  createStartupPoseEpoch({
+    runId: runId('startup-run'),
+    actorId: actorId('white'),
+    outgoing: createLivingPoseStamp({ ...stamp(), startedAt: gameTimeMs(0) }),
+    destination: createLivingPoseStamp({
+      version: 1,
+      binding: STARTUP_SOURCES.SideKick.binding,
+      mode: 'attack',
+      startedAt: gameTimeMs(start),
+      playback: 'clamp',
+      activationId: attackActivationId('kick'),
+    }),
+    basis: {
+      authority: 'activation-stance-v1',
+      oldYaw: 0,
+      admittedYaw: Math.PI / 2,
+    },
+    policy: {
+      version: 1,
+      protocol: 'side-kick-startup-matrix-v1',
+      durationMs: durationMs(duration),
+      fixedLiftSign: 1,
+    },
+  });
+const startupSourceFixture = (q: ReturnType<typeof captureCanonicalQuery>) =>
+  captureCanonicalSnapshot(
+    q,
+    q.stamp.mode === 'attack' ? 'grounded-posture-y' : 'full-translation',
+    pose(q.clipTime),
+    'startup-fixture',
+  );
+describe('startup shared matrix consumer', () => {
+  test('exact start retains left Idle and emits inverse physical stance layer', () => {
+    const e = startupFixture(),
+      s = samplePoseEpoch(e, e.startMs, 'right', startupSourceFixture);
+    expect(s.pose).toEqual(pose(50));
+    expect(s.basisLayer).toEqual(
+      new Matrix4().makeRotationY(-Math.PI / 2).toArray(),
+    );
+    expect(s.kind).toBe('synthetic-startup');
+  });
+  test('exact fractional end preserves raw incoming arrays and identity layer', () => {
+    const e = startupFixture(1000, 0.1),
+      s = samplePoseEpoch(e, e.endMs, 'left', startupSourceFixture);
+    expect(s.pose).toEqual(pose(e.endMs - e.startMs));
+    expect(s.basisLayer).toEqual(new Matrix4().toArray());
+  });
+  test('interior carries independent layer and absolute unretimed source clock', () => {
+    const e = startupFixture(),
+      s = samplePoseEpoch(e, gameTimeMs(1025), 'right', startupSourceFixture);
+    expect(s.destinationQuery?.clipTime).toBe(25);
+    expect(s.pose).toEqual(blendPose(pose(50), pose(25), 0.25, 1));
+    expect(s.basisLayer).toEqual(
+      new Matrix4().makeRotationY((-Math.PI / 2) * 0.75).toArray(),
+    );
+  });
+  test('reverse repeat has identical detached frozen values', () => {
+    const e = startupFixture(),
+      first = samplePoseEpoch(
+        e,
+        gameTimeMs(1050),
+        'right',
+        startupSourceFixture,
+      );
+    samplePoseEpoch(e, e.endMs, 'left', startupSourceFixture);
+    const replay = samplePoseEpoch(
+      e,
+      gameTimeMs(1050),
+      'right',
+      startupSourceFixture,
+    );
+    expect(replay).toEqual(first);
+    expect(Object.isFrozen(replay.basisLayer)).toBe(true);
+  });
+  test.each([1000, 1100])('topology checked even at endpoint %s', (at) => {
+    const e = startupFixture();
+    expect(() =>
+      samplePoseEpoch(e, gameTimeMs(at), 'right', (q) =>
+        captureCanonicalSnapshot(
+          q,
+          q.stamp.mode === 'attack' ? 'grounded-posture-y' : 'full-translation',
+          q.stamp.mode === 'attack' ? pose().slice(0, 1) : pose(),
+          'same',
+        ),
+      ),
+    ).toThrow(/topology/i);
+  });
+  test('source policy mismatch fails rather than evaluating a substitute', () => {
+    expect(() =>
+      samplePoseEpoch(startupFixture(), gameTimeMs(1050), 'right', (q) =>
+        captureCanonicalSnapshot(q, 'full-translation', pose(), 'fixture'),
+      ),
+    ).toThrow();
+  });
+  test('interval intersecting startup is explicitly unresolved', () => {
+    const e = startupFixture();
+    expect([
+      ...poseEpochIntervals(e, gameTimeMs(1001), gameTimeMs(1099)),
+    ]).toEqual([
+      {
+        kind: 'unsupported',
+        reason: 'startup-interval',
+        resolution: 'unresolved',
+        identity: e.identity,
+        from: 1001,
+        to: 1099,
+      },
+    ]);
+  });
+  test('interval pieces retain exact pre and post canonical selection', () => {
+    const e = startupFixture(),
+      spans = [...poseEpochIntervals(e, gameTimeMs(990), gameTimeMs(1110))];
+    expect(
+      spans.some(
+        (s) => s.kind === 'unsupported' && s.reason === 'startup-interval',
+      ),
+    ).toBe(true);
+    expect(spans[0]?.kind).toBe('canonical');
+    expect(spans.at(-1)?.kind).toBe('canonical');
+  });
+});
+
+describe('startup prepared result authority', () => {
+  test('startup owner mismatch rejects before evaluation', () => {
+    let calls = 0;
+    const d = createPoseFrameDriver(
+      () => {
+        calls++;
+        return { pose: pose() };
+      },
+      () => {},
+      () => {},
+    );
+    expect(() =>
+      d.prepare({
+        ...stagedRequest(),
+        kind: 'living',
+        side: 'right',
+        epoch: startupFixture(),
+        at: gameTimeMs(1050),
+      }),
+    ).toThrow(/owner/i);
+    expect(calls).toBe(0);
+  });
+  test('prepared matrix layer is detached frozen and delivered atomically', () => {
+    const layer = new Matrix4().makeRotationY(0.3).toArray();
+    let result: any;
+    const d = createPoseFrameDriver(
+      () => ({ pose: pose(), basisLayer: layer }),
+      (r) => {
+        result = r;
+      },
+      () => {},
+    );
+    const t = d.prepare(stagedRequest());
+    layer[0] = 99;
+    d.apply(t);
+    expect(result.basisLayer).toEqual(
+      new Matrix4().makeRotationY(0.3).toArray(),
+    );
+    expect(Object.isFrozen(result.basisLayer)).toBe(true);
+  });
+  test.each(['sparse', 'nonfinite', 'perspective', 'scale'])(
+    'rejects unsupported %s layer before writes',
+    (kind) => {
+      const layer = new Matrix4().toArray();
+      if (kind === 'sparse') Reflect.deleteProperty(layer, '0');
+      if (kind === 'nonfinite') layer[0] = Infinity;
+      if (kind === 'perspective') layer[3] = 0.2;
+      if (kind === 'scale') layer[5] = 2;
+      let writes = 0;
+      const d = createPoseFrameDriver(
+        () => ({ pose: pose(), basisLayer: layer }),
+        () => {
+          writes++;
+        },
+        () => {},
+      );
+      expect(() => d.prepare(stagedRequest())).toThrow(/layer/i);
+      expect(writes).toBe(0);
+    },
+  );
+  test('startup strict-left defeat input is preserved', () => {
+    const e = startupFixture();
+    let seen: any;
+    const d = createPoseFrameDriver(
+      (r) => {
+        seen = r;
+        return { pose: pose() };
+      },
+      () => {},
+      () => {},
+      STARTUP_FRAME_CAPABILITY,
+    );
+    d.prepare({
+      runId: e.runId,
+      actorId: e.actorId,
+      revision: 1,
+      kind: 'defeat',
+      input: {
+        runId: e.runId,
+        actorId: e.actorId,
+        defeatStartedAt: 1000 as any,
+        deathClipId: clipId('DefeatKick'),
+        deathClipTime: durationMs(10),
+        entry: {
+          kind: 'startup',
+          epoch: e,
+          at: gameTimeMs(1050),
+          sampleSide: 'left',
+        },
+      },
+    });
+    expect(seen.input.entry.epoch).toEqual(e);
+  });
+});
+
+test('startup driver rejects missing explicit capability before evaluating', () => {
+  const e = startupFixture();
+  let calls = 0;
+  const d = createPoseFrameDriver(
+    () => {
+      calls++;
+      return { pose: pose() };
+    },
+    () => {},
+    () => {},
+  );
+  expect(() =>
+    d.prepare({
+      runId: e.runId,
+      actorId: e.actorId,
+      revision: 1,
+      kind: 'living',
+      epoch: e,
+      at: gameTimeMs(1050),
+      side: 'right',
+    }),
+  ).toThrow(/capability/i);
+  expect(calls).toBe(0);
+});
+test('startup defeat entry discriminator cannot relabel its epoch', () => {
+  const e = startupFixture();
+  let calls = 0;
+  const d = createPoseFrameDriver(
+    () => {
+      calls++;
+      return { pose: pose() };
+    },
+    () => {},
+    () => {},
+  );
+  expect(() =>
+    d.prepare({
+      runId: e.runId,
+      actorId: e.actorId,
+      revision: 1,
+      kind: 'defeat',
+      input: {
+        runId: e.runId,
+        actorId: e.actorId,
+        defeatStartedAt: presentationTimeMs(1000),
+        deathClipId: clipId('DefeatKick'),
+        deathClipTime: durationMs(10),
+        entry: {
+          kind: 'recovery',
+          epoch: e,
+          at: gameTimeMs(1050),
+          sampleSide: 'left',
+        } as never,
+      },
+    }),
+  ).toThrow(/kind/i);
+  expect(calls).toBe(0);
+});
+
+test.each([1000, 1100])(
+  'startup raw nonunit quaternion and unequal positive scales are exact at endpoint %s',
+  (at) => {
+    const e = startupFixture(),
+      raw = pose().map((n) => ({
+        ...n,
+        q: [0.1, 0.2, 0.05, 0.96],
+        s: [1.2, 1.5, 2],
+      }));
+    const sample = samplePoseEpoch(e, gameTimeMs(at), 'left', (q) =>
+      captureCanonicalSnapshot(
+        q,
+        q.stamp.mode === 'attack' ? 'grounded-posture-y' : 'full-translation',
+        raw,
+        'same',
+      ),
+    );
+    expect(sample.pose).toEqual(raw);
+    expect(sample.pose[0]?.q).toEqual([0.1, 0.2, 0.05, 0.96]);
+  },
+);
+test('startup head adapter matrix composition preserves raw affine shear without decomposition', async () => {
+  const { composeBasisLayer } = await import(
+    '../../src/assets/recoveryDiagnostic'
+  );
+  const local = new Matrix4().compose(
+    new Vector3(0.1, 0.2, 0.3),
+    new Quaternion(0.1, 0.2, 0.05, 0.96),
+    new Vector3(2, 3, 4),
+  );
+  const layer = new Matrix4().makeRotationY(0.4),
+    expected = layer.clone().multiply(local);
+  expect(composeBasisLayer(local.toArray([]), layer.toArray([]))).toEqual(
+    expected.toArray([]),
+  );
+  expect(composeBasisLayer(local.toArray([]))).toEqual(local.toArray([]));
+});
+
+describe('startup v2 isolated math', () => {
+  const make = (q: number[], s = [1, 1, 1], t = [0, 0, 0]) => [
+    { id: 'root', parent: null, t, q, s },
+  ];
+  const pair = (dot: number) =>
+    [make([0, 0, 0, 1]), make([Math.sqrt(1 - dot * dot), 0, 0, dot])] as const;
+  test('fixed domain identity', () => {
+    expect(STARTUP_V2_MATH_DOMAIN).toBe('fixed-positive-lift-midpoint-half-v1');
+  });
+  test('exact boundary raw radius and hand matrix', () => {
+    const a = make([0, 0, 0, 1], [1, 2, 3]);
+    const b = make([Math.sqrt(3), 0, 0, -1], [3, 4, 5]);
+    const out = blendStartupPoseV2(a, b, 0.5);
+    expect(out[0]!.q[0]).toBeCloseTo((3 * Math.sqrt(3)) / 4, 14);
+    expect(out[0]!.q[3]).toBeCloseTo(0.75, 14);
+    expect(Math.hypot(...out[0]!.q)).toBeCloseTo(1.5, 14);
+    const matrix = composePoseMatrices(out)[0]!.matrix;
+    const expected = [
+      2,
+      0,
+      0,
+      0,
+      0,
+      -57 / 8,
+      (27 * Math.sqrt(3)) / 8,
+      0,
+      0,
+      (-9 * Math.sqrt(3)) / 2,
+      -19 / 2,
+      0,
+      0,
+      0,
+      0,
+      1,
+    ];
+    matrix.forEach((x, i) => {
+      expect(x).toBeCloseTo(expected[i]!, 13);
+    });
+    expect(a[0]!.q).toEqual([0, 0, 0, 1]);
+    expect(b[0]!.q).toEqual([Math.sqrt(3), 0, 0, -1]);
+  });
+  test.each([-0.5 + 1e-6, -0.25, 0, 1])(
+    'admitted dot %s across weights',
+    (dot) => {
+      const [a, b] = pair(dot);
+      for (const weight of [0, 0.25, 0.5, 0.75, 1]) {
+        const out = blendStartupPoseV2(a, b, weight);
+        expect(Math.hypot(...out[0]!.q)).toBeCloseTo(1, 14);
+        expect(
+          new Matrix4()
+            .fromArray(composePoseMatrices(out)[0]!.matrix)
+            .determinant(),
+        ).toBeGreaterThan(0);
+        expect(blendStartupPoseV2(a, b, weight)).toEqual(out);
+      }
+    },
+  );
+  test.each([-0.5 - 1e-6, -0.999999, -1])(
+    'rejects outside dot %s even at endpoints',
+    (dot) => {
+      const [a, b] = pair(dot);
+      for (const weight of [0, 0.5, 1])
+        expect(() => blendStartupPoseV2(a, b, weight)).toThrow(
+          'Unsupported fixed-lift crossing/antipodal domain',
+        );
+    },
+  );
+  test('distinct raw signed-zero endpoints', () => {
+    const a = make([-0, 0, -0, 1], [1, 2, 3], [-0, 1, 0]);
+    const b = make([1, 0, 0, -0], [3, 2, 1], [2, -0, 3]);
+    expect(blendStartupPoseV2(a, b, 0)).toEqual(a);
+    expect(blendStartupPoseV2(a, b, 1)).toEqual(b);
+    expect(Object.is(blendStartupPoseV2(a, b, 0)[0]!.q[0], -0)).toBe(true);
+    expect(Object.is(blendStartupPoseV2(a, b, 1)[0]!.q[3], -0)).toBe(true);
+  });
+  test('legacy isolation and common-domain agreement', () => {
+    const [a, b] = pair(-0.25);
+    expect(() => blendPose(a, b, 0.5, 1)).toThrow(/fixed-lift/);
+    expect(() => blendStartupPoseV2(a, b, 0.5)).not.toThrow();
+    const [c, d] = pair(0.25);
+    expect(blendStartupPoseV2(c, d, 0.37)).toEqual(blendPose(c, d, 0.37, 1));
+  });
+  test.each([0, Math.SQRT1_2])('rejects raw radius %s', (radius) => {
+    expect(() =>
+      blendStartupPoseV2(make([0, 0, 0, radius]), make([0, 0, 0, 1]), 0.5),
+    ).toThrow(
+      radius === 0
+        ? /predicate=quaternion-norm-positive/
+        : 'Unsupported synthetic radius domain',
+    );
+  });
+  test('finite positive scale and topology validation', () => {
+    const a = make([0, 0, 0, 1]);
+    for (const q of [
+      [NaN, 0, 0, 1],
+      [0, 0, 0, Infinity],
+    ])
+      expect(() => blendStartupPoseV2(a, make(q), 0.5)).toThrow(
+        'Unsupported dense own finite vector domain',
+      );
+    expect(() =>
+      blendStartupPoseV2(a, make([0, 0, 0, 1], [1, 0, 1]), 0.5),
+    ).toThrow(/predicate=scale-positive/);
+    expect(() =>
+      blendStartupPoseV2(a, [{ ...a[0]!, id: 'other' }], 0.5),
+    ).toThrow('Unsupported blend domain');
+  });
+});
+
+import { STARTUP_FRAME_CAPABILITY_V2 } from '../../src/assets/poseFramePreparation';
+const wireV2Epoch = () =>
+  createStartupPoseEpoch({
+    ...startupFixture(),
+    policy: {
+      version: 2,
+      protocol: 'side-kick-startup-matrix-v2',
+      durationMs: durationMs(100),
+      fixedLiftSign: 1,
+      domain: 'fixed-positive-lift-midpoint-half-v1',
+    },
+  });
+const wireNegativeSource =
+  (dot: number) => (query: ReturnType<typeof captureCanonicalQuery>) =>
+    captureCanonicalSnapshot(
+      query,
+      query.stamp.mode === 'attack' ? 'grounded-posture-y' : 'full-translation',
+      pose().map((n) => ({
+        ...n,
+        q:
+          query.stamp.mode === 'attack'
+            ? [Math.sqrt(1 - dot * dot), 0, 0, dot]
+            : [0, 0, 0, 1],
+      })),
+      'wire-v2',
+    );
+test('startup v2 wire shared sampler admits negative pair only for v2', () => {
+  const e = wireV2Epoch(),
+    evaluate = wireNegativeSource(-0.25);
+  expect(() =>
+    samplePoseEpoch(startupFixture(), gameTimeMs(1050), 'right', evaluate),
+  ).toThrow('Unsupported fixed-lift crossing/antipodal domain');
+  const result = samplePoseEpoch(e, gameTimeMs(1050), 'right', evaluate);
+  expect(result.kind).toBe('synthetic-startup');
+  expect(result.pose.every((n) => n.q.every(Number.isFinite))).toBe(true);
+  expect(samplePoseEpoch(e, gameTimeMs(1050), 'right', evaluate)).toEqual(
+    result,
+  );
+});
+test('startup v2 wire validates pair domain even at exact endpoints', () => {
+  const e = wireV2Epoch();
+  for (const at of [e.startMs, e.endMs])
+    expect(() =>
+      samplePoseEpoch(
+        e,
+        at,
+        at === e.startMs ? 'right' : 'left',
+        wireNegativeSource(-0.75),
+      ),
+    ).toThrow('Unsupported fixed-lift crossing/antipodal domain');
+});
+test('startup v2 wire exact source endpoints and layer reset', () => {
+  const e = wireV2Epoch(),
+    evaluate = wireNegativeSource(-0.25);
+  const start = samplePoseEpoch(e, e.startMs, 'right', evaluate),
+    end = samplePoseEpoch(e, e.endMs, 'left', evaluate);
+  expect(start.pose).toEqual(
+    evaluate(captureCanonicalQuery(e.outgoing, e.startMs, 'left')).pose,
+  );
+  expect(end.pose).toEqual(
+    evaluate(captureCanonicalQuery(e.destination, e.endMs, 'left')).pose,
+  );
+  expect(end.basisLayer).toEqual(new Matrix4().toArray());
+});
+test.each([false, true])(
+  'startup v2 wire frame admission before evaluator dual=%s',
+  (dual) => {
+    const epoch = wireV2Epoch();
+    let calls = 0;
+    const d = createPoseFrameDriver(
+      () => {
+        calls++;
+        return { pose: pose() };
+      },
+      () => {},
+      () => {},
+      dual ? STARTUP_FRAME_CAPABILITY_V2 : STARTUP_FRAME_CAPABILITY,
+    );
+    const request = {
+      kind: 'living' as const,
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      epoch,
+      at: gameTimeMs(1050),
+      side: 'right' as const,
+    };
+    if (dual) {
+      const token = d.prepare(request);
+      d.apply(token);
+      expect(calls).toBe(1);
+    } else {
+      expect(() => d.prepare(request)).toThrow(
+        'Missing matching startup frame capability',
+      );
+      expect(calls).toBe(0);
+    }
+    d.dispose();
+  },
+);
+
+test.each([false, true])(
+  'startup v2 wire frozen death checks actual entry policy dual=%s',
+  (dual) => {
+    const epoch = wireV2Epoch();
+    let calls = 0;
+    const d = createPoseFrameDriver(
+      (request) => {
+        calls++;
+        expect(request.kind).toBe('defeat');
+        return { pose: pose() };
+      },
+      () => {},
+      () => {},
+      dual ? STARTUP_FRAME_CAPABILITY_V2 : STARTUP_FRAME_CAPABILITY,
+    );
+    const request: PoseFrameRequest = {
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      kind: 'defeat',
+      input: {
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        defeatStartedAt: presentationTimeMs(2000),
+        deathClipId: clipId('DefeatKick'),
+        deathClipTime: durationMs(10),
+        entry: {
+          kind: 'startup',
+          epoch,
+          at: gameTimeMs(1050),
+          sampleSide: 'left',
+        },
+      },
+    };
+    if (dual) {
+      const first = d.prepare(request);
+      const repeat = d.prepare(request);
+      expect(() => d.apply(first)).toThrow();
+      d.apply(repeat);
+      expect(calls).toBe(2);
+    } else {
+      expect(() => d.prepare(request)).toThrow(
+        'Missing matching startup frame capability',
+      );
+      expect(calls).toBe(0);
+    }
+    d.dispose();
+  },
+);
+
+test('startup v2 wire captures declaration once despite caller mutation', () => {
+  const epoch = wireV2Epoch();
+  const request: PoseFrameRequest = {
+    kind: 'living',
+    runId: epoch.runId,
+    actorId: epoch.actorId,
+    revision: 1,
+    epoch,
+    at: gameTimeMs(1050),
+    side: 'right',
+  };
+  const originalV1 = { ...STARTUP_FRAME_CAPABILITY };
+  const originalV2 = { ...STARTUP_FRAME_CAPABILITY_V2 };
+  let v1Calls = 0,
+    v2Calls = 0,
+    writes = 0;
+  const v1 = createPoseFrameDriver(
+    () => {
+      v1Calls++;
+      return { pose: pose() };
+    },
+    () => {
+      writes++;
+    },
+    () => {},
+    originalV1,
+  );
+  const v2 = createPoseFrameDriver(
+    () => {
+      v2Calls++;
+      return { pose: pose() };
+    },
+    () => {
+      writes++;
+    },
+    () => {},
+    originalV2,
+  );
+  try {
+    Object.assign(originalV1, STARTUP_FRAME_CAPABILITY_V2);
+    Object.assign(originalV2, {
+      version: 99,
+      protocol: 'invalid',
+      supportedProtocols: [],
+    });
+    expect(v1.startupCapability).toBe(STARTUP_FRAME_CAPABILITY);
+    expect(v2.startupCapability).toBe(STARTUP_FRAME_CAPABILITY_V2);
+    expect(Object.isFrozen(v1.startupCapability)).toBe(true);
+    expect(Object.isFrozen(v2.startupCapability)).toBe(true);
+    expect(() => v1.prepare(request)).toThrow(
+      'Missing matching startup frame capability',
+    );
+    expect(v1Calls).toBe(0);
+    expect(writes).toBe(0);
+    v2.apply(v2.prepare(request));
+    expect(v2Calls).toBe(1);
+    expect(writes).toBe(1);
+  } finally {
+    v1.dispose();
+    v2.dispose();
+  }
+});
+
+const overflowPose = () => [
+  {
+    id: 'overflow',
+    parent: null,
+    t: [1.5e308, 0, 1.5e308],
+    q: [0, 0, 0, 1],
+    s: [1, 1, 1],
+  },
+];
+test('finite composition rejects final H layer product without changing operands', () => {
+  const world = composePoseMatrices(overflowPose())[0]!.matrix;
+  const layer = new Matrix4().makeRotationY(Math.PI / 4).toArray();
+  const before = [...world];
+  expect(() => composeBasisLayer(world, layer)).toThrow(
+    'Unsupported singular/unrepresentable matrix domain',
+  );
+  expect(world).toEqual(before);
+});
+test('finite composition startup rejects combined hierarchy before returning a sample', () => {
+  const epoch = createStartupPoseEpoch({
+    ...startupFixture(),
+    basis: {
+      authority: 'activation-stance-v1',
+      oldYaw: Math.PI / 4,
+      admittedYaw: 0,
+    },
+  });
+  expect(() =>
+    samplePoseEpoch(epoch, epoch.startMs, 'right', (query) =>
+      captureCanonicalSnapshot(
+        query,
+        query.stamp.mode === 'attack'
+          ? 'grounded-posture-y'
+          : 'full-translation',
+        overflowPose(),
+        'overflow',
+      ),
+    ),
+  ).toThrow('Unsupported singular/unrepresentable matrix domain');
+});
+test('finite composition prepared result rejects before token or visible write', () => {
+  const epoch = startupFixture();
+  let writes = 0;
+  const driver = createPoseFrameDriver(
+    () => ({
+      pose: overflowPose(),
+      basisLayer: new Matrix4().makeRotationY(Math.PI / 4).toArray(),
+    }),
+    () => {
+      writes++;
+    },
+    () => {},
+    STARTUP_FRAME_CAPABILITY,
+  );
+  try {
+    expect(() =>
+      driver.prepare({
+        kind: 'living',
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        revision: 1,
+        epoch,
+        at: epoch.startMs,
+        side: 'right',
+      }),
+    ).toThrow('Unsupported singular/unrepresentable matrix domain');
+    expect(writes).toBe(0);
+  } finally {
+    driver.dispose();
+  }
 });

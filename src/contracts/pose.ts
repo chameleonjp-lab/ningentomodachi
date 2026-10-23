@@ -6,16 +6,24 @@ import {
   type PresentationTimeMs,
   presentationTimeMs,
 } from './clock';
-import type { ActorId, AttackActivationId, ClipId, RunId } from './ids';
+import {
+  clipId,
+  type ActorId,
+  type AttackActivationId,
+  type ClipId,
+  type RunId,
+} from './ids';
 
 /** Protocol declarations describe deterministic pose timing, NOT anatomical CCD acceptance. */
 export const POSE_PROTOCOL_VERSION = 1 as const;
 export type LivingPoseMode = 'idle' | 'walk' | 'run' | 'jump' | 'attack';
 export type PoseSampleSide = 'left' | 'right';
 export interface PoseRunPolicy {
+  readonly attackStartStance?: 'selected-side-kicks-v1';
   readonly version: 1;
   readonly mode: 'legacy' | 'deterministic-pose-v1';
   readonly recovery?: RecoveryTimelinePolicy;
+  readonly startup?: StartupTimelinePolicy;
 }
 export interface PoseClipBinding {
   readonly clipId: ClipId;
@@ -39,8 +47,13 @@ export interface DefeatPoseStamp {
   readonly defeatStartedAt: PresentationTimeMs;
 }
 export type ActorPoseStamp =
-  | { readonly kind: 'living'; readonly living: LivingPoseStamp }
+  | {
+      readonly kind: 'living';
+      readonly living: LivingPoseStamp;
+      readonly startupQualification?: 'unqualified-outgoing-or-basis';
+    }
   | { readonly kind: 'recovery'; readonly epoch: RecoveryPoseEpoch }
+  | { readonly kind: 'startup'; readonly epoch: StartupPoseEpoch }
   | DefeatPoseStamp;
 /** Descriptor coverage only. No geometry/sampler or anatomy-ready flag is implied. */
 export interface PoseCatalogBindings {
@@ -56,6 +69,7 @@ export interface PoseDisplayCapability {
   readonly protocol: 'deterministic-pose-v1';
   /** Separate diagnostic support; v1 alone never admits a composite epoch. */
   readonly recovery?: RecoveryTimelinePolicy;
+  readonly startup?: StartupTimelinePolicy;
 }
 export interface PoseSpatialCapability extends PoseDisplayCapability {
   /** Once per run, after catalog.prepare and before AssetsReady. Preserve pending
@@ -80,6 +94,12 @@ export interface StampedDefeatSeek {
         readonly epoch: RecoveryPoseEpoch;
         readonly at: GameTimeMs;
         readonly sampleSide: 'left';
+      }
+    | {
+        readonly kind: 'startup';
+        readonly epoch: StartupPoseEpoch;
+        readonly at: GameTimeMs;
+        readonly sampleSide: 'left';
       };
 }
 
@@ -96,9 +116,27 @@ export function capturePoseRunPolicy(
     throw new RangeError('Invalid pose run policy');
   if (input.recovery && input.mode !== 'deterministic-pose-v1')
     throw Error('Recovery requires deterministic mode');
+  if (
+    input.attackStartStance !== undefined &&
+    input.attackStartStance !== 'selected-side-kicks-v1'
+  )
+    throw Error('Unsupported stance policy');
+  if (
+    (input.startup || input.attackStartStance) &&
+    input.mode !== 'deterministic-pose-v1'
+  )
+    throw Error('Startup/stance requires deterministic mode');
+  if (input.startup && !input.attackStartStance)
+    throw Error('Startup requires explicit stance');
   return Object.freeze({
     version: 1,
     mode: input.mode,
+    ...(input.attackStartStance
+      ? { attackStartStance: input.attackStartStance }
+      : {}),
+    ...(input.startup
+      ? { startup: captureStartupTimelinePolicy(input.startup) }
+      : {}),
     ...(input.recovery
       ? { recovery: captureRecoveryTimelinePolicy(input.recovery) }
       : {}),
@@ -297,7 +335,7 @@ export interface RecoveryPoseEpoch {
   readonly fixedLiftSign: 1;
   readonly identity: string;
 }
-export type PoseEpoch = LivingPoseStamp | RecoveryPoseEpoch;
+export type PoseEpoch = LivingPoseStamp | RecoveryPoseEpoch | StartupPoseEpoch;
 export function isRecoveryPoseEpoch(
   input: PoseEpoch,
 ): input is RecoveryPoseEpoch {
@@ -343,6 +381,27 @@ export function createRecoveryPoseEpoch(
   });
 }
 export function capturePoseEpoch(input: PoseEpoch): PoseEpoch {
+  if (isStartupPoseEpoch(input)) {
+    const captured = createStartupPoseEpoch(input);
+    for (const key of [
+      'kind',
+      'version',
+      'law',
+      'deathLayerPolicy',
+      'outgoingAt',
+      'outgoingSide',
+      'startMs',
+      'endMs',
+      'firstActiveAt',
+      'windowPolicy',
+      'rootPolicy',
+      'fixedLiftSign',
+      'identity',
+    ] as const)
+      if (!Object.is(input[key], captured[key]))
+        throw Error('Conflicting startup epoch identity');
+    return captured;
+  }
   if (!isRecoveryPoseEpoch(input)) return createLivingPoseStamp(input);
   const captured = createRecoveryPoseEpoch(input);
   if (
@@ -358,6 +417,14 @@ export function capturePoseEpoch(input: PoseEpoch): PoseEpoch {
   return captured;
 }
 export type ResolvedPoseEpoch =
+  | Readonly<{
+      kind: 'startup';
+      epoch: StartupPoseEpoch;
+      at: GameTimeMs;
+      side: PoseSampleSide;
+      weight: number;
+      sourceClipTime: DurationMs;
+    }>
   | Readonly<{
       kind: 'canonical';
       stamp: LivingPoseStamp;
@@ -378,6 +445,24 @@ export function resolvePoseEpoch(
   const epoch = capturePoseEpoch(input);
   gameTimeMs(at);
   if (!['left', 'right'].includes(side)) throw Error('Invalid pose side');
+  if (isStartupPoseEpoch(epoch)) {
+    if (at < epoch.startMs || at > epoch.endMs)
+      throw Error('Outside startup epoch');
+    const weight =
+      at === epoch.startMs
+        ? 0
+        : at === epoch.endMs
+          ? 1
+          : (at - epoch.startMs) / epoch.policy.durationMs;
+    return Object.freeze({
+      kind: 'startup',
+      epoch,
+      at,
+      side,
+      weight,
+      sourceClipTime: durationMs(at - epoch.startMs),
+    });
+  }
   if (!isRecoveryPoseEpoch(epoch))
     return Object.freeze({
       kind: 'canonical',
@@ -402,4 +487,208 @@ export function resolvePoseEpoch(
       side,
     });
   return Object.freeze({ kind: 'recovery', epoch, at, side });
+}
+
+/** Retained source/policy pins only. These windows are provisional, not production combat acceptance. */
+export const STARTUP_SOURCES = Object.freeze({
+  SideKick: Object.freeze({
+    binding: Object.freeze({
+      clipId: clipId('SideKick'),
+      durationMs: durationMs(1177.7777671813965),
+      sourceBindingId:
+        'pose-v1:4fb6ea03f86f501457176d3bcbe0faa092cfdde4c6501c22a77eb99b0d451d43',
+    }),
+    firstActiveMs: durationMs(533.3333611488342),
+    rootPolicy: 'grounded-posture-y' as const,
+  }),
+  SideThrustKick: Object.freeze({
+    binding: Object.freeze({
+      clipId: clipId('SideThrustKick'),
+      durationMs: durationMs(1577.7777433395386),
+      sourceBindingId:
+        'pose-v1:4e4d36d46458cb46c30d95a9ed430827b6587ba6db22ab486debfe74524fab24',
+    }),
+    firstActiveMs: durationMs(755.5555701255798),
+    rootPolicy: 'in-place-posture-xyz' as const,
+  }),
+});
+export function startupSource(name: string) {
+  return name === 'SideKick'
+    ? STARTUP_SOURCES.SideKick
+    : name === 'SideThrustKick'
+      ? STARTUP_SOURCES.SideThrustKick
+      : undefined;
+}
+export interface StartupTimelinePolicyV1 {
+  readonly version: 1;
+  readonly protocol: 'side-kick-startup-matrix-v1';
+  readonly durationMs: DurationMs;
+  readonly fixedLiftSign: 1;
+}
+export interface StartupTimelinePolicyV2 {
+  readonly version: 2;
+  readonly protocol: 'side-kick-startup-matrix-v2';
+  readonly durationMs: DurationMs;
+  readonly fixedLiftSign: 1;
+  readonly domain: 'fixed-positive-lift-midpoint-half-v1';
+}
+export type StartupTimelinePolicy =
+  | StartupTimelinePolicyV1
+  | StartupTimelinePolicyV2;
+export function captureStartupTimelinePolicy(
+  input: StartupTimelinePolicy,
+): StartupTimelinePolicy {
+  const validVersion =
+    input.version === 1
+      ? input.protocol === 'side-kick-startup-matrix-v1'
+      : input.version === 2 &&
+        input.protocol === 'side-kick-startup-matrix-v2' &&
+        input.domain === 'fixed-positive-lift-midpoint-half-v1';
+  if (
+    !validVersion ||
+    input.fixedLiftSign !== 1 ||
+    !Number.isFinite(input.durationMs) ||
+    input.durationMs <= 0 ||
+    input.durationMs > Number.MAX_SAFE_INTEGER
+  )
+    throw Error('Unsupported startup policy');
+  if (input.version === 2)
+    return Object.freeze({
+      version: 2,
+      protocol: 'side-kick-startup-matrix-v2',
+      durationMs: durationMs(input.durationMs),
+      fixedLiftSign: 1,
+      domain: 'fixed-positive-lift-midpoint-half-v1',
+    });
+  return Object.freeze({
+    version: 1,
+    protocol: 'side-kick-startup-matrix-v1',
+    durationMs: durationMs(input.durationMs),
+    fixedLiftSign: 1,
+  });
+}
+export interface StartupBasis {
+  readonly authority: 'activation-stance-v1';
+  readonly oldYaw: number;
+  readonly admittedYaw: number;
+}
+export interface StartupPoseEpoch {
+  readonly kind: 'startup';
+  readonly version: 'startup-shared-matrix-v1' | 'startup-shared-matrix-v2';
+  readonly law:
+    | 'radius-fixed-lift-positive-diagonal-with-basis-v1'
+    | 'radius-fixed-positive-midpoint-half-with-basis-v2';
+  readonly deathLayerPolicy: 'freeze-entry-through-local-death-v1';
+  readonly runId: RunId;
+  readonly actorId: ActorId;
+  readonly outgoing: LivingPoseStamp;
+  readonly outgoingAt: GameTimeMs;
+  readonly outgoingSide: 'left';
+  readonly destination: LivingPoseStamp;
+  readonly basis: StartupBasis;
+  readonly policy: StartupTimelinePolicy;
+  readonly startMs: GameTimeMs;
+  readonly endMs: GameTimeMs;
+  readonly firstActiveAt: GameTimeMs;
+  readonly windowPolicy: 'inclusive-accessor-frame-cells-v1:provisional-policy';
+  readonly rootPolicy: 'grounded-posture-y' | 'in-place-posture-xyz';
+  readonly fixedLiftSign: 1;
+  readonly identity: string;
+}
+export function isStartupPoseEpoch(
+  input: PoseEpoch,
+): input is StartupPoseEpoch {
+  return 'kind' in input && input.kind === 'startup';
+}
+export function createStartupPoseEpoch(
+  input: Pick<
+    StartupPoseEpoch,
+    'runId' | 'actorId' | 'outgoing' | 'destination' | 'basis' | 'policy'
+  >,
+): StartupPoseEpoch {
+  const outgoing = createLivingPoseStamp(input.outgoing),
+    destination = createLivingPoseStamp(input.destination);
+  const policy = captureStartupTimelinePolicy(input.policy),
+    pin = startupSource(destination.binding.clipId);
+  const startMs = destination.startedAt,
+    endMs = gameTimeMs(startMs + policy.durationMs);
+  if (
+    !nonempty(input.runId) ||
+    !nonempty(input.actorId) ||
+    outgoing.mode !== 'idle' ||
+    outgoing.binding.clipId !== 'Idle' ||
+    destination.mode !== 'attack' ||
+    !pin ||
+    destination.binding.durationMs !== pin.binding.durationMs ||
+    destination.binding.sourceBindingId !== pin.binding.sourceBindingId
+  )
+    throw Error('Unsupported startup source domain');
+  poseClipTime(outgoing, startMs, 'left');
+  const firstActiveAt = gameTimeMs(startMs + pin.firstActiveMs);
+  if (
+    !(
+      startMs < endMs &&
+      endMs < firstActiveAt &&
+      firstActiveAt <= Number.MAX_SAFE_INTEGER
+    )
+  )
+    throw Error('Unrepresentable startup interval');
+  if (
+    input.basis.authority !== 'activation-stance-v1' ||
+    !Number.isFinite(input.basis.oldYaw) ||
+    !Number.isFinite(input.basis.admittedYaw)
+  )
+    throw Error('Invalid startup basis');
+  const basis = Object.freeze({
+    authority: input.basis.authority,
+    oldYaw: input.basis.oldYaw,
+    admittedYaw: input.basis.admittedYaw,
+  });
+  const value = {
+    kind: 'startup' as const,
+    version:
+      policy.version === 1
+        ? ('startup-shared-matrix-v1' as const)
+        : ('startup-shared-matrix-v2' as const),
+    law:
+      policy.version === 1
+        ? ('radius-fixed-lift-positive-diagonal-with-basis-v1' as const)
+        : ('radius-fixed-positive-midpoint-half-with-basis-v2' as const),
+    deathLayerPolicy: 'freeze-entry-through-local-death-v1' as const,
+    runId: input.runId,
+    actorId: input.actorId,
+    outgoing,
+    outgoingAt: startMs,
+    outgoingSide: 'left' as const,
+    destination,
+    basis,
+    policy,
+    startMs,
+    endMs,
+    firstActiveAt,
+    windowPolicy:
+      'inclusive-accessor-frame-cells-v1:provisional-policy' as const,
+    rootPolicy: pin.rootPolicy,
+    fixedLiftSign: 1 as const,
+  };
+  return Object.freeze({
+    ...value,
+    identity: `synthetic-startup-epoch:${JSON.stringify(value, (_key, v) => (typeof v === 'number' && Object.is(v, -0) ? { rawNumber: 'negative-zero' } : v))}`,
+  });
+}
+/** Stage2 readiness MUST invoke this before AssetsReady; deterministic v1 alone
+ * does not authorize the shared matrix layer or frozen-layer death semantics. */
+export function requireStartupCapability(
+  required: StartupTimelinePolicy,
+  capability: PoseDisplayCapability | undefined,
+): void {
+  const policy = captureStartupTimelinePolicy(required);
+  if (
+    capability?.version !== 1 ||
+    capability.protocol !== 'deterministic-pose-v1' ||
+    !capability.startup ||
+    JSON.stringify(captureStartupTimelinePolicy(capability.startup)) !==
+      JSON.stringify(policy)
+  )
+    throw Error('Missing or conflicting startup capability');
 }

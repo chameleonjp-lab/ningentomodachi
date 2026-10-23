@@ -3,6 +3,8 @@ import {
   QuaternionKeyframeTrack,
   VectorKeyframeTrack,
   Object3D,
+  SkinnedMesh,
+  Vector3,
   type Material,
 } from 'three';
 import { expect, test } from 'vitest';
@@ -30,7 +32,7 @@ function qualified(rig: ActorRig<Object3D>) {
 }
 
 // Tiny authored test source, not a runtime substitute for the immutable Android.
-function source(includeRecovery = false) {
+function source(includeRecovery = false, includeStartup = false) {
   const chunks: Uint8Array[] = [];
   const views: { buffer: number; byteOffset: number; byteLength: number }[] =
     [];
@@ -107,6 +109,8 @@ function source(includeRecovery = false) {
       name: 'KungFuStraight',
       tracks: [track(2, 'rotation', q)],
     });
+  if (includeStartup)
+    definitions.push({ name: 'SideKick', tracks: [track(2, 'rotation', q)] });
   const document = {
     asset: { version: '2.0' },
     scene: 0,
@@ -1570,5 +1574,426 @@ test('canonical reuse retains at most one graph alongside unchanged ephemeral re
     rig.dispose();
     pack.dispose();
     observed.restore();
+  }
+});
+
+import { captureCanonicalQuery } from '../../src/assets/recoveryDiagnostic';
+import { STARTUP_FRAME_CAPABILITY_V2 } from '../../src/assets/poseFramePreparation';
+test('startup pack advertises explicit shared-layer capability on visible and staged drivers', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = pack.create('white'),
+    stage = required(pack.stageActor)('white');
+  try {
+    expect(pack.startupCapability).toEqual(STARTUP_FRAME_CAPABILITY_V2);
+    expect(rig.poseFrame?.startupCapability).toEqual(
+      STARTUP_FRAME_CAPABILITY_V2,
+    );
+    expect(stage.poseFrame.startupCapability).toEqual(
+      STARTUP_FRAME_CAPABILITY_V2,
+    );
+  } finally {
+    stage.dispose();
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('startup matrix layer preserves nonidentity outer base and affects mesh and bones once', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = qualified(pack.create('white')),
+    parent = new Group();
+  try {
+    parent.position.set(4, 5, 6);
+    parent.rotation.y = 0.7;
+    parent.add(rig.node);
+    rig.node.position.set(0.3, 0.4, 0.5);
+    rig.node.quaternion.set(0.1, 0.2, 0.05, 0.96);
+    rig.node.scale.set(2, 3, 4);
+    rig.node.updateMatrix();
+    const base = rig.node.matrix.clone();
+    const request = canonicalRequest(pack, 500),
+      diag = required(rig.recoveryDiagnostic);
+    const sample = diag.sampleCanonical(
+      captureCanonicalQuery(request.epoch as any, request.at, 'right'),
+    );
+    const rawPose = sample.pose.map((n) => ({
+      ...n,
+      q: [0.1, 0.2, 0.05, 0.96],
+      s: [1.2, 1.5, 2],
+    }));
+    diag.apply(rawPose);
+    const before = startupVertices(rig.node).map((v) => v.clone());
+    const layer = new Matrix4().makeRotationY(0.45);
+    diag.apply(rawPose, layer.toArray([]));
+    parent.updateMatrixWorld(true);
+    expect(rig.node.matrix.toArray([])).toEqual(
+      layer.clone().multiply(base).toArray([]),
+    );
+    const expected = before.map((v) => v.clone().applyMatrix4(layer)),
+      after = startupVertices(rig.node);
+    // vertices helper returns model-parent coordinates; independent layer acts once.
+    after.forEach((v, i) => {
+      expect(v.distanceTo(required(expected[i]))).toBeLessThan(1e-10);
+    });
+    expect(parent.position.toArray([])).toEqual([4, 5, 6]);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('startup layer resets on canonical seek and diagnostic canonical sampling', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = qualified(pack.create('white'));
+  try {
+    const r = canonicalRequest(pack, 500),
+      diag = required(rig.recoveryDiagnostic),
+      q = captureCanonicalQuery(r.epoch as any, r.at, 'right'),
+      sample = diag.sampleCanonical(q),
+      before = startupVertices(rig.node);
+    diag.apply(sample.pose, new Matrix4().makeRotationY(0.5).toArray([]));
+    expect(rig.node.matrixAutoUpdate).toBe(false);
+    rig.seekPose(q.stamp.binding, q.clipTime);
+    expect(rig.node.matrixAutoUpdate).toBe(true);
+    expect(startupVertices(rig.node)).toEqual(before);
+    diag.apply(sample.pose, new Matrix4().makeRotationY(0.5).toArray([]));
+    expect(diag.sampleCanonical(q).pose).toEqual(sample.pose);
+    expect(rig.node.matrixAutoUpdate).toBe(true);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('startup invalid layer rejects before any visible local writes', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = qualified(pack.create('white'));
+  try {
+    const r = canonicalRequest(pack, 500),
+      diag = required(rig.recoveryDiagnostic),
+      sample = diag.sampleCanonical(
+        captureCanonicalQuery(r.epoch as any, r.at, 'right'),
+      ),
+      before = startupVertices(rig.node);
+    const layer = new Matrix4().toArray([] as number[]);
+    layer[3] = 1;
+    expect(() =>
+      diag.apply(
+        sample.pose.map((n) => ({ ...n, t: [9, 8, 7] })),
+        layer,
+      ),
+    ).toThrow(/layer/i);
+    expect(startupVertices(rig.node)).toEqual(before);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+
+function startupVertices(node: Object3D) {
+  // Refresh attached skin bind inverses as the render traversal does.
+  (node.parent ?? node).updateMatrixWorld(true);
+  const inverse = node.parent?.matrixWorld.clone().invert() ?? new Matrix4();
+  const out: Vector3[] = [];
+  node.traverse((p) => {
+    if (p instanceof SkinnedMesh) {
+      p.skeleton.update();
+      for (let i = 0; i < p.geometry.attributes.position!.count; i++)
+        out.push(
+          p
+            .getVertexPosition(i, new Vector3())
+            .applyMatrix4(p.matrixWorld)
+            .applyMatrix4(inverse),
+        );
+    }
+  });
+  return out;
+}
+
+// SYNTHETIC structural adapter only. Trusted preparation seams supply declared
+// metadata to exercise consumers; these tiny bytes are not source authorization.
+async function syntheticStartupPack() {
+  const { prepareThreeAssetPack } = await import(
+    '../../src/assets/threeAssetPack'
+  );
+  const { prepareSkinBounds } = await import('../../src/assets/skinBounds');
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const { STARTUP_SOURCES } = await import('../../src/contracts');
+  const hash =
+    '697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd';
+  const policy = {
+    version: 1 as const,
+    clipId: clipId('SideKick'),
+    sourceSha256: hash,
+    mode: 'grounded-posture-y' as const,
+    provenance: {
+      manifestSha256:
+        'f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed',
+      clipPointer: '/clips/1',
+      supportPointer: '/clips/1/support_contacts/support/0',
+    },
+  };
+  const pack = await prepareThreeAssetPack(
+    [source(true, true)],
+    {},
+    deaths,
+    [policy],
+    {
+      checkpoint: async () => {},
+      support: async (t) => prepareSkinBounds(t),
+      verifyPolicy: async (p) => {
+        expect(p).toEqual(policy);
+      },
+      poseOrigin: (name, _source, index) => ({
+        sourceSha256: name === 'SideKick' ? hash : 'a'.repeat(64),
+        sourceClipIndex: name === 'SideKick' ? 1 : index,
+      }),
+      parse: async (bytes) => {
+        const loaded = await new GLTFLoader().parseAsync(
+          new Uint8Array(bytes).buffer,
+          '',
+        );
+        required(
+          loaded.animations.find((c) => c.name === 'SideKick'),
+        ).duration = STARTUP_SOURCES.SideKick.binding.durationMs / 1000;
+        return loaded;
+      },
+    },
+  );
+  expect(
+    required(pack.poseBindings).clips.find((b) => b.clipId === 'SideKick'),
+  ).toEqual(STARTUP_SOURCES.SideKick.binding);
+  return pack;
+}
+async function syntheticStartupEpoch(
+  pack: Awaited<ReturnType<typeof syntheticStartupPack>>,
+) {
+  const { createStartupPoseEpoch, STARTUP_SOURCES } = await import(
+    '../../src/contracts'
+  );
+  return createStartupPoseEpoch({
+    runId: runId('synthetic-startup'),
+    actorId: actorId('white'),
+    outgoing: createLivingPoseStamp({
+      version: 1,
+      binding: required(
+        required(pack.poseBindings).clips.find(
+          (b) => b.clipId === required(pack.poseBindings).locomotion.idle,
+        ),
+      ),
+      mode: 'idle',
+      startedAt: gameTimeMs(0),
+      playback: 'loop',
+      activationId: null,
+    }),
+    destination: createLivingPoseStamp({
+      version: 1,
+      binding: STARTUP_SOURCES.SideKick.binding,
+      mode: 'attack',
+      startedAt: gameTimeMs(1000),
+      playback: 'clamp',
+      activationId: attackActivationId('kick'),
+    }),
+    basis: {
+      authority: 'activation-stance-v1',
+      oldYaw: 0,
+      admittedYaw: Math.PI / 2,
+    },
+    policy: {
+      version: 1,
+      protocol: 'side-kick-startup-matrix-v1',
+      durationMs: durationMs(100),
+      fixedLiftSign: 1,
+    },
+  });
+}
+test('startup synthetic staged entry death freezes layer across reverse and repeat seeks', async () => {
+  const pack = await syntheticStartupPack(),
+    rig = pack.create('white'),
+    direct = pack.create('white');
+  try {
+    const epoch = await syntheticStartupEpoch(pack),
+      frame = required(rig.poseFrame),
+      entryAt = gameTimeMs(1050);
+    const living = {
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      revision: 1,
+      kind: 'living' as const,
+      epoch,
+      at: entryAt,
+      side: 'left' as const,
+    };
+    frame.apply(frame.prepare(living));
+    const entryMatrix = rig.node.matrix.toArray([]),
+      entryVertices = startupVertices(rig.node),
+      entryPose = pose(rig.node);
+    const request = (time: number): StampedDefeatSeek => ({
+      runId: epoch.runId,
+      actorId: epoch.actorId,
+      defeatStartedAt: presentationTimeMs(1100),
+      deathClipId: clipId('DefeatKick'),
+      deathClipTime: durationMs(time),
+      entry: { kind: 'startup', epoch, at: entryAt, sampleSide: 'left' },
+    });
+    let first: Vector3[] | undefined;
+    for (const time of [0, 100, 300, 100, 0]) {
+      const input = request(time);
+      frame.apply(
+        frame.prepare({
+          runId: epoch.runId,
+          actorId: epoch.actorId,
+          revision: 2,
+          kind: 'defeat',
+          input,
+        }),
+      );
+      required(direct.seekPose).call(
+        direct,
+        epoch.outgoing.binding,
+        durationMs(50),
+      );
+      required(direct.seekDefeat).call(direct, input);
+      expect(rig.node.matrix.toArray([])).toEqual(entryMatrix);
+      expect(startupVertices(rig.node)).toEqual(startupVertices(direct.node));
+      expect(rig.defeatPoseSupport?.()).toEqual(direct.defeatPoseSupport?.());
+      if (time === 100) {
+        if (first) expect(startupVertices(rig.node)).toEqual(first);
+        else first = startupVertices(rig.node);
+      }
+      if (time === 0) {
+        expect(pose(rig.node)).toEqual(entryPose);
+        expect(startupVertices(rig.node)).toEqual(entryVertices);
+      }
+    }
+  } finally {
+    rig.dispose();
+    direct.dispose();
+    pack.dispose();
+  }
+});
+test('startup synthetic canonical startup canonical replay never retains a private layer', async () => {
+  const pack = await syntheticStartupPack(),
+    rig = pack.create('white');
+  try {
+    const epoch = await syntheticStartupEpoch(pack),
+      driver = required(rig.poseFrame),
+      canonical = {
+        runId: epoch.runId,
+        actorId: epoch.actorId,
+        revision: 1,
+        kind: 'living' as const,
+        epoch: epoch.outgoing,
+        at: gameTimeMs(1050),
+        side: 'right' as const,
+      };
+    driver.apply(driver.prepare(canonical));
+    const before = startupVertices(rig.node);
+    driver.apply(driver.prepare({ ...canonical, epoch, at: gameTimeMs(1050) }));
+    expect(rig.node.matrixAutoUpdate).toBe(false);
+    driver.apply(driver.prepare(canonical));
+    expect(rig.node.matrixAutoUpdate).toBe(true);
+    expect(startupVertices(rig.node)).toEqual(before);
+    driver.apply(driver.prepare({ ...canonical, epoch, at: epoch.endMs }));
+    expect(rig.node.matrix.toArray([])).toEqual(new Matrix4().toArray([]));
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+
+test('finite composition diagnostic validates nonidentity outer before locals and preserves reset', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = qualified(pack.create('white'));
+  try {
+    const r = canonicalRequest(pack, 500),
+      diag = required(rig.recoveryDiagnostic),
+      q = captureCanonicalQuery(r.epoch as any, r.at, 'right'),
+      sample = diag.sampleCanonical(q);
+    rig.node.position.set(3, 2, 1);
+    rig.node.scale.set(2, 1, 1);
+    rig.node.updateMatrix();
+    const baseline = rig.node.matrix.toArray(),
+      before = pose(rig.node);
+    const huge = sample.pose.map((n) =>
+      n.parent === null ? { ...n, t: [1.5e308, 0, 0] } : n,
+    );
+    expect(() => diag.apply(huge)).toThrow(
+      'Unsupported singular/unrepresentable matrix domain',
+    );
+    expect(pose(rig.node)).toEqual(before);
+    expect(rig.node.matrix.toArray()).toEqual(baseline);
+    diag.apply(
+      sample.pose,
+      new Matrix4().makeRotationY(0.5).toArray([] as number[]),
+    );
+    expect(rig.node.matrix.toArray().every(Number.isFinite)).toBe(true);
+    diag.apply(sample.pose);
+    expect(rig.node.matrix.toArray()).toEqual(baseline);
+    expect(rig.node.matrixAutoUpdate).toBe(true);
+  } finally {
+    rig.dispose();
+    pack.dispose();
+  }
+});
+test('finite composition visible and transferred stage validate actual outer before token', async () => {
+  const pack = await syntheticStartupPack();
+  try {
+    const epoch = await syntheticStartupEpoch(pack);
+    for (const staged of [false, true]) {
+      const stage = staged ? required(pack.stageActor)('white') : undefined;
+      const rig = stage ? stage.materialize() : pack.create('white');
+      try {
+        rig.node.position.set(1.5e308, 0, -1.5e308);
+        const before = pose(rig.node);
+        expect(() =>
+          required(rig.poseFrame).prepare({
+            kind: 'living',
+            runId: epoch.runId,
+            actorId: epoch.actorId,
+            revision: 1,
+            epoch,
+            at: gameTimeMs(1050),
+            side: 'right',
+          }),
+        ).toThrow('Unsupported singular/unrepresentable matrix domain');
+        expect(pose(rig.node)).toEqual(before);
+      } finally {
+        rig.dispose();
+        stage?.dispose();
+      }
+    }
+  } finally {
+    pack.dispose();
+  }
+});
+
+test('finite composition direct apply captures accessor pose once for validation and writes', async () => {
+  const pack = await createThreeAssetPack([source(true)], {}, deaths),
+    rig = qualified(pack.create('white'));
+  try {
+    const r = canonicalRequest(pack, 500),
+      diag = required(rig.recoveryDiagnostic),
+      sample = diag.sampleCanonical(
+        captureCanonicalQuery(r.epoch as any, r.at, 'right'),
+      );
+    rig.node.scale.set(2, 1, 1);
+    let reads = 0;
+    const input = sample.pose.map((n) => ({
+      ...n,
+      q: [0, 0, 0, 1],
+      s: [1, 1, 1],
+      get t() {
+        if (n.parent !== null) return [0, 0, 0];
+        reads++;
+        return reads <= 2 ? [0, 0, 0] : [1.5e308, 0, 0];
+      },
+    }));
+    diag.apply(input);
+    expect(reads).toBe(1);
+    rig.node.updateMatrixWorld(true);
+    rig.node.traverse((part) =>
+      expect(part.matrixWorld.elements.every(Number.isFinite)).toBe(true),
+    );
+  } finally {
+    rig.dispose();
+    pack.dispose();
   }
 });

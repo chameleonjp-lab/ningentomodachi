@@ -1200,9 +1200,10 @@ for (const action of ['dispose', 'throw'] as const) {
 import {
   createPoseFrameDriver,
   RECOVERY_FRAME_CAPABILITY,
+  STARTUP_FRAME_CAPABILITY,
   type PoseFrameRequest,
 } from '../../src/assets/poseFramePreparation';
-function recoverySetup(fail?: ActorColor) {
+function recoverySetup(fail?: ActorColor, startup = false, overflow = false) {
   const h = setup(),
     requests: PoseFrameRequest[] = [];
   const context = {
@@ -1218,13 +1219,39 @@ function recoverySetup(fail?: ActorColor) {
       (request) => {
         requests.push(request);
         h.events.push(`${color}:prepare`);
-        if (color === fail) throw Error('late invalid pose');
+        if (color === fail && !startup && !overflow)
+          throw Error('late invalid pose');
         return {
+          ...(color === fail && overflow
+            ? {
+                basisLayer: [
+                  Math.SQRT1_2,
+                  0,
+                  -Math.SQRT1_2,
+                  0,
+                  0,
+                  1,
+                  0,
+                  0,
+                  Math.SQRT1_2,
+                  0,
+                  Math.SQRT1_2,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                ],
+              }
+            : {}),
+          ...(color === fail && startup
+            ? { basisLayer: [1, 0, 0, 0.2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }
+            : {}),
           pose: [
             {
               id: 'root',
               parent: null,
-              t: [0, 0, 0],
+              t: color === fail && overflow ? [1.5e308, 0, 1.5e308] : [0, 0, 0],
               q: [0, 0, 0, 1],
               s: [1, 1, 1],
             },
@@ -1233,6 +1260,7 @@ function recoverySetup(fail?: ActorColor) {
       },
       () => h.events.push(`${color}:apply`),
       () => {},
+      startup ? STARTUP_FRAME_CAPABILITY : undefined,
     );
     let consumed = false,
       disposed = false;
@@ -1537,3 +1565,214 @@ test.each(['getter', 'mismatch', 'reentrant', 'cleanup-throws'] as const)(
     expect(disposed).toBe(1);
   },
 );
+
+const startupPolicy = {
+  version: 1 as const,
+  protocol: 'side-kick-startup-matrix-v1' as const,
+  durationMs: durationMs(100),
+  fixedLiftSign: 1 as const,
+};
+test('startup capability is required separately before any actor allocation', () => {
+  const h = recoverySetup();
+  expect(() =>
+    createActorAnimator(
+      {
+        ...h.context,
+        posePolicy: {
+          ...h.context.posePolicy,
+          startup: startupPolicy,
+          attackStartStance: 'selected-side-kicks-v1',
+        },
+      },
+      h.assets,
+    ),
+  ).toThrow(/startup/i);
+  expect(h.events).toEqual([]);
+});
+test('startup-only policy uses whole-frame preparation and rejects late-invalid actor before any write', () => {
+  const h = recoverySetup('blue', true);
+  const a = createActorAnimator(
+    {
+      ...h.context,
+      posePolicy: {
+        version: 1,
+        mode: 'deterministic-pose-v1',
+        startup: startupPolicy,
+        attackStartStance: 'selected-side-kicks-v1',
+      },
+    },
+    {
+      ...h.assets,
+      startupCapability: {
+        version: 1,
+        protocol: 'side-kick-startup-matrix-v1',
+        fixedLiftSign: 1,
+        deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+      },
+    },
+  );
+  expect(() => a.render(stamped(25, [player, blue]))).toThrow(/layer/i);
+  expect(
+    h.events.filter((e) =>
+      /:mount|:emission|:apply|:pose|:death|:detach/.test(e),
+    ),
+  ).toEqual([]);
+  a.dispose();
+});
+
+test.each(['prepare', 'apply'] as const)(
+  'startup animator rejects materialized rig missing %s before visible writes',
+  (missing) => {
+    const h = recoverySetup(undefined, true);
+    const a = createActorAnimator(
+      {
+        ...h.context,
+        posePolicy: {
+          version: 1,
+          mode: 'deterministic-pose-v1',
+          startup: startupPolicy,
+          attackStartStance: 'selected-side-kicks-v1',
+        },
+      },
+      {
+        ...h.assets,
+        startupCapability: STARTUP_FRAME_CAPABILITY,
+        stageActor: (color) => {
+          const stage = h.assets.stageActor(color),
+            frame = { ...stage.poseFrame };
+          return {
+            ...stage,
+            poseFrame: frame,
+            materialize() {
+              const rig = stage.materialize();
+              Object.assign(frame, { [missing]: undefined });
+              return { ...rig, poseFrame: frame };
+            },
+          };
+        },
+      },
+    );
+    expect(() => a.render(stamped(25, [player, blue]))).toThrow(
+      /capability|preparation/i,
+    );
+    expect(
+      h.events.filter((e) => /:mount|:emission|:apply|:detach/.test(e)),
+    ).toEqual([]);
+    expect(h.events.filter((e) => /:dispose/.test(e))).toHaveLength(1);
+    a.dispose();
+  },
+);
+
+test.each(['prepare', 'apply'] as const)(
+  'startup initial CPU stage missing %s preserves old residents before retirement',
+  (missing) => {
+    const h = recoverySetup(undefined, true),
+      a = createActorAnimator(
+        {
+          ...h.context,
+          posePolicy: {
+            version: 1,
+            mode: 'deterministic-pose-v1',
+            startup: startupPolicy,
+            attackStartStance: 'selected-side-kicks-v1',
+          },
+        },
+        {
+          ...h.assets,
+          startupCapability: STARTUP_FRAME_CAPABILITY,
+          stageActor: (color) => {
+            const handle = h.assets.stageActor(color);
+            return color === 'blue'
+              ? {
+                  ...handle,
+                  poseFrame: {
+                    ...handle.poseFrame,
+                    [missing]: undefined,
+                  } as unknown as typeof handle.poseFrame,
+                }
+              : handle;
+          },
+        },
+      );
+    a.render(stamped(0, [player, black], 1));
+    h.events.length = 0;
+    expect(() => a.render(stamped(25, [player, blue], 2))).toThrow(
+      /capability|preparation/i,
+    );
+    expect(h.events).not.toContain('black:dispose');
+    expect(h.events).not.toContain('blue:create');
+    expect(
+      h.events.filter((e) => /:mount|:emission|:apply|:detach/.test(e)),
+    ).toEqual([]);
+    expect(h.events).toContain('blue:stage-dispose');
+    // Failed preflight must not tombstone the old resident or advance its frontier.
+    expect(() => a.render(stamped(0, [player, black], 1))).not.toThrow();
+    a.dispose();
+  },
+);
+
+import { STARTUP_FRAME_CAPABILITY_V2 } from '../../src/assets/poseFramePreparation';
+test.each([false, true])(
+  'startup v2 wire animator rejects v1-only asset or staged driver stage=%s',
+  (stage) => {
+    const h = recoverySetup(undefined, true);
+    const context = {
+      ...h.context,
+      posePolicy: {
+        version: 1 as const,
+        mode: 'deterministic-pose-v1' as const,
+        attackStartStance: 'selected-side-kicks-v1' as const,
+        startup: {
+          version: 2 as const,
+          protocol: 'side-kick-startup-matrix-v2' as const,
+          durationMs: durationMs(100),
+          fixedLiftSign: 1 as const,
+          domain: 'fixed-positive-lift-midpoint-half-v1' as const,
+        },
+      },
+    };
+    const assets = {
+      ...h.assets,
+      startupCapability: stage
+        ? STARTUP_FRAME_CAPABILITY_V2
+        : STARTUP_FRAME_CAPABILITY,
+    };
+    if (!stage)
+      expect(() => createActorAnimator(context, assets)).toThrow(
+        'Missing matching startup frame capability',
+      );
+    else {
+      const animator = createActorAnimator(context, assets);
+      expect(() => animator.render(stamped(25, [player, blue]))).toThrow(
+        'Missing matching startup frame capability',
+      );
+      animator.dispose();
+    }
+    expect(
+      h.events.filter((e) => /:mount|:emission|:apply|:pose|:death/.test(e)),
+    ).toEqual([]);
+  },
+);
+
+test('finite composition whole frame failure preserves old residents with zero writes or retirements', () => {
+  const h = recoverySetup('blue', false, true),
+    a = createActorAnimator(h.context, h.assets);
+  try {
+    a.render(stamped(0, [player, black], 1));
+    const start = h.events.length;
+    expect(() => a.render(stamped(25, [player, blue], 2))).toThrow(
+      'Unsupported singular/unrepresentable matrix domain',
+    );
+    expect(
+      h.events
+        .slice(start)
+        .filter((e) =>
+          /:mount|:emission|:apply|:pose|:death|:detach|:create|black:dispose|white:dispose/.test(
+            e,
+          ),
+        ),
+    ).toEqual([]);
+  } finally {
+    a.dispose();
+  }
+});

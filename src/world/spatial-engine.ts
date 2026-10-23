@@ -1,5 +1,6 @@
 import {
   type ActorId,
+  type StartupBasis,
   type CoreOutput,
   capturePoseRunPolicy,
   durationMs,
@@ -27,6 +28,7 @@ import {
   streetContacts,
 } from './contact-candidates';
 import { add, dot, finite, length, mul, sub, unit, v } from './math';
+import { resolveAttackStartStance, stanceBinding } from './attack-start-stance';
 import { createPoseTimeline } from './pose-timeline';
 import type { StreetLayout } from './street-layout';
 import { createVehicleSystem } from './vehicle-system';
@@ -37,6 +39,7 @@ export function createSpatialEngine(
   recoveryDiagnostic?: RecoveryTimelinePolicy,
 ) {
   const mode = capturePoseRunPolicy(policy);
+  const stanceEnabled = mode.attackStartStance === 'selected-side-kicks-v1';
   const recovery = recoveryDiagnostic ?? mode.recovery;
   if (
     recoveryDiagnostic &&
@@ -48,7 +51,7 @@ export function createSpatialEngine(
     throw Error('Recovery requires explicit deterministic diagnostic mode');
   const timeline =
     mode.mode === 'deterministic-pose-v1'
-      ? createPoseTimeline(run, recovery)
+      ? createPoseTimeline(run, recovery, mode.startup)
       : undefined;
   const vehicles = createVehicleSystem(run, layout);
   const poses = new Map<ActorId, SpatialActor>();
@@ -171,6 +174,9 @@ export function createSpatialEngine(
           ...(timeline.recoveryCapability
             ? { recovery: timeline.recoveryCapability }
             : {}),
+          ...(timeline.startupCapability
+            ? { startup: timeline.startupCapability }
+            : {}),
           bindPreparedCatalog: timeline.bindPreparedCatalog,
         })
       : undefined,
@@ -255,7 +261,7 @@ export function createSpatialEngine(
         throw new Error('Noncontiguous spatial interval');
       // Validate descriptor/authority before any live motor or residency changes.
       timeline?.prepareStep(request, new Map());
-      timeline?.validateAttackCatalog(state, catalog);
+      timeline?.validateAttackCatalog(state, catalog, stanceEnabled);
       const checkpoint = timeline
         ? {
             poses: new Map(poses),
@@ -289,6 +295,43 @@ export function createSpatialEngine(
         );
         const trajectories: ActorTrajectory[] = [];
         const previousPoses = new Map(poses);
+        const startupBases = stanceEnabled
+          ? new Map<ActorId, StartupBasis>()
+          : undefined;
+        const stanceStarts = stanceEnabled
+          ? new Map<ActorId, ReturnType<typeof resolveAttackStartStance>>()
+          : undefined;
+        if (stanceStarts && startupBases)
+          for (const actor of active) {
+            const attack = actor.attack;
+            if (
+              !attack ||
+              attacks.get(actor.actorId) === attack.activationId ||
+              !stanceBinding(attack.clipId)
+            )
+              continue;
+            const old = previousPoses.get(actor.actorId)!;
+            const target = active.find((a) => a.actorId !== actor.actorId);
+            const resolution = resolveAttackStartStance(
+              attack.clipId,
+              old.position,
+              old.facing,
+              target ? previousPoses.get(target.actorId)?.position : undefined,
+            );
+            stanceStarts.set(actor.actorId, resolution);
+            if (resolution.disposition === 'aligned')
+              startupBases.set(
+                actor.actorId,
+                Object.freeze({
+                  authority: 'activation-stance-v1',
+                  oldYaw: Math.atan2(old.facing.x, old.facing.z),
+                  admittedYaw: Math.atan2(
+                    resolution.facing.x,
+                    resolution.facing.z,
+                  ),
+                }),
+              );
+          }
         const obstacles = [
           ...layout.objects.map((o) => toBox(o.position, o.halfExtents)),
           ...vehicles.read().map((p) => {
@@ -307,7 +350,9 @@ export function createSpatialEngine(
           const targetPose = target
             ? previousPoses.get(target.actorId)
             : undefined;
-          if (
+          const stance = stanceStarts?.get(actor.actorId);
+          if (stance) old = { ...old, facing: stance.facing };
+          else if (
             targetPose &&
             (!actor.attack ||
               attacks.get(actor.actorId) !== actor.attack.activationId)
@@ -397,6 +442,7 @@ export function createSpatialEngine(
         const applyPose = timeline?.prepareStep(
           request,
           new Map([...poses].map(([id, pose]) => [id, pose.locomotion])),
+          startupBases,
         );
         const candidates = [
           ...combatContacts(run, trajectories),

@@ -69,6 +69,22 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   let renderEpoch = 0;
   let layoutUsable = true;
   let refreshSettingsPreview: (() => void) | null = null;
+  let startupViewKey: string | null = null;
+  let startupStatus: HTMLElement | null = null;
+  const startupStatusText = () => {
+    const startup = state?.startup;
+    if (!startup) return '';
+    const countdown =
+      startup.countdown > 0
+        ? `開始まで ${startup.countdown}`
+        : startup.requiredAssetsReady
+          ? '開始を準備しています…'
+          : '読み込み完了を待っています…';
+    const loading = startup.requiredAssetsReady
+      ? '必要な素材の準備ができました。'
+      : '必要な素材を読込中…';
+    return `${countdown} ${loading}`;
+  };
   let renderedFocusContext = '';
   const focusScope = () =>
     JSON.stringify(
@@ -356,6 +372,35 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     ]);
     if (nextKey === key) return;
     key = nextKey;
+    const nextStartupViewKey =
+      state.startup &&
+      !settingsOpen &&
+      !['error', 'results', 'disposed'].includes(state.phase)
+        ? JSON.stringify([
+            state.phase,
+            state.error,
+            state.runId,
+            state.game?.runId,
+            state.game?.pauseReasons,
+            state.game?.quality,
+            state.game?.result,
+            state.startup.generation,
+            state.startup.pauseReasons,
+          ])
+        : null;
+    // Text-only startup updates retain native control identity and its epoch.
+    // Any captured view/authority change still takes the invalidating path.
+    if (
+      nextStartupViewKey !== null &&
+      nextStartupViewKey === startupViewKey &&
+      startupStatus &&
+      chrome.contains(startupStatus)
+    ) {
+      startupStatus.textContent = startupStatusText();
+      return;
+    }
+    startupViewKey = null;
+    startupStatus = null;
     const focusContext = `${focusScope()}:${settingsOpen}`;
     const focused = document.activeElement;
     const focusedKey =
@@ -411,9 +456,10 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       tools.append(settingsNavigationButton('設定', true, openSettings));
       if (!(startup?.pauseReasons ?? state.game?.pauseReasons)?.length)
         tools.append(
-          button(document, '一時停止', () =>
-            pause('PauseRequested', 'manual', startupGeneration),
-          ),
+          button(document, '一時停止', () => {
+            if (isCurrent())
+              pause('PauseRequested', 'manual', startupGeneration);
+          }),
         );
     }
     if (playing && !settingsOpen && !state.game?.pauseReasons.length) {
@@ -433,21 +479,14 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     }
     panel.append(element(document, 'h1', '', 'ニンゲントモダチ'));
     if (startup) {
-      const countdown =
-        startup.countdown > 0
-          ? `開始まで ${startup.countdown}`
-          : startup.requiredAssetsReady
-            ? '開始を準備しています…'
-            : '読み込み完了を待っています…';
-      const loading = startup.requiredAssetsReady
-        ? '必要な素材の準備ができました。'
-        : '必要な素材を読込中…';
       const status = element(
         document,
         'p',
         'nt-startup-status',
-        `${countdown} ${loading}`,
+        startupStatusText(),
       );
+      startupStatus = status;
+      startupViewKey = nextStartupViewKey;
       status.setAttribute('role', 'status');
       status.setAttribute('aria-live', 'polite');
       status.setAttribute('aria-atomic', 'true');
@@ -467,13 +506,16 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
             button(
               document,
               reason === 'manual' ? '再開' : '中断から再開',
-              () => pause('ResumeRequested', reason, startupGeneration),
+              () => {
+                if (isCurrent())
+                  pause('ResumeRequested', reason, startupGeneration);
+              },
             ),
           );
       }
       panel.append(
         button(document, '読込を中止', () => {
-          if (state?.startup?.generation === startupGeneration)
+          if (isCurrent() && state?.startup?.generation === startupGeneration)
             request({ type: 'CancelLoadingRequested' });
         }),
       );

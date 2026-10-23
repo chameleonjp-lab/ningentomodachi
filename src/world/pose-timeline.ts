@@ -1,5 +1,11 @@
 import {
   type ActorId,
+  type StartupBasis,
+  type StartupPoseEpoch,
+  type StartupTimelinePolicy,
+  captureStartupTimelinePolicy,
+  createStartupPoseEpoch,
+  startupSource,
   type ActorPoseStamp,
   type ActorState,
   type CoreOutput,
@@ -24,6 +30,7 @@ import {
 } from '../contracts';
 
 type Mode = Exclude<LivingPoseMode, 'attack'>;
+const NO_STARTUPS = Object.freeze([]);
 interface Resident {
   readonly activationAt: GameTimeMs;
   readonly mode: Mode;
@@ -33,6 +40,12 @@ interface Resident {
     /** Exact immutable selection installed by natural completion, not value equality. */
     readonly selection: LivingPoseStamp;
   }>[];
+  readonly startups: readonly Readonly<{
+    epoch: StartupPoseEpoch;
+    selection: LivingPoseStamp;
+    prior: LivingPoseStamp;
+  }>[];
+  readonly unqualified?: LivingPoseStamp | undefined;
   readonly selections: readonly LivingPoseStamp[];
   readonly defeat?: DefeatPoseStamp;
   readonly step?:
@@ -47,9 +60,13 @@ interface Resident {
 export function createPoseTimeline(
   run: RunId,
   diagnostic?: RecoveryTimelinePolicy,
+  startupDiagnostic?: StartupTimelinePolicy,
 ) {
   const recoveryPolicy = diagnostic
     ? captureRecoveryTimelinePolicy(diagnostic)
+    : undefined;
+  const startupPolicy = startupDiagnostic
+    ? captureStartupTimelinePolicy(startupDiagnostic)
     : undefined;
   const retired = new Set<ActorId>();
   let generation = 0;
@@ -87,6 +104,7 @@ export function createPoseTimeline(
     resident: Resident,
     actor: ActorState,
     at: GameTimeMs,
+    bases?: ReadonlyMap<ActorId, StartupBasis>,
   ): Resident {
     const attack = actor.attack;
     if (attack) {
@@ -102,18 +120,50 @@ export function createPoseTimeline(
           existing.binding.clipId !== attack.clipId)
       )
         throw new Error('Conflicting attack activation');
-      if (!existing)
-        resident = select(
-          resident,
-          createLivingPoseStamp({
-            version: 1,
-            binding,
-            mode: 'attack',
-            startedAt: attack.startedAt,
-            playback: 'clamp',
-            activationId: attack.activationId,
-          }),
-        );
+      if (!existing) {
+        const prior =
+          startupPolicy && startupSource(attack.clipId)
+            ? entryAt(resident, attack.startedAt, 'left')
+            : undefined;
+        const selection = createLivingPoseStamp({
+          version: 1,
+          binding,
+          mode: 'attack',
+          startedAt: attack.startedAt,
+          playback: 'clamp',
+          activationId: attack.activationId,
+        });
+        resident = select(resident, selection);
+        if (startupPolicy && startupSource(attack.clipId)) {
+          const basis = bases?.get(actor.actorId);
+          if (
+            prior &&
+            !('kind' in prior) &&
+            prior.mode === 'idle' &&
+            prior.binding.clipId === 'Idle' &&
+            basis
+          ) {
+            const epoch = createStartupPoseEpoch({
+              runId: run,
+              actorId: actor.actorId,
+              outgoing: prior,
+              destination: selection,
+              basis,
+              policy: startupPolicy,
+            });
+            resident = {
+              ...resident,
+              startups: [
+                ...resident.startups.filter(
+                  (r) => r.epoch.startMs < epoch.startMs,
+                ),
+                Object.freeze({ epoch, selection, prior }),
+              ],
+              unqualified: undefined,
+            };
+          } else resident = { ...resident, unqualified: selection };
+        }
+      }
     }
     const current = resident.selections.at(-1);
     if (
@@ -178,6 +228,7 @@ export function createPoseTimeline(
           mode: 'idle',
           at: activationAt,
           recoveries: [],
+          startups: NO_STARTUPS,
           selections: bindings ? [stamp('idle', activationAt)] : [],
         };
       }
@@ -194,6 +245,20 @@ export function createPoseTimeline(
       .filter((s) => (side === 'left' ? s.startedAt < at : s.startedAt <= at))
       .at(-1);
     if (!selected) return undefined;
+    // At activation's strict-left limit, preserve the prior pose AND its old basis
+    // under the newly admitted physical basis. This descriptor is not a new source claim.
+    const startup =
+      startupPolicy &&
+      resident.startups.find(
+        (r) =>
+          (selected === r.selection ||
+            (side === 'left' &&
+              at === r.epoch.startMs &&
+              selected === r.prior)) &&
+          at >= r.epoch.startMs &&
+          (side === 'left' ? at <= r.epoch.endMs : at < r.epoch.endMs),
+      );
+    if (startup) return startup.epoch;
     return (
       resident.recoveries.find(
         (r) =>
@@ -216,6 +281,7 @@ export function createPoseTimeline(
   }
   return {
     recoveryCapability: recoveryPolicy,
+    startupCapability: startupPolicy,
     bindPreparedCatalog(input: PoseCatalogBindings) {
       alive();
       if (provider) {
@@ -253,6 +319,7 @@ export function createPoseTimeline(
           ...resident,
           selections: [stamp(resident.mode, resident.activationAt, captured)],
           recoveries: [],
+          startups: NO_STARTUPS,
         });
       // Every descriptor and pending resident is valid before installation.
       const value = JSON.stringify(input);
@@ -262,7 +329,11 @@ export function createPoseTimeline(
       residents = next;
       generation++;
     },
-    validateAttackCatalog(snapshot: GameSnapshot, catalog: MotionCatalogPort) {
+    validateAttackCatalog(
+      snapshot: GameSnapshot,
+      catalog: MotionCatalogPort,
+      stanceEnabled = false,
+    ) {
       alive();
       for (const actor of snapshot.actors) {
         if (!actor.attack) continue;
@@ -270,6 +341,20 @@ export function createPoseTimeline(
           (b) => b.clipId === actor.attack!.clipId,
         );
         const definition = catalog.get(actor.attack.clipId);
+        const pin =
+          (startupPolicy || stanceEnabled) &&
+          startupSource(actor.attack.clipId);
+        if (
+          pin &&
+          (!binding ||
+            binding.sourceBindingId !== pin.binding.sourceBindingId ||
+            binding.durationMs !== pin.binding.durationMs ||
+            (startupPolicy &&
+              (!definition?.impacts.length ||
+                Math.min(...definition.impacts.map((i) => i.startMs)) !==
+                  pin.firstActiveMs)))
+        )
+          throw Error('Startup source binding/window mismatch');
         if (
           !binding ||
           !definition ||
@@ -329,6 +414,9 @@ export function createPoseTimeline(
               recoveries: resident.recoveries.filter(
                 (r) => r.epoch.startMs <= now,
               ),
+              startups: startupPolicy
+                ? resident.startups.filter((r) => r.epoch.startMs <= now)
+                : NO_STARTUPS,
             };
           }
           const event = deaths.find((e) => e.actorId === actor.actorId);
@@ -357,6 +445,7 @@ export function createPoseTimeline(
                 defeat,
                 selections: ['kind' in entry ? entry.destination : entry],
                 recoveries: [],
+                startups: NO_STARTUPS,
                 step: undefined,
               };
             }
@@ -406,6 +495,18 @@ export function createPoseTimeline(
             resident = {
               ...resident,
               selections: resident.selections.slice(-2),
+              startups: startupPolicy
+                ? resident.startups.filter(
+                    (r) =>
+                      r.epoch.endMs >= now &&
+                      (entryAt(resident!, now, 'right') === r.epoch ||
+                        entryAt(resident!, now, 'left') === r.epoch),
+                  )
+                : NO_STARTUPS,
+              unqualified:
+                resident.selections.at(-1) === resident.unqualified
+                  ? resident.unqualified
+                  : undefined,
               recoveries: resident.recoveries.filter(
                 (r) =>
                   r.epoch.endMs >= now &&
@@ -422,6 +523,7 @@ export function createPoseTimeline(
     prepareStep(
       request: SpatialStepRequest,
       motorEnds: ReadonlyMap<ActorId, Mode>,
+      startupBases?: ReadonlyMap<ActorId, StartupBasis>,
     ) {
       const now = request.snapshot.clocks.gameTimeMs;
       const from = gameTimeMs(now - request.step.durationMs);
@@ -440,8 +542,11 @@ export function createPoseTimeline(
           ],
           step: { from, to: now, held: resident.mode },
           recoveries: resident.recoveries.filter((r) => r.epoch.endMs >= from),
+          startups: startupPolicy
+            ? resident.startups.filter((r) => r.epoch.endMs >= from)
+            : NO_STARTUPS,
         };
-        resident = attackSelection(resident, actor, now);
+        resident = attackSelection(resident, actor, now, startupBases);
         const mode = motorEnds.get(actor.actorId) ?? resident.mode;
         const current = resident.selections.at(-1)!;
         if (current.mode !== 'attack' && current.mode !== mode)
@@ -457,8 +562,19 @@ export function createPoseTimeline(
       const epoch = resident && entryAt(resident, resident.at, 'right');
       if (!epoch) return undefined;
       return 'kind' in epoch
-        ? Object.freeze({ kind: 'recovery', epoch })
-        : Object.freeze({ kind: 'living', living: epoch });
+        ? epoch.kind === 'startup'
+          ? Object.freeze({ kind: 'startup', epoch })
+          : Object.freeze({ kind: 'recovery', epoch })
+        : Object.freeze({
+            kind: 'living',
+            living: epoch,
+            ...(resident!.unqualified === epoch
+              ? {
+                  startupQualification:
+                    'unqualified-outgoing-or-basis' as const,
+                }
+              : {}),
+          });
     },
     dispose() {
       residents.clear();

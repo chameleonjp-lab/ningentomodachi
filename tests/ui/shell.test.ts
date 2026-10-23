@@ -316,7 +316,7 @@ test('owned focus follows the same startup control across countdown and readines
     before.focus();
     s.host.render(startupState(2));
     expect(document.activeElement).toBe(s.find(label));
-    expect(s.find(label)).not.toBe(before);
+    expect(s.find(label)).toBe(before);
     const next = startupState(2);
     s.host.render({
       ...next,
@@ -495,5 +495,143 @@ test('focused settings navigation returns to the correct title or same-generatio
         },
       ]);
     else expect(s.requests).toHaveLength(count);
+  }
+});
+
+test('startup text-only changes preserve the status and native control identities', () => {
+  const s = focusSetup();
+  s.host.render(startupState(3));
+  const status = s.root.querySelector('.nt-startup-status');
+  const controls = ['設定', '一時停止', '読込を中止'].map(s.find);
+  s.host.render(startupState(2));
+  expect(s.root.querySelector('.nt-startup-status')).toBe(status);
+  expect(status?.textContent).toContain('開始まで 2');
+  const next = startupState(0);
+  s.host.render({
+    ...next,
+    startup: { ...next.startup, requiredAssetsReady: true },
+  });
+  expect(s.root.querySelector('.nt-startup-status')).toBe(status);
+  expect(status?.textContent).toContain('開始を準備');
+  expect(status?.textContent).toContain('必要な素材の準備ができました');
+  ['設定', '一時停止', '読込を中止'].forEach((label, index) => {
+    expect(s.find(label)).toBe(controls[index]);
+  });
+  expect(s.requests).toEqual([]);
+});
+test('a held startup control still sends exactly its original action after a text-only update', () => {
+  for (const [label, expected] of [
+    [
+      '設定',
+      {
+        type: 'StartupPauseRequested',
+        startupGeneration: 1,
+        reason: 'settings',
+      },
+    ],
+    [
+      '一時停止',
+      { type: 'StartupPauseRequested', startupGeneration: 1, reason: 'manual' },
+    ],
+    ['読込を中止', { type: 'CancelLoadingRequested' }],
+  ] as const) {
+    const s = focusSetup();
+    s.host.render(startupState(3));
+    const held = s.find(label);
+    held.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    s.host.render(startupState(2));
+    expect(s.find(label)).toBe(held);
+    held.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(s.requests).toHaveLength(1);
+    expect(s.requests[0]).toMatchObject(expected);
+  }
+});
+test('startup phase run and game attachment changes replace controls and reject detached actions', () => {
+  const initial = startupState(3);
+  for (const changed of [
+    { ...initial, phase: 'ready' as const },
+    { ...initial, runId: run },
+    { ...initial, game: snapshot({ phase: 'loading' }) },
+    { ...initial, runId: run, game: snapshot({ phase: 'loading' }) },
+  ]) {
+    const s = focusSetup();
+    s.host.render(initial);
+    const held = ['設定', '一時停止', '読込を中止'].map(s.find);
+    s.host.render(changed);
+    held.forEach((node) => {
+      expect(node.isConnected).toBe(false);
+      node.click();
+    });
+    expect(s.requests).toEqual([]);
+    expect(s.root.querySelector('input')).toBeNull();
+    s.find('一時停止').click();
+    expect(s.requests).toHaveLength(1);
+    expect(s.requests[0]).toMatchObject({
+      type: 'StartupPauseRequested',
+      startupGeneration: 1,
+      reason: 'manual',
+    });
+  }
+});
+test('changed startup pause authority invalidates old pause cancel and resume actions', () => {
+  const s = focusSetup();
+  s.host.render(startupState(3));
+  const oldPause = s.find('一時停止');
+  const oldCancel = s.find('読込を中止');
+  const next = startupState(3);
+  s.host.render({
+    ...next,
+    startup: { ...next.startup, pauseReasons: ['manual'] },
+  });
+  oldPause.click();
+  oldCancel.click();
+  expect(s.requests).toEqual([]);
+  const oldResume = s.find('再開');
+  s.host.render(startupState(3));
+  oldResume.click();
+  expect(s.requests).toEqual([]);
+  s.find('読込を中止').click();
+  expect(s.requests).toMatchObject([{ type: 'CancelLoadingRequested' }]);
+});
+test('startup errors cancellation and successor generations discard held controls', () => {
+  const initial = startupState(3);
+  for (const next of [
+    { ...state('error'), startup: initial.startup },
+    state('title'),
+    startupState(3, 2),
+  ]) {
+    const s = focusSetup();
+    s.host.render(initial);
+    const held = ['設定', '一時停止', '読込を中止'].map(s.find);
+    s.host.render(next);
+    held.forEach((node) => {
+      expect(node.isConnected).toBe(false);
+      node.click();
+    });
+    expect(s.requests).toEqual([]);
+    expect(s.root.querySelector('input')).toBeNull();
+  }
+});
+test('startup game pause and quality changes do not reuse a captured view authority', () => {
+  const initial = {
+    ...startupState(3),
+    runId: run,
+    game: snapshot({ phase: 'loading' }),
+  };
+  for (const game of [
+    snapshot({ phase: 'loading', pauseReasons: ['background'] }),
+    snapshot({ phase: 'loading', quality: 'low' }),
+  ]) {
+    const s = focusSetup();
+    s.host.render(initial);
+    const held = ['設定', '一時停止', '読込を中止'].map(s.find);
+    s.host.render({ ...initial, game });
+    held.forEach((node) => {
+      expect(node.isConnected).toBe(false);
+      node.click();
+    });
+    expect(s.requests).toEqual([]);
+    s.find('読込を中止').click();
+    expect(s.requests).toMatchObject([{ type: 'CancelLoadingRequested' }]);
   }
 });
