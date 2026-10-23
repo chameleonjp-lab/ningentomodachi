@@ -121,6 +121,15 @@ export async function createPinnedDerivedThreeAssetPack(
           parseGlbYielding(bytes, (stage) =>
             checkpoint(`parse:${index}:${stage}`),
           ),
+        poseOrigin: (name) => {
+          const origin = manifest.clips.find((clip) => clip.name === name);
+          if (
+            !origin ||
+            manifest.sources[origin.sourceIndex]?.sha256 !== origin.sourceSha256
+          )
+            throw new Error('Missing original pose provenance');
+          return origin;
+        },
         verifyPolicy: async (policy) => {
           // Only the built-in reviewed certificate may bind the original source.
           // Neither a caller-selected hash nor the derived GLB hash replaces it.

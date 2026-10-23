@@ -265,3 +265,62 @@ test.each([false, true])(
     expect(packRelease).toHaveBeenCalledTimes(1);
   },
 );
+
+test('visual wrapper forwards the actual final pack pose descriptor without allocating a probe rig', async () => {
+  const { clipId, durationMs } = await import('../../src/contracts');
+  const bindings = {
+    version: 1 as const,
+    bindingSetId: 'fixture-pack',
+    clips: ['idle', 'walk', 'run', 'jump'].map((id) => ({
+      clipId: clipId(id),
+      durationMs: durationMs(100),
+      sourceBindingId: `fixture:${id}`,
+    })),
+    locomotion: {
+      idle: clipId('idle'),
+      walk: clipId('walk'),
+      run: clipId('run'),
+      jump: clipId('jump'),
+    },
+  };
+  const create = vi.fn(),
+    dispose = vi.fn();
+  const read = vi.fn(() => bindings);
+  vi.spyOn(AssetModule, 'createPinnedDerivedThreeAssetPack').mockResolvedValue({
+    get poseBindings() {
+      return read();
+    },
+    create,
+    clipDuration: () => undefined,
+    clipNames: () => [],
+    rootPolicy: () => undefined,
+    dispose,
+  });
+  // Factory double tests forwarding only, not source or descriptor qualification.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          new Uint8Array(
+            url.endsWith('.glb')
+              ? ANDROID_DERIVED_PACK_V1.bytes
+              : ANDROID_RUNTIME_ARTIFACT_V1.bytes,
+          ),
+        ),
+    ),
+  );
+  const pack = await prepareAndroidVisualAssets({
+    appBase: 'https://example.test/game/',
+    signal: new AbortController().signal,
+    rootPolicies: [],
+  });
+  try {
+    expect(pack.poseBindings).toBe(bindings);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    pack.dispose();
+  }
+  expect(dispose).toHaveBeenCalledTimes(1);
+});

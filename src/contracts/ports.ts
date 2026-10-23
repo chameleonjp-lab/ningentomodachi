@@ -73,7 +73,7 @@ export interface CorePort extends Disposable {
 }
 export interface MotionCatalogPort extends Disposable {
   /** Structural timing capability only; never an anatomy/CCD readiness claim. */
-  readonly pose?: import('./pose').PoseCatalogBindings;
+  readonly pose?: import('./pose').PoseCatalogBindings | undefined;
   /** Complete validated pack only, including resolvable shape samples. */
   prepare(signal: AbortSignal): Promise<void>;
   get(clipId: ClipId): MotionDefinition | undefined;
@@ -85,7 +85,7 @@ export interface MotionCatalogPort extends Disposable {
   ): MotionIntervalSample | undefined;
 }
 export interface AnimationPort extends Disposable {
-  readonly poseProtocol?: import('./pose').PoseDisplayCapability;
+  readonly poseProtocol?: import('./pose').PoseDisplayCapability | undefined;
   render(frame: CommittedFrame): void;
 }
 export interface SpatialPort extends Disposable {

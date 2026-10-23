@@ -104,6 +104,11 @@ export async function createPinnedThreeAssetPack(
   let pack: ThreeAssetPack | undefined;
   try {
     pack = await prepareThreeAssetPack(sources, palettes, deaths, policies, {
+      poseOrigin: (_name, sourceIndex, sourceClipIndex) => {
+        const original = manifest.sources[sourceIndex];
+        if (!original) throw new Error('Missing original pose source');
+        return { sourceSha256: original.sha256, sourceClipIndex };
+      },
       checkpoint,
       support: async (template) => {
         verifyDeathClipTargets(template, deaths);

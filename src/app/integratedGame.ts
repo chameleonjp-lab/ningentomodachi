@@ -99,6 +99,7 @@ export function createIntegratedGame(
     ai: ReturnType<typeof createEnemyAi> | null;
     layout: StreetLayout;
     disposed: boolean;
+    prepareAnimation: (() => void) | null;
   };
   const bundles = new Map<RunId, Bundle>();
   const get = (id: RunId) => {
@@ -134,27 +135,45 @@ export function createIntegratedGame(
       )
         throw new Error('Core durability IDs must match the scene layout');
       const bundle: Bundle = {
-        catalog: createMotionCatalog(async (signal) => {
-          const assets = await config.loadAssets(context, signal);
-          if (bundle.disposed || signal.aborted) {
-            assets.animator.dispose();
-            throw new Error('Run assets cancelled');
-          }
-          // Retain before validation so normal initialization rollback owns the pack.
-          bundle.assets = assets;
-          validateVisualCoverage(assets, moves);
-          bundle.residents = createResidentAssetStage(
-            residentPlan,
-            assets.animator,
-          );
-          await bundle.residents.prepare(signal);
-          return assets.motions;
-        }),
+        catalog: createMotionCatalog(
+          async (signal) => {
+            const assets = await config.loadAssets(context, signal);
+            if (bundle.disposed || signal.aborted) {
+              assets.animator.dispose();
+              throw new Error('Run assets cancelled');
+            }
+            // Retain before validation so normal initialization rollback owns the pack.
+            bundle.assets = assets;
+            validateVisualCoverage(assets, moves);
+            bundle.residents = createResidentAssetStage(
+              residentPlan,
+              assets.animator,
+              undefined,
+              context.posePolicy,
+            );
+            await bundle.residents.prepare(signal);
+            if (bundle.disposed || signal.aborted)
+              throw new Error('Run assets cancelled');
+            if (context.posePolicy?.mode === 'deterministic-pose-v1') {
+              if (!bundle.prepareAnimation)
+                throw new Error('Pose animation preparation is unavailable');
+              bundle.prepareAnimation();
+            }
+            return assets.motions;
+          },
+          context.posePolicy?.mode === 'deterministic-pose-v1'
+            ? {
+                // B invokes this only after the sole loader has prepared residents.
+                poseBindings: () => bundle.residents?.assets.poseBindings,
+              }
+            : {},
+        ),
         assets: null,
         residents: null,
         ai: null,
         layout,
         disposed: false,
+        prepareAnimation: null,
       };
       const core = createCore(context, {
         moves,
@@ -182,6 +201,9 @@ export function createIntegratedGame(
       const bundle = get(context.runId);
       return {
         ...bundle.catalog,
+        get pose() {
+          return bundle.catalog.pose;
+        },
         dispose() {
           if (bundle.disposed) return;
           bundle.disposed = true;
@@ -222,19 +244,27 @@ export function createIntegratedGame(
       const bundle = get(context.runId);
       let animation: ReturnType<typeof createActorAnimator<Object3D>> | null =
         null;
+      const prepareAnimation = () => {
+        if (!animation) {
+          if (bundle.disposed || !bundle.residents)
+            throw new Error('Animation assets have not prepared');
+          animation = createActorAnimator(context, bundle.residents.assets);
+        }
+      };
+      bundle.prepareAnimation = prepareAnimation;
       return {
+        get poseProtocol() {
+          return animation?.poseProtocol;
+        },
         render(frame) {
           if (frame.snapshot.phase === 'loading') return;
-          if (!animation) {
-            if (!bundle.residents)
-              throw new Error('Animation assets have not prepared');
-            animation = createActorAnimator(context, bundle.residents.assets);
-          }
+          prepareAnimation();
           bundle.residents!.render(frame.snapshot, () =>
             animation!.render(frame),
           );
         },
         dispose() {
+          bundle.prepareAnimation = null;
           animation?.dispose();
           animation = null;
         },

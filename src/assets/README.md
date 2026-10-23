@@ -33,3 +33,80 @@ Numerical tests sample canonical geometry at 480Hz, entry rotations at 960Hz, an
 - No public asset pack or fullgame wiring is shipped here. The public directory is intentionally untouched. Private Drive GLBs remain outside the repository; only exact material values and source hashes are present.
 - No real WebGL/shared-depth rendering, one-on-one integration, full four-opponent game, screenshots/video, mobile browser performance or iPhone/iPad acceptance has been performed.
 - Model resources, synthetic public-contract correctness, actual CPU source playback, visual acceptance, integration and device acceptance are separate gates.
+
+### Source-stamped driver preparation (checkpoint 1)
+
+Prepared packs with all four locomotion sources expose immutable `poseBindings`.
+Each opaque clip identity binds the original source SHA/clip index, exact visual
+length, explicit extraction receipt (or clearly identified legacy full extraction),
+and canonical sampling version. The pinned lossless factory retains original
+source identity; this is not attack metadata or anatomy acceptance. The catalog's
+optional `poseBindings` callback is read only during `prepare`, after the existing
+load resolves. Missing or mismatched attack coverage fails without publishing the
+descriptor. Legacy catalogs have no descriptor.
+
+`ActorRig.seekPose(binding, clipTime)` uses milliseconds and restores canonical
+source TRS through supported mixer stop/activation before absolute sampling.
+`seekDefeat(StampedDefeatSeek)` validates its complete resolved source identity
+before changing pose, reconstructs the left-side living entry once, and retains
+it through repeated/reverse death and earlier living replay. Conflicting identity
+is rejected. The source first-key hold and exact endpoint remain unchanged. The
+caller resolves the shared side-aware stamp; this driver does not choose modes or
+invent a left sample at an activation's own epoch. Public legacy `seek` remains
+seconds and cannot be mixed back into a rig after a stamped operation.
+
+The full actor-local support observation still belongs to B; C alone controls the
+physical/facing/presentation parent and world settlement. No source bytes, death
+tracks, original root displacement, hit geometry or gameplay clocks change here.
+At checkpoint 1, the animator did not yet advertise or activate the new pose
+protocol. That historical limitation is superseded for explicit
+`deterministic-pose-v1` by the opt-in consumer below. Default legacy behavior and
+the production-readiness gate remain unchanged. Staged actual rigs, not a
+descriptor or an extra probe rig, establish method capability before qualified
+application readiness.
+
+## Opt-in stamped display consumer
+
+`createActorAnimator` captures the shared run policy once. The default/explicit
+legacy path is unchanged. For `deterministic-pose-v1`, construction captures the
+prepared immutable `poseBindings`, validates all visual durations, the explicit
+locomotion mapping and both 500 ms deaths, and advertises `poseProtocol` version1.
+Construction is allocation-free: it never creates a capability-probe rig. A still
+validates its actual staged required rigs before readiness. A `ThreeAssetPack`
+adapter must explicitly supply `poseBindings.locomotion` as `locomotionClips`.
+
+Qualified display selects exclusively from `SpatialActor.pose`. Living times use
+the shared right-side helper; defeated entry uses the immutable left-side source
+stamp and original Core defeat identity. It never consults a render-local epoch,
+reselects Core attacks, or performs a public living seek before `seekDefeat`.
+Canonical first-defeated mounts are allowed only on this qualified path. The
+legacy unavailable-entry guard remains. Full sampled stamp/provenance conflicts
+are rejected even when altered epochs happen to yield the same local clip time.
+
+The complete resident frame is preflighted before seeking, retirement, mounting
+or advancing the residency frontier. After pure data/descriptor validation
+succeeds, retired actors are detached and
+disposed before replacement creation. Actual method/getter validation is part of
+the subsequent required acquisition: failure releases that acquisition and fails
+closed, without rolling back or resurrecting an already retired actor. Surviving
+actors are not sought until all required acquisitions/methods/mounts succeed.
+Invalid input data still has zero retirement/acquisition/seek side effects. There
+is no hidden third-rig allocation overlap or future/nonresident actor update.
+A mount callback that disposes the run is
+allowed to return its detach handle before the pending rig is released, retaining
+detach-before-dispose ordering. Reentrant render is rejected; reentrant disposal
+cannot recreate entries or continue to subsequent actors. Failed arbitrary engine
+calls, a malformed disposer, OOM, or a host attaching then throwing without a
+detach handle are not represented as a general rollback guarantee.
+
+Actual rig methods are bound/captured once, not discovered by mutable getters on
+every frame. After each qualified death seek, the same-frame stable-entry/full-XYZ
+support observation is published with the committed identity. C alone owns the
+physical anchor and presentation child. Retirement removes entry provenance and
+resources, preserves only the existing run-local identity tombstone, and cannot
+be undone by historical frames. Same-lifetime replay remains supported.
+
+These declarations qualify deterministic display timing only. They do not certify
+anatomical hurt geometry, continuous collision, a complete production catalog,
+world/art/browser acceptance, or phone frame-time performance. Actual C/Core
+composition and deployment readiness remain separately gated.

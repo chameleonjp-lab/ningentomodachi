@@ -1,4 +1,5 @@
 import { upperBound, intervalKeyTimes } from './keyIndex';
+import { capturePoseBindings } from './poseBindings';
 import {
   durationMs,
   MOTION_SPACE,
@@ -6,6 +7,7 @@ import {
   type DurationMs,
   type HitVolume,
   type MotionCatalogPort,
+  type PoseCatalogBindings,
   type MotionDefinition,
   type MotionIntervalSample,
   type MotionRootSegment,
@@ -201,9 +203,15 @@ function sample(
 /** Per-run catalog. Atomic publication only after every referenced curve passes validation. */
 export function createMotionCatalog(
   load: (signal: AbortSignal) => Promise<readonly MotionAsset[]>,
-  options: { readonly timeoutMs?: number } = {},
+  options: {
+    readonly timeoutMs?: number;
+    /** Read only after the same asset load completes; absent keeps explicit legacy behavior. */
+    readonly poseBindings?: () => PoseCatalogBindings | undefined;
+  } = {},
 ): MotionCatalogPort {
   const timeoutMs = options.timeoutMs ?? 30000;
+  const readPoseBindings = options.poseBindings;
+  let pose: PoseCatalogBindings | undefined;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new RangeError('Invalid timeout');
   let disposed = false,
@@ -211,6 +219,9 @@ export function createMotionCatalog(
   let active: AbortController | undefined;
   let assets: readonly MotionAsset[] = [];
   return {
+    get pose() {
+      return pose;
+    },
     async prepare(signal) {
       if (disposed) throw new Error('Catalog disposed');
       active?.abort();
@@ -218,6 +229,7 @@ export function createMotionCatalog(
       active = controller;
       const current = ++generation;
       assets = [];
+      pose = undefined;
       const abort = () => controller.abort();
       signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) controller.abort();
@@ -252,7 +264,24 @@ export function createMotionCatalog(
             throw new Error('Duplicate clip');
           ids.add(asset.definition.clipId);
         }
+        const capturedPose = readPoseBindings
+          ? capturePoseBindings(readPoseBindings())
+          : undefined;
+        if (capturedPose) {
+          const bindings = new Map(
+            capturedPose.clips.map((binding) => [binding.clipId, binding]),
+          );
+          for (const asset of copy)
+            if (
+              bindings.get(asset.definition.clipId)?.durationMs !==
+              asset.definition.durationMs
+            )
+              throw new Error('Missing or mismatched attack pose binding');
+        }
+        if (disposed || current !== generation || controller.signal.aborted)
+          throw new Error('Stale pose binding generation');
         assets = freeze(copy);
+        pose = capturedPose;
       } finally {
         if (timer !== undefined) clearTimeout(timer);
         signal.removeEventListener('abort', abort);
@@ -274,6 +303,7 @@ export function createMotionCatalog(
       generation++;
       active?.abort();
       assets = [];
+      pose = undefined;
     },
   };
 }

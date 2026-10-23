@@ -1,4 +1,8 @@
 import {
+  capturePoseRunPolicy,
+  type PoseRunPolicy,
+  type PoseClipBinding,
+  type ClipId,
   type CoreOutput,
   type Disposable,
   type GameCommand,
@@ -27,6 +31,8 @@ import { createViewportService } from './sharedServices';
 export interface GameOptions {
   readonly sessionId: string;
   readonly seed: number;
+  /** Explicit per-run timing mode. Does not enable anatomical damage or approve assets. */
+  readonly posePolicy?: PoseRunPolicy;
   readonly stepMs?: number;
   readonly maxStepsPerFrame?: number;
   readonly viewport?: ViewportMetrics;
@@ -496,6 +502,7 @@ export function createGame<Node>(
     const context = Object.freeze({
       runId: runId(`${options.sessionId}:run:${token}`),
       seed: options.seed,
+      posePolicy: capturePoseRunPolicy(options.posePolicy),
     });
     const moduleContext = Object.freeze({
       ...context,
@@ -636,6 +643,48 @@ export function createGame<Node>(
         run.loop.publish(core.drain());
         await catalog.prepare(abort.signal);
         if (token !== generation || active !== run || disposed) return;
+        if (context.posePolicy.mode === 'deterministic-pose-v1') {
+          const descriptor = catalog.pose;
+          const display = animation.poseProtocol;
+          const producer = spatial.poseProtocol;
+          if (
+            descriptor?.version !== 1 ||
+            !descriptor.bindingSetId?.trim() ||
+            display?.version !== 1 ||
+            display.protocol !== 'deterministic-pose-v1' ||
+            producer?.version !== 1 ||
+            producer.protocol !== 'deterministic-pose-v1' ||
+            typeof producer.bindPreparedCatalog !== 'function'
+          )
+            throw new Error('Required pose protocol capability is unavailable');
+          const bindings = new Map<ClipId, PoseClipBinding>();
+          for (const binding of descriptor.clips) {
+            if (
+              !binding.clipId?.trim() ||
+              !binding.sourceBindingId?.trim() ||
+              !Number.isFinite(binding.durationMs) ||
+              binding.durationMs <= 0 ||
+              bindings.has(binding.clipId)
+            )
+              throw new Error('Invalid pose binding descriptor');
+            bindings.set(binding.clipId, binding);
+          }
+          for (const mode of ['idle', 'walk', 'run', 'jump'] as const)
+            if (!bindings.has(descriptor.locomotion?.[mode]))
+              throw new Error('Missing pose locomotion binding');
+          for (const motion of catalog.list())
+            if (bindings.get(motion.clipId)?.durationMs !== motion.durationMs)
+              throw new Error('Missing or mismatched pose attack binding');
+          producer.bindPreparedCatalog(descriptor);
+          // Binding is synchronous but a provider may reenter stop/restart.
+          if (
+            token !== generation ||
+            active !== run ||
+            disposed ||
+            abort.signal.aborted
+          )
+            return;
+        }
         run.prepared = true;
         core.handle({ type: 'AssetsReady', runId: context.runId });
         run.loop.publish(core.drain());
