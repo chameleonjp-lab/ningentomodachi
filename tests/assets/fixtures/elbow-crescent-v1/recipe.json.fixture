@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "status": "diagnostic-broadphase-only",
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "originalRecipeTexts": [
+    "{\n  \"schemaVersion\": 1,\n  \"clip\": \"ElbowStrike\",\n  \"category\": \"punch\",\n  \"regionHypothesis\": \"posterior-elbow-band-hypothesis\",\n  \"frame\": \"forearm.R inverse-bind POSITION and inverse-transpose unnormalized NORMAL\",\n  \"predicates\": [\n    \"upper_arm.R + forearm.R influence >= 0.5\",\n    \"local.y >= -0.055\",\n    \"local.y <= 0.055\",\n    \"local.z >= 0.020\",\n    \"local.normal.z >= 0.25\"\n  ],\n  \"firstLabel\": 20,\n  \"lastLabel\": 22,\n  \"peakLabel\": 21,\n  \"windowOrigin\": \"developer-provisional-around-source-peak\",\n  \"recoilStartLabel\": 35,\n  \"rootPolicy\": \"in-place-posture-xyz\",\n  \"runtimeSpeed\": 1,\n  \"fallback\": null,\n  \"restoreCrossingFaces\": false,\n  \"fit\": \"one source-reference AABB midpoint sphere, finite active source corners plus 1e-7m CPU arithmetic guard\",\n  \"acceptance\": null,\n  \"gameplayAllowance\": null\n}\n",
+    "{\n  \"schemaVersion\": 1,\n  \"clip\": \"OutsideCrescentKick\",\n  \"category\": \"kick\",\n  \"regionHypothesis\": \"left-outer-foot-edge-hypothesis\",\n  \"frame\": \"original mesh-bind POSITION and NORMAL\",\n  \"predicates\": [\n    \"foot.L + toe.L influence >= 0.5\",\n    \"mesh.position.x - originalFootOrigin.x >= 0.040\",\n    \"mesh.position.y <= 0.115\",\n    \"mesh.normal.x >= 0.35\"\n  ],\n  \"firstLabel\": 27,\n  \"lastLabel\": 39,\n  \"peakLabel\": 34,\n  \"windowOrigin\": \"authored-labels-developer-inclusive-cell\",\n  \"recoilStartLabel\": null,\n  \"rootPolicy\": \"in-place-posture-xyz\",\n  \"runtimeSpeed\": 1,\n  \"fallback\": null,\n  \"restoreCrossingFaces\": false,\n  \"fit\": \"one source-reference AABB midpoint sphere, finite active source corners plus 1e-7m CPU arithmetic guard\",\n  \"acceptance\": null,\n  \"gameplayAllowance\": null\n}\n"
+  ]
+}
