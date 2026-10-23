@@ -14,6 +14,13 @@ import {
 } from '../world/math';
 import type { StreetLayout } from '../world/street-layout';
 import type { Box } from '../world/swept-shapes';
+import {
+  availableLayout,
+  type PresentationCameraInput,
+  type PresentationFitDiagnostic,
+  positiveSafeViewport,
+  selectPresentationFrame,
+} from './presentation-fit';
 import { refineVerifiedRange } from './refine-fit';
 import { cameraSphereBlocked } from './sphere-box';
 export interface CameraFrame {
@@ -24,6 +31,7 @@ export interface CameraFrame {
   readonly fovDegrees: number;
   /** No clear full-distance composition exists: suppress projected HUD anchors. */
   readonly constrained?: boolean;
+  readonly presentationFit?: PresentationFitDiagnostic;
 }
 export const initialCamera: CameraFrame = {
   position: v(0, 5, -8),
@@ -173,6 +181,7 @@ export function createCameraRig(layout: StreetLayout) {
       viewport: ViewportSnapshot,
       elapsedMs: number,
       framingPoints: readonly Vector3[] = [],
+      presentation?: PresentationCameraInput,
     ): CameraFrame {
       if (!Number.isFinite(elapsedMs) || elapsedMs < 0)
         throw new RangeError('Invalid presentation elapsed');
@@ -214,18 +223,48 @@ export function createCameraRig(layout: StreetLayout) {
         0.2,
         viewport.widthCssPx / Math.max(1, viewport.heightCssPx),
       );
-      const usableY = Math.max(
-        0.35,
-        1 -
-          (viewport.safeAreaCssPx.top + viewport.safeAreaCssPx.bottom + 140) /
-            Math.max(1, viewport.heightCssPx),
-      );
-      const usableX = Math.max(
-        0.35,
-        1 -
-          (viewport.safeAreaCssPx.left + viewport.safeAreaCssPx.right + 40) /
-            Math.max(1, viewport.widthCssPx),
-      );
+      const measuredLayout = availableLayout(presentation, viewport);
+      const measuredRegion = measuredLayout && positiveSafeViewport(viewport);
+      // These symmetric insets only propose eyes. Final certification checks
+      // every actual asymmetric CSS edge and each individual UI rectangle.
+      const usableY = measuredRegion
+        ? Math.max(
+            1e-6,
+            1 -
+              (2 *
+                Math.max(
+                  viewport.safeAreaCssPx.top,
+                  viewport.safeAreaCssPx.bottom,
+                )) /
+                viewport.heightCssPx,
+          )
+        : Math.max(
+            0.35,
+            1 -
+              (viewport.safeAreaCssPx.top +
+                viewport.safeAreaCssPx.bottom +
+                140) /
+                Math.max(1, viewport.heightCssPx),
+          );
+      const usableX = measuredRegion
+        ? Math.max(
+            1e-6,
+            1 -
+              (2 *
+                Math.max(
+                  viewport.safeAreaCssPx.left,
+                  viewport.safeAreaCssPx.right,
+                )) /
+                viewport.widthCssPx,
+          )
+        : Math.max(
+            0.35,
+            1 -
+              (viewport.safeAreaCssPx.left +
+                viewport.safeAreaCssPx.right +
+                40) /
+                Math.max(1, viewport.widthCssPx),
+          );
       let radius = b ? length(sub(a.position, b.position)) * 0.5 + 1.9 : 2.5;
       if (framingPoints.length) {
         if (!framingPoints.every(finite))
@@ -357,18 +396,20 @@ export function createCameraRig(layout: StreetLayout) {
         );
         best = { distance: refined.distance, eye: refined.value };
       }
-      let eye: Vector3, constrained: boolean;
-      if (best) {
+      const dampEye = (verified: {
+        distance: number;
+        eye: Vector3;
+      }): Vector3 => {
         // Preserve inward damping when safe. Obstacle-adjusted intermediate
         // angles are checked too; otherwise keep the verified fit, never clip.
         const damped = Math.min(
           MAX_DISTANCE,
           Math.max(
-            best.distance,
-            priorDistance + (best.distance - priorDistance) * alpha,
+            verified.distance,
+            priorDistance + (verified.distance - priorDistance) * alpha,
           ),
         );
-        if (damped - best.distance <= 1e-10) eye = best.eye;
+        if (damped - verified.distance <= 1e-10) return verified.eye;
         else {
           // Preserve the certified angle rather than running another wall
           // search. Extending its ray still needs a fresh complete sweep: a
@@ -381,19 +422,23 @@ export function createCameraRig(layout: StreetLayout) {
               damped,
               horizontalRatio,
             ),
-            (Math.hypot(best.eye.x - focus.x, best.eye.z - focus.z) * damped) /
-              best.distance,
+            (Math.hypot(verified.eye.x - focus.x, verified.eye.z - focus.z) *
+              damped) /
+              verified.distance,
           );
           const candidate = add(
             sub(focus, mul(actualDepth, horizontal)),
             v(0, Math.sqrt(damped ** 2 - horizontal ** 2), 0),
           );
-          eye =
-            check(candidate).contained &&
+          return check(candidate).contained &&
             eyeIsClear(focus, candidate, opaqueBoxes)
-              ? candidate
-              : best.eye;
+            ? candidate
+            : verified.eye;
         }
+      };
+      let eye: Vector3, constrained: boolean;
+      if (best) {
+        eye = dampEye(best);
         constrained = false;
       } else {
         const fallback = solve(fallbackDistance);
@@ -401,7 +446,7 @@ export function createCameraRig(layout: StreetLayout) {
         constrained = fallback.constrained || !check(eye).contained;
       }
       combatPreference = preference;
-      current = {
+      const frame: CameraFrame = {
         position: eye,
         target: focus,
         right: v(-actualDepth.z, 0, actualDepth.x),
@@ -409,6 +454,48 @@ export function createCameraRig(layout: StreetLayout) {
         fovDegrees: 50,
         constrained,
       };
+      const groups =
+        presentation?.bounds ??
+        [a, ...(b ? [b] : [])].map((actor) => ({
+          actorId: actor.actorId,
+          corners: framingPoints.length ? framingPoints : bodyCorners(actor),
+          kind: framingPoints.length
+            ? ('pose-bounds' as const)
+            : ('actor-proxy' as const),
+        }));
+      current = selectPresentationFrame({
+        baseline: frame,
+        layout: measuredLayout,
+        viewport,
+        bounds: groups,
+        priorDistance,
+        minDistance,
+        project: (point, candidate) => projectPoint(point, candidate, viewport),
+        propose: (range) => {
+          const candidate = solve(range);
+          return {
+            ...frame,
+            position: candidate.eye,
+            constrained:
+              candidate.constrained || !check(candidate.eye).contained,
+          };
+        },
+        damp: (selected) => {
+          // Baseline already received the legacy checked damping exactly once.
+          if (selected === frame) return selected;
+          const position = dampEye({
+            distance: length(sub(selected.position, selected.target)),
+            eye: selected.position,
+          });
+          return {
+            ...selected,
+            position,
+            constrained:
+              !check(position).contained ||
+              !eyeIsClear(focus, position, opaqueBoxes),
+          };
+        },
+      });
       return current;
     },
   };

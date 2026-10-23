@@ -2,6 +2,7 @@ import { type Camera, Vector3 as ThreeVector3 } from 'three';
 import { expect, test } from 'vitest';
 import { presentationTimeMs } from '../../src/contracts';
 import { createSceneAdapter } from '../../src/scene';
+import { createParisStreetLayout } from '../../src/world/street-layout';
 import { run, state, viewport } from '../world/fixtures';
 
 test('public gesture sessions capture the actual draw camera and keep older gestures immutable', () => {
@@ -62,4 +63,101 @@ test('public gesture sessions capture the actual draw camera and keep older gest
       scene.endMovementSession(basis.sessionId, 'released');
     }
   scene.dispose();
+});
+
+test('scene forwards the captured measured layout to its real draw camera', () => {
+  const view = { ...viewport, widthCssPx: 800, heightCssPx: 400 };
+  const street = createParisStreetLayout();
+  const positions: ThreeVector3[] = [];
+  for (const measured of ['legacy', 'empty', 'header']) {
+    const scene = createSceneAdapter(
+      {
+        runId: run,
+        seed: 1,
+        viewport: { read: () => view, subscribe: () => () => {} },
+      },
+      {
+        layout: {
+          ...street,
+          objects: [],
+          actorSpawns: { ...street.actorSpawns, blue: { x: 0, y: 0, z: 1.5 } },
+        },
+        onInterruption() {},
+        createRenderer: () => ({
+          domElement: new EventTarget() as HTMLCanvasElement,
+          render(_scene, camera) {
+            positions.push(camera.position.clone());
+          },
+          dispose() {},
+          setPixelRatio() {},
+          setSize() {},
+        }),
+      },
+    );
+    const snapshot = state(),
+      spatial = scene.commit({ snapshot, events: [] }, view);
+    scene.render({
+      snapshot,
+      spatial,
+      events: [],
+      viewport: view,
+      ...(measured !== 'legacy'
+        ? {
+            presentationLayout: {
+              runId: run,
+              viewportRevision: view.revision,
+              layoutRevision: 1,
+              rects:
+                measured === 'header'
+                  ? [
+                      {
+                        id: 'player-status' as const,
+                        left: 12,
+                        top: 28,
+                        right: 340,
+                        bottom: 110,
+                      },
+                      {
+                        id: 'opponent-status' as const,
+                        left: 460,
+                        top: 28,
+                        right: 788,
+                        bottom: 90,
+                      },
+                      {
+                        id: 'punch' as const,
+                        left: 728,
+                        top: 236,
+                        right: 792,
+                        bottom: 300,
+                      },
+                      {
+                        id: 'kick' as const,
+                        left: 728,
+                        top: 308,
+                        right: 792,
+                        bottom: 372,
+                      },
+                      {
+                        id: 'jump' as const,
+                        left: 656,
+                        top: 308,
+                        right: 720,
+                        bottom: 372,
+                      },
+                    ]
+                  : [],
+            },
+          }
+        : {}),
+    });
+    scene.dispose();
+  }
+  const focus = new ThreeVector3(0, 1, 0.75);
+  expect(positions[1]!.distanceTo(focus)).toBeLessThan(
+    positions[0]!.distanceTo(focus),
+  );
+  expect(positions[2]!.distanceTo(focus)).toBeGreaterThan(
+    positions[1]!.distanceTo(focus),
+  );
 });
