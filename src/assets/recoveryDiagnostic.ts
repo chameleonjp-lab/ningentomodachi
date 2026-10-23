@@ -1,5 +1,7 @@
 /** Optional offline adapter only. No timeline selection or live consumer dispatch. */
+import { Matrix4 } from 'three';
 import {
+  isStartupPoseEpoch,
   type ActorId,
   capturePoseEpoch,
   isRecoveryPoseEpoch,
@@ -19,8 +21,10 @@ import {
 } from '../contracts';
 import {
   blendPose,
+  blendStartupPoseV2,
   capturePose,
   composePoseMatrices,
+  checkedMatrixProduct,
   type LocalPose,
 } from './poseRecipeMath';
 import type { ClipRootPolicy } from './rootPolicy';
@@ -53,7 +57,8 @@ export interface RecoveryDiagnostic extends RecoveryDiagnosticInput {
   readonly identity: string;
 }
 export interface RecoveryDiagnosticSample {
-  readonly kind: 'canonical' | 'synthetic-recovery';
+  readonly kind: 'canonical' | 'synthetic-recovery' | 'synthetic-startup';
+  readonly basisLayer?: readonly number[];
   readonly recipeIdentity: string;
   readonly pose: LocalPose;
   readonly hierarchyId: string;
@@ -62,7 +67,8 @@ export interface RecoveryDiagnosticSample {
 export interface RecoveryRigDiagnostic {
   sampleCanonical(query: CanonicalPoseQuery): CanonicalPoseSnapshot;
   /** Complete local-pose apply on a dedicated diagnostic rig only. No C parent. */
-  apply(pose: LocalPose): void;
+  apply(pose: LocalPose, basisLayer?: readonly number[]): void;
+  basisLayer?(): readonly number[] | undefined;
 }
 export interface RecoveryHeadDiagnostic {
   sampleCanonical(query: CanonicalPoseQuery): CanonicalPoseSnapshot;
@@ -217,7 +223,76 @@ export function samplePoseEpoch(
   evaluate: (q: CanonicalPoseQuery) => CanonicalPoseSnapshot,
 ): RecoveryDiagnosticSample {
   const epoch = capturePoseEpoch(epochInput);
-  resolvePoseEpoch(epoch, at, side);
+  const resolved = resolvePoseEpoch(epoch, at, side);
+  if (isStartupPoseEpoch(epoch)) {
+    if (resolved.kind !== 'startup') throw Error('Invalid startup resolution');
+    const read = (q: CanonicalPoseQuery) => {
+      const raw = evaluate(q);
+      const result = captureCanonicalSnapshot(
+        raw.query,
+        raw.rootMode,
+        raw.pose,
+        raw.hierarchyId,
+      );
+      if (JSON.stringify(result.query) !== JSON.stringify(q))
+        throw Error('Startup canonical provenance mismatch');
+      return result;
+    };
+    const outgoing = read(
+      captureCanonicalQuery(epoch.outgoing, epoch.outgoingAt, 'left'),
+    );
+    // The startup endpoint exists on either sample side. The incoming source
+    // begins here, so validate its zero pose on the right while the outgoing
+    // contribution remains the actual strict-left Idle sample.
+    const destinationQuery = captureCanonicalQuery(
+      epoch.destination,
+      at,
+      at === epoch.startMs ? 'right' : side,
+    );
+    const incoming = read(destinationQuery);
+    if (
+      outgoing.hierarchyId !== incoming.hierarchyId ||
+      outgoing.pose.length !== incoming.pose.length ||
+      outgoing.pose.some(
+        (n, i) =>
+          n.id !== incoming.pose[i]?.id ||
+          n.parent !== incoming.pose[i]?.parent,
+      )
+    )
+      throw Error('Startup topology mismatch');
+    if (
+      incoming.rootMode !== epoch.rootPolicy ||
+      outgoing.rootMode !== 'full-translation'
+    )
+      throw Error('Startup root policy mismatch');
+    const weight = resolved.weight,
+      delta = epoch.basis.oldYaw - epoch.basis.admittedYaw;
+    if (Math.abs(delta) > Math.PI) throw Error('Unsupported startup basis arc');
+    // The basis matrix is shared recipe data, never decomposed into raw source TRS.
+    const basisLayer = captureBasisLayer(
+      (weight === 1 || delta === 0
+        ? new Matrix4()
+        : new Matrix4().makeRotationY(delta * (1 - weight))
+      ).toArray(),
+    );
+    const pose =
+      epoch.version === 'startup-shared-matrix-v2'
+        ? blendStartupPoseV2(outgoing.pose, incoming.pose, weight)
+        : weight === 0
+          ? outgoing.pose
+          : weight === 1
+            ? incoming.pose
+            : blendPose(outgoing.pose, incoming.pose, weight, 1);
+    composePoseMatrices(pose, basisLayer);
+    return Object.freeze({
+      kind: 'synthetic-startup',
+      recipeIdentity: epoch.identity,
+      pose,
+      hierarchyId: outgoing.hierarchyId,
+      destinationQuery,
+      basisLayer,
+    });
+  }
   if (isRecoveryPoseEpoch(epoch)) {
     const recipe = createRecoveryDiagnostic({ ...epoch, diagnostic: true });
     const sample = sampleRecoveryDiagnostic(recipe, at, side, evaluate);
@@ -249,7 +324,7 @@ export type PoseEpochInterval =
     }>
   | Readonly<{
       kind: 'unsupported';
-      reason: 'recovery-interval';
+      reason: 'recovery-interval' | 'startup-interval';
       resolution: 'unresolved';
       identity: string;
       from: GameTimeMs;
@@ -275,7 +350,7 @@ export function poseEpochIntervals(
         for (const query of poseClipIntervals(stamp, a, b))
           yield Object.freeze({ kind: 'canonical', stamp, query });
       };
-      if (!isRecoveryPoseEpoch(epoch)) {
+      if (!isRecoveryPoseEpoch(epoch) && !isStartupPoseEpoch(epoch)) {
         yield* canonical(epoch, from, to);
         return;
       }
@@ -292,7 +367,9 @@ export function poseEpochIntervals(
       if (left < right)
         yield Object.freeze({
           kind: 'unsupported',
-          reason: 'recovery-interval',
+          reason: isStartupPoseEpoch(epoch)
+            ? 'startup-interval'
+            : 'recovery-interval',
           resolution: 'unresolved',
           identity: epoch.identity,
           from: left,
@@ -306,4 +383,53 @@ export function poseEpochIntervals(
         );
     },
   });
+}
+
+/** Only the declared yaw matrix law is admitted. Dense own finite values; no TRS decomposition. */
+export function captureBasisLayer(input: readonly number[]): readonly number[] {
+  if (!Array.isArray(input) || input.length !== 16)
+    throw Error('Invalid basis layer');
+  const a: number[] = [];
+  for (let i = 0; i < 16; i++) {
+    const p = Object.getOwnPropertyDescriptor(input, i);
+    if (
+      !p ||
+      !('value' in p) ||
+      typeof p.value !== 'number' ||
+      !Number.isFinite(p.value)
+    )
+      throw Error('Invalid basis layer');
+    a.push(p.value);
+  }
+  if (
+    a[1] !== 0 ||
+    a[3] !== 0 ||
+    a[4] !== 0 ||
+    a[5] !== 1 ||
+    a[6] !== 0 ||
+    a[7] !== 0 ||
+    a[9] !== 0 ||
+    a[11] !== 0 ||
+    a[12] !== 0 ||
+    a[13] !== 0 ||
+    a[14] !== 0 ||
+    a[15] !== 1 ||
+    a[0] !== a[10] ||
+    a[2] !== -a[8]!
+  )
+    throw Error('Unsupported basis layer law');
+  const c = a[0]!,
+    v = a[8]!;
+  if (Math.abs(c * c + v * v - 1) > Number.EPSILON * 4)
+    throw Error('Unsupported basis layer rotation');
+  return Object.freeze(a);
+}
+export function composeBasisLayer(
+  matrix: readonly number[],
+  layer?: readonly number[],
+): readonly number[] {
+  return checkedMatrixProduct(
+    layer ? captureBasisLayer(layer) : new Matrix4().toArray(),
+    matrix,
+  );
 }

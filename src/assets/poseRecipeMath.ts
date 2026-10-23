@@ -116,6 +116,15 @@ function checkedMatrix(matrix: Matrix4): Matrix4 {
     throw Error('Unsupported singular/unrepresentable matrix domain');
   return matrix;
 }
+/** Detached checked product; neither operand is mutated or decomposed. */
+export function checkedMatrixProduct(
+  left: readonly number[],
+  right: readonly number[],
+): readonly number[] {
+  const a = checkedMatrix(new Matrix4().fromArray(captureVector(left, 16)));
+  const b = checkedMatrix(new Matrix4().fromArray(captureVector(right, 16)));
+  return Object.freeze(checkedMatrix(a.multiply(b)).toArray([] as number[]));
+}
 function localMatrix(n: LocalPoseNode): Matrix4 {
   return new Matrix4().compose(
     new Vector3().fromArray(n.t),
@@ -131,15 +140,25 @@ export interface PoseWorldMatrix {
 /** Actual raw-quaternion matrix products, never decomposed world TRS. */
 export function composePoseMatrices(
   input: LocalPose,
+  prefix?: readonly number[],
 ): readonly PoseWorldMatrix[] {
-  const nodes = capturePose(input),
+  // Capture caller-owned nodes once; both domain checks share this snapshot.
+  const nodes = capturePose(input);
+  // A finite prefix cannot relax the existing unprefixed hierarchy domain.
+  if (prefix !== undefined) composePoseMatrices(nodes);
+  const outer =
+      prefix === undefined
+        ? undefined
+        : checkedMatrix(new Matrix4().fromArray(captureVector(prefix, 16))),
     world = new Map<string, Matrix4>();
   return Object.freeze(
     nodes.map((n) => {
       const local = checkedMatrix(localMatrix(n));
       const matrix = checkedMatrix(
         n.parent === null
-          ? local
+          ? outer
+            ? outer.clone().multiply(local)
+            : local
           : required(world.get(n.parent)).clone().multiply(local),
       );
       world.set(n.id, matrix);
@@ -157,6 +176,7 @@ function radiusSpherical(
   b: readonly number[],
   sign: 1 | -1,
   weight: number,
+  minimumDot: 0 | -0.5,
 ): number[] {
   const ra = Math.hypot(...a),
     rb = Math.hypot(...b);
@@ -170,7 +190,7 @@ function radiusSpherical(
   const u = a.map((x) => x / ra),
     v = b.map((x) => (sign * x) / rb);
   const dot = u.reduce((sum, x, i) => sum + x * required(v[i]), 0);
-  if (!Number.isFinite(dot) || dot < 0)
+  if (!Number.isFinite(dot) || dot < minimumDot)
     throw Error('Unsupported fixed-lift crossing/antipodal domain');
   const wedge: number[] = [];
   for (let i = 0; i < 4; i++)
@@ -199,6 +219,27 @@ export function blendPose(
   weight: number,
   fixedLiftSign: 1 | -1,
 ): LocalPose {
+  return blendPoseInDomain(aInput, bInput, weight, fixedLiftSign, 0);
+}
+/** Explicit startup-only v2 diagnostic domain, never a configurable epsilon.
+ * Midpoint/chord directional normalization bound 2; not a roundoff certificate.
+ * Fixed positive lift can trace up to 240 physical degrees, not shortest path. */
+export const STARTUP_V2_MATH_DOMAIN =
+  'fixed-positive-lift-midpoint-half-v1' as const;
+export function blendStartupPoseV2(
+  aInput: LocalPose,
+  bInput: LocalPose,
+  weight: number,
+): LocalPose {
+  return blendPoseInDomain(aInput, bInput, weight, 1, -0.5);
+}
+function blendPoseInDomain(
+  aInput: LocalPose,
+  bInput: LocalPose,
+  weight: number,
+  fixedLiftSign: 1 | -1,
+  minimumDot: 0 | -0.5,
+): LocalPose {
   const a = capturePose(aInput),
     b = capturePose(bInput);
   if (
@@ -217,7 +258,7 @@ export function blendPose(
       parent: n.parent,
       t: n.t.map((x, k) => x * (1 - weight) + required(end.t[k]) * weight),
       s: n.s.map((x, k) => x * (1 - weight) + required(end.s[k]) * weight),
-      q: radiusSpherical(n.q, end.q, fixedLiftSign, weight),
+      q: radiusSpherical(n.q, end.q, fixedLiftSign, weight, minimumDot),
     };
   });
   const captured = weight === 0 ? a : weight === 1 ? b : capturePose(result);

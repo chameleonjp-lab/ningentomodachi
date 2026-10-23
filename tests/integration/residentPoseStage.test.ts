@@ -297,3 +297,172 @@ test('synthetic stage2 resident readiness does not invoke private evaluators or 
   f.stage.dispose();
   f.core.dispose();
 });
+
+const startupPolicy = {
+  version: 1 as const,
+  mode: 'deterministic-pose-v1' as const,
+  attackStartStance: 'selected-side-kicks-v1' as const,
+  startup: {
+    version: 1 as const,
+    protocol: 'side-kick-startup-matrix-v1' as const,
+    durationMs: durationMs(100),
+    fixedLiftSign: 1 as const,
+  },
+};
+test('startup resident admission rejects recovery-only provider before allocation', () => {
+  const f = fixture();
+  expect(() =>
+    createResidentAssetStage(
+      f.core.read(),
+      { ...f.source, recoveryCapability: RECOVERY_FRAME_CAPABILITY },
+      async () => {},
+      startupPolicy,
+    ),
+  ).toThrow(/startup/i);
+  expect(f.created).toHaveLength(0);
+  f.stage.dispose();
+  f.core.dispose();
+});
+test('startup resident stage rejects missing per-rig layer capability and releases acquired rig', async () => {
+  const f = fixture();
+  const stage = createResidentAssetStage(
+    f.core.read(),
+    {
+      ...f.source,
+      startupCapability: {
+        version: 1,
+        protocol: 'side-kick-startup-matrix-v1',
+        fixedLiftSign: 1,
+        deathLayerPolicy: 'freeze-entry-through-local-death-v1',
+      },
+      stageActor() {
+        throw Error('not a readiness probe');
+      },
+    },
+    async () => {},
+    startupPolicy,
+  );
+  await expect(stage.prepare(new AbortController().signal)).rejects.toThrow(
+    /startup/i,
+  );
+  expect(f.created).toHaveLength(1);
+  expect(f.created[0]?.dispose).toHaveBeenCalledOnce();
+  stage.dispose();
+  f.stage.dispose();
+  f.core.dispose();
+});
+
+test.each(['prepare', 'apply'] as const)(
+  'startup resident readiness rejects missing %s and disposes all partial acquisitions',
+  async (missing) => {
+    const f = fixture();
+    let count = 0;
+    const marker = {
+      version: 1 as const,
+      protocol: 'side-kick-startup-matrix-v1' as const,
+      fixedLiftSign: 1 as const,
+      deathLayerPolicy: 'freeze-entry-through-local-death-v1' as const,
+    };
+    const stage = createResidentAssetStage(
+      f.core.read(),
+      {
+        ...f.source,
+        startupCapability: marker,
+        stageActor() {
+          throw Error('not readiness');
+        },
+        create: (color) => {
+          const rig = f.source.create(color);
+          const frame = createPoseFrameDriver(
+            () => {
+              throw Error('must not evaluate');
+            },
+            () => {},
+            () => {},
+            marker,
+          );
+          count++;
+          return {
+            ...rig,
+            poseFrame:
+              count === 2
+                ? ({
+                    ...frame,
+                    [missing]: undefined,
+                  } as unknown as typeof frame)
+                : frame,
+          };
+        },
+      },
+      async () => {},
+      startupPolicy,
+    );
+    await expect(stage.prepare(new AbortController().signal)).rejects.toThrow(
+      /preparation|capability/i,
+    );
+    expect(f.core.read().phase).toBe('loading');
+    expect(f.created).toHaveLength(2);
+    for (const rig of f.created) expect(rig.dispose).toHaveBeenCalledOnce();
+    stage.dispose();
+    for (const rig of f.created) expect(rig.dispose).toHaveBeenCalledOnce();
+    f.stage.dispose();
+    f.core.dispose();
+  },
+);
+
+import {
+  STARTUP_FRAME_CAPABILITY,
+  STARTUP_FRAME_CAPABILITY_V2,
+} from '../../src/assets/poseFramePreparation';
+test.each([false, true])(
+  'startup v2 wire resident rejects v1-only asset or rig rig=%s',
+  async (rigMismatch) => {
+    const f = fixture();
+    const policy = {
+      ...startupPolicy,
+      startup: {
+        version: 2 as const,
+        protocol: 'side-kick-startup-matrix-v2' as const,
+        durationMs: durationMs(100),
+        fixedLiftSign: 1 as const,
+        domain: 'fixed-positive-lift-midpoint-half-v1' as const,
+      },
+    };
+    const source = {
+      ...f.source,
+      startupCapability: rigMismatch
+        ? STARTUP_FRAME_CAPABILITY_V2
+        : STARTUP_FRAME_CAPABILITY,
+      stageActor() {
+        throw Error('unused');
+      },
+      create: (color: ActorColor) => ({
+        ...f.source.create(color),
+        poseFrame: createPoseFrameDriver(
+          () => ({ pose: [] }),
+          () => {},
+          () => {},
+          STARTUP_FRAME_CAPABILITY,
+        ),
+      }),
+    };
+    if (!rigMismatch)
+      expect(() =>
+        createResidentAssetStage(f.core.read(), source, async () => {}, policy),
+      ).toThrow('Missing matching startup frame capability');
+    else {
+      const stage = createResidentAssetStage(
+        f.core.read(),
+        source,
+        async () => {},
+        policy,
+      );
+      await expect(stage.prepare(new AbortController().signal)).rejects.toThrow(
+        'Missing matching startup frame capability',
+      );
+      for (const rig of f.created) expect(rig.dispose).toHaveBeenCalledOnce();
+      stage.dispose();
+    }
+    f.core.dispose();
+  },
+);

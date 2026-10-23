@@ -91,10 +91,12 @@ export async function prepareAndroidVisualAssets(input: {
     // The verified factory resolves with a final immutable descriptor.
     const poseBindings = owned.poseBindings;
     const recoveryCapability = owned.recoveryCapability;
+    const startupCapability = owned.startupCapability;
     const stageActor = owned.stageActor;
     return {
       ...(poseBindings ? { poseBindings } : {}),
       ...(recoveryCapability ? { recoveryCapability } : {}),
+      ...(startupCapability ? { startupCapability } : {}),
       ...(stageActor ? { stageActor: stageActor.bind(owned) } : {}),
       create(color) {
         const rig = owned.create(color);

@@ -1,3 +1,4 @@
+import { captureStartupFrameCapability } from '../assets/poseFramePreparation';
 import {
   capturePoseRunPolicy,
   captureRecoveryTimelinePolicy,
@@ -25,7 +26,12 @@ export function createResidentAssetStage<Node>(
   const poseBindings = suppliedPoseBindings
     ? immutableDto(suppliedPoseBindings)
     : undefined;
-  const recovery = policy.recovery;
+  const recovery = policy.recovery,
+    startup = policy.startup,
+    composite = !!(recovery || startup);
+  const startupCapability = startup
+    ? captureStartupFrameCapability(source.startupCapability, startup)
+    : undefined;
   if (
     recovery &&
     (!source.recoveryCapability ||
@@ -34,7 +40,7 @@ export function createResidentAssetStage<Node>(
       ) !== JSON.stringify(recovery))
   )
     throw Error('Missing recovery asset capability');
-  if (recovery && typeof source.stageActor !== 'function')
+  if (composite && typeof source.stageActor !== 'function')
     throw Error('Missing CPU staged actor capability');
   const run = initial.runId;
   const roster = new Map<ActorId, ActorColor>();
@@ -78,15 +84,21 @@ export function createResidentAssetStage<Node>(
           'Required rig lacks deterministic pose driver capability',
         );
       if (
-        recovery &&
+        composite &&
         (!rig.poseFrame ||
           typeof rig.poseFrame.prepare !== 'function' ||
           typeof rig.poseFrame.apply !== 'function' ||
-          JSON.stringify(
-            captureRecoveryTimelinePolicy(rig.poseFrame.capability),
-          ) !== JSON.stringify(recovery))
+          (recovery &&
+            JSON.stringify(
+              captureRecoveryTimelinePolicy(rig.poseFrame.capability),
+            ) !== JSON.stringify(recovery)))
       )
-        throw Error('Required rig lacks recovery preparation');
+        throw Error('Required rig lacks recovery/startup preparation');
+      if (startup)
+        captureStartupFrameCapability(
+          rig.poseFrame?.startupCapability,
+          startup,
+        );
       if (disposed) throw new Error('Run assets cancelled');
       return rig;
     } catch (error) {
@@ -125,9 +137,10 @@ export function createResidentAssetStage<Node>(
       throw new AggregateError(errors, 'Pending rig cleanup failed');
   };
   const assets: AnimatorAssets<Node> = {
-    ...(recovery
+    ...(composite
       ? {
-          recoveryCapability: recovery,
+          ...(recovery ? { recoveryCapability: recovery } : {}),
+          ...(startupCapability ? { startupCapability } : {}),
           stageActor(color: ActorColor): StagedActorRig<Node> {
             if (disposed || !prepared || !lease)
               throw Error('CPU stage requires an active render lease');
@@ -168,11 +181,19 @@ export function createResidentAssetStage<Node>(
               frameDriver = handle.poseFrame;
               if (
                 !frameDriver ||
-                JSON.stringify(
-                  captureRecoveryTimelinePolicy(frameDriver.capability),
-                ) !== JSON.stringify(recovery)
+                typeof frameDriver.prepare !== 'function' ||
+                typeof frameDriver.apply !== 'function' ||
+                (recovery &&
+                  JSON.stringify(
+                    captureRecoveryTimelinePolicy(frameDriver.capability),
+                  ) !== JSON.stringify(recovery))
               )
                 throw Error('Invalid CPU stage capability');
+              if (startup)
+                captureStartupFrameCapability(
+                  frameDriver.startupCapability,
+                  startup,
+                );
               if (disposed) throw Error('CPU stage cancelled');
             } catch (error) {
               cpuStages.delete(handle);

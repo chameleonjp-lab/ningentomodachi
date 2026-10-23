@@ -972,3 +972,189 @@ test('actual Core recovery engine disposal rejects further committed work', () =
   h.dispose();
   expect(() => h.e.commit(output)).toThrow(/disposed/);
 });
+
+import { STARTUP_SOURCES, attackActivationId } from '../../src/contracts';
+const startupRunPolicy: PoseRunPolicy = {
+  ...policy,
+  attackStartStance: 'selected-side-kicks-v1',
+  startup: {
+    version: 1,
+    protocol: 'side-kick-startup-matrix-v1',
+    durationMs: durationMs(100),
+    fixedLiftSign: 1,
+  },
+};
+function startupDescriptor(): PoseCatalogBindings {
+  const b = descriptor();
+  return {
+    ...b,
+    clips: [
+      ...b.clips.filter((x) => x.clipId !== 'idle'),
+      {
+        clipId: clipId('Idle'),
+        durationMs: durationMs(100),
+        sourceBindingId: 'idle',
+      },
+      STARTUP_SOURCES.SideKick.binding,
+    ],
+    locomotion: { ...b.locomotion, idle: clipId('Idle') },
+  };
+}
+function startupCatalog() {
+  const c = catalog();
+  return {
+    ...c,
+    get: () => ({
+      clipId: clipId('SideKick'),
+      category: 'kick' as const,
+      durationMs: STARTUP_SOURCES.SideKick.binding.durationMs,
+      effectiveRangeM: 1,
+      impacts: [
+        {
+          impactIndex: 0,
+          startMs: STARTUP_SOURCES.SideKick.firstActiveMs,
+          endMs: durationMs(622.2222447395325),
+          damageShare: 1,
+          shapeId: 'diagnostic',
+        },
+      ],
+      rootCurve: [],
+      sampling: {
+        version: 1 as const,
+        sampleRateHz: 45,
+        interpolation: 'piecewise-linear' as const,
+      },
+    }),
+  };
+}
+function startupRequest() {
+  const a = {
+    ...actor('white'),
+    attack: {
+      activationId: attackActivationId('startup'),
+      clipId: clipId('SideKick'),
+      category: 'kick' as const,
+      startedAt: gameTimeMs(20),
+      consumedImpacts: [],
+      impactBindings: [],
+    },
+  };
+  return {
+    snapshot: state(2, { actors: [a, actor('blue')] }),
+    step: { durationMs: durationMs(20) },
+    intents: [],
+  };
+}
+test('startup engine admits one shared basis without changing stance-on physical simulation', () => {
+  const on = createSpatialEngine(
+    run,
+    createParisStreetLayout(),
+    startupRunPolicy,
+  );
+  const stance = createSpatialEngine(run, createParisStreetLayout(), {
+    ...policy,
+    attackStartStance: 'selected-side-kicks-v1',
+  });
+  try {
+    for (const e of [on, stance]) {
+      e.poseProtocol!.bindPreparedCatalog(startupDescriptor());
+      e.commit({ snapshot: state(), events: [] });
+      e.step(
+        {
+          snapshot: state(1),
+          step: { durationMs: durationMs(20) },
+          intents: [],
+        },
+        catalog(),
+      );
+    }
+    const a = on.step(startupRequest(), startupCatalog()),
+      b = stance.step(startupRequest(), startupCatalog());
+    expect(a.snapshot.actors[0]!.pose).toMatchObject({
+      kind: 'startup',
+      epoch: { basis: { authority: 'activation-stance-v1' } },
+    });
+    const physical = (x: typeof a) => ({
+      ...x,
+      snapshot: {
+        ...x.snapshot,
+        actors: x.snapshot.actors.map(({ pose, ...p }) => p),
+      },
+    });
+    expect(physical(a)).toEqual(physical(b));
+    expect(on.poseProtocol?.startup).toEqual(startupRunPolicy.startup);
+    expect(stance.poseProtocol?.startup).toBeUndefined();
+  } finally {
+    on.dispose();
+    stance.dispose();
+  }
+});
+test('startup engine validates pinned window before physical mutation', () => {
+  const e = createSpatialEngine(
+    run,
+    createParisStreetLayout(),
+    startupRunPolicy,
+  );
+  try {
+    e.poseProtocol!.bindPreparedCatalog(startupDescriptor());
+    e.commit({ snapshot: state(), events: [] });
+    e.step(
+      { snapshot: state(1), step: { durationMs: durationMs(20) }, intents: [] },
+      catalog(),
+    );
+    const c = startupCatalog();
+    expect(() =>
+      e.step(startupRequest(), {
+        ...c,
+        get: () => ({
+          ...c.get(),
+          impacts: [{ ...c.get().impacts[0]!, startMs: durationMs(1) }],
+        }),
+      }),
+    ).toThrow('window');
+    expect(e.step(startupRequest(), c).snapshot.actors[0]!.pose?.kind).toBe(
+      'startup',
+    );
+  } finally {
+    e.dispose();
+  }
+});
+test('startup late second actor binding rejection leaves both actors available for unchanged valid retry', () => {
+  const e = createSpatialEngine(
+    run,
+    createParisStreetLayout(),
+    startupRunPolicy,
+  );
+  try {
+    e.poseProtocol!.bindPreparedCatalog(startupDescriptor());
+    e.commit({ snapshot: state(), events: [] });
+    e.step(
+      { snapshot: state(1), step: { durationMs: durationMs(20) }, intents: [] },
+      catalog(),
+    );
+    const request = startupRequest(),
+      white = request.snapshot.actors[0]!;
+    const blue = {
+      ...actor('blue'),
+      attack: {
+        ...white.attack!,
+        activationId: attackActivationId('bad-blue'),
+        clipId: clipId('SideThrustKick'),
+      },
+    };
+    expect(() =>
+      e.step(
+        {
+          ...request,
+          snapshot: { ...request.snapshot, actors: [white, blue] },
+        },
+        startupCatalog(),
+      ),
+    ).toThrow();
+    const result = e.step(request, startupCatalog());
+    expect(result.snapshot.actors[0]!.pose?.kind).toBe('startup');
+    expect(result.snapshot.actors[1]!.pose?.kind).toBe('living');
+  } finally {
+    e.dispose();
+  }
+});
