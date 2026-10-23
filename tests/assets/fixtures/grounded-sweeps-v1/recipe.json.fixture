@@ -1,0 +1,677 @@
+{
+  "schemaVersion": 1,
+  "status": "diagnostic-broadphase-only",
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "interpolationPaddingM": null,
+  "source": {
+    "sourcePath": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "manifestPath": "assets/android/motions/completed42-speed15/kick/manifest.json",
+    "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed"
+  },
+  "fit": "one source-only capsule; Roundhouse fixed mesh-bind +Y/shin reference, SideThrust +Z/foot reference; unchanged helper via declared proper rotation; 1e-7m CPU guard",
+  "selection": "separately tagged clipped anterior-shin/instep or heel/sole hypotheses; exact frozen per-clip recipe-plan hashes; no anatomical or HP acceptance",
+  "plans": [
+    {
+      "acceptance": null,
+      "alreadyBakedSpeed": 1.5,
+      "axis": "mesh-bind +Y",
+      "axisMap": {
+        "forward": "(x,-z,y)",
+        "inverse": "(x,z,-y)"
+      },
+      "clipId": "RoundhouseKick",
+      "cpuGuardM": 1e-07,
+      "fit": "unchanged fitSourceAxisCapsule: radial bounds midpoint, maximum radial distance plus CPU guard, shortened feasible segment; no PCA/target fitting",
+      "fitCount": 1,
+      "fitSamples": "all original source keys and 240Hz grid in active interval, plus exact window endpoints as continuous-limit samples; endpoint is not an extra active instant",
+      "gameplayExcessAllowanceM": null,
+      "geometryLedger": "original primitive/triangle/vertex IDs, exact clipped barycentrics, region tags, full/clipped/excluded/overlap face counts; no welding",
+      "interpolationPaddingM": null,
+      "manifestPath": "assets/android/motions/completed42-speed15/kick/manifest.json",
+      "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+      "normalRule": "source vertex normals as scalar clipping fields, not geometric face-normal acceptance; bone-bind normal uses normalized inverse-transpose of mesh-bind-to-bone-bind matrix",
+      "proxy": "one capsule, broadphase diagnostic only",
+      "reference": {
+        "frame": "original mesh-bind attached through meshWorld * bindMatrixInverse * boneWorld * inverseBind * bindMatrix",
+        "joint": 50,
+        "node": 49
+      },
+      "regions": [
+        {
+          "fields": [
+            "shin influence >= 0.5",
+            "y >= 0.080",
+            "y <= 0.360",
+            "z <= -0.035",
+            "normal.z <= -0.25"
+          ],
+          "frame": "shin.R bone-bind",
+          "joint": 50,
+          "node": 49,
+          "tag": "anterior-shin-hypothesis"
+        },
+        {
+          "fields": [
+            "foot+toe influence >= 0.5",
+            "z >= 0.025",
+            "z <= 0.230",
+            "y >= 0.045",
+            "normal.y >= 0.35"
+          ],
+          "frame": "original mesh-bind",
+          "joints": [
+            51,
+            52
+          ],
+          "nodes": [
+            48,
+            47
+          ],
+          "tag": "instep-hypothesis"
+        }
+      ],
+      "rootMode": "in-place-posture-xyz",
+      "runtimeSpeed": 1,
+      "schemaVersion": 1,
+      "sourceClipIndex": 2,
+      "sourceClipPointer": "/clips/2",
+      "sourceEvent": {
+        "active_frames": [
+          30,
+          35
+        ],
+        "limb": "right shin/instep",
+        "peak_frame": 31,
+        "technique": "Horizontal inward roundhouse arc after bent-knee chamber; continues across target before recoil"
+      },
+      "sourceEventPointer": "/clips/2/attack_and_timeline_events/strikes/0",
+      "sourceFrames": [
+        30,
+        35
+      ],
+      "sourcePath": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+      "sourcePeakFrame": 31,
+      "sourceRoot": {
+        "root_motion": {
+          "endpoint": "Original guard position; no translational attack travel",
+          "mode": "In-place one-shot weight shift and hip turn, no net travel",
+          "peak_yaw_radians": 0.85
+        }
+      },
+      "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+      "sourceSupport": {
+        "support": [
+          {
+            "contact": "both feet then left weight load",
+            "frames": [
+              1,
+              10
+            ]
+          },
+          {
+            "contact": "left sole, ball-centered pivot up to 1.25 rad",
+            "frames": [
+              11,
+              60
+            ]
+          },
+          {
+            "contact": "two-foot guard",
+            "frames": [
+              61,
+              67
+            ]
+          }
+        ]
+      },
+      "status": "fixed-source-only-recipe-plan",
+      "supportRegion": {
+        "fields": [
+          "foot+toe influence >= 0.5",
+          "y <= 0.035",
+          "normal.y <= -0.35"
+        ],
+        "frame": "original mesh-bind",
+        "leftJoints": [
+          47,
+          48
+        ],
+        "leftNodes": [
+          44,
+          43
+        ],
+        "phaseWindows": "source support records preserved verbatim; minimum witnesses and pivot trajectories, not all sole points fixed"
+      },
+      "targetInput": null,
+      "transportXYZ": [
+        0,
+        0,
+        0
+      ],
+      "verticalOwner": "spatial-jump",
+      "windowPolicy": "inclusive-accessor-cell; half-open start-frame to frame-after-inclusive-end; exact Float32 source times; no retiming"
+    },
+    {
+      "acceptance": null,
+      "alreadyBakedSpeed": 1.5,
+      "axis": "mesh-bind +Z",
+      "axisMap": null,
+      "clipId": "SideThrustKick",
+      "cpuGuardM": 1e-07,
+      "fit": "unchanged fitSourceAxisCapsule: radial bounds midpoint, maximum radial distance plus CPU guard, shortened feasible segment; no PCA/target fitting",
+      "fitCount": 1,
+      "fitSamples": "all original source keys and 240Hz grid in active interval, plus exact window endpoints as continuous-limit samples; endpoint is not an extra active instant",
+      "gameplayExcessAllowanceM": null,
+      "geometryLedger": "original primitive/triangle/vertex IDs, exact clipped barycentrics, region tags, full/clipped/excluded/overlap face counts; no welding",
+      "interpolationPaddingM": null,
+      "manifestPath": "assets/android/motions/completed42-speed15/kick/manifest.json",
+      "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+      "normalRule": "source vertex normals as scalar clipping fields, not geometric face-normal acceptance; bone-bind normal uses normalized inverse-transpose of mesh-bind-to-bone-bind matrix",
+      "proxy": "one capsule, broadphase diagnostic only",
+      "reference": {
+        "frame": "original mesh-bind attached through meshWorld * bindMatrixInverse * boneWorld * inverseBind * bindMatrix",
+        "joint": 51,
+        "node": 48
+      },
+      "regions": [
+        {
+          "fields": [
+            "foot influence >= 0.5",
+            "z <= -0.035",
+            "y <= 0.120",
+            "normal.z <= -0.25"
+          ],
+          "frame": "original mesh-bind",
+          "joints": [
+            51
+          ],
+          "nodes": [
+            48
+          ],
+          "tag": "heel-hypothesis"
+        },
+        {
+          "fields": [
+            "foot+toe influence >= 0.5",
+            "y <= 0.035",
+            "normal.y <= -0.35"
+          ],
+          "frame": "original mesh-bind",
+          "joints": [
+            51,
+            52
+          ],
+          "nodes": [
+            48,
+            47
+          ],
+          "tag": "sole-hypothesis"
+        }
+      ],
+      "rootMode": "in-place-posture-xyz",
+      "runtimeSpeed": 1,
+      "schemaVersion": 1,
+      "sourceClipIndex": 9,
+      "sourceClipPointer": "/clips/9",
+      "sourceEvent": {
+        "active_frames": [
+          34,
+          39
+        ],
+        "direction_blender": [
+          -1,
+          0,
+          0
+        ],
+        "hit_count": 1,
+        "limb": "right heel/sole",
+        "peak_frame": 36,
+        "type": "lateral pushing thrust"
+      },
+      "sourceEventPointer": "/clips/9/attack_and_timeline_events/attack_events/0",
+      "sourceFrames": [
+        34,
+        39
+      ],
+      "sourcePath": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+      "sourcePeakFrame": 36,
+      "sourceRoot": {
+        "root_motion": {
+          "axes": "Blender +Z up, -Y initial front, -X character right. Exported glTF lateral attack remains -X.",
+          "handling": "Do not extract temporary counterbalance as net travel. No terminal origin snap.",
+          "lateral_pelvis_drive_during_thrust_m": -0.125,
+          "mode": "in-place one-shot with continuous weight transfer, not locomotion",
+          "net_translation_blender_m": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "net_yaw_radians": 0.0
+        }
+      },
+      "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+      "sourceSupport": {
+        "support_contacts": [
+          {
+            "ankle_armature_m": [
+              0.23,
+              -0.05,
+              0.168
+            ],
+            "frames": [
+              1,
+              71
+            ],
+            "limb": "left foot",
+            "type": "flat-sole support; yaw pivots about fixed ankle without translation",
+            "yaw_radians": [
+              0.0,
+              1.43,
+              0.0
+            ]
+          },
+          {
+            "frames": [
+              1,
+              1
+            ],
+            "limb": "right foot",
+            "type": "startup stance"
+          },
+          {
+            "frames": [
+              71,
+              71
+            ],
+            "limb": "right foot",
+            "type": "recovered stance"
+          }
+        ]
+      },
+      "status": "fixed-source-only-recipe-plan",
+      "supportRegion": {
+        "fields": [
+          "foot+toe influence >= 0.5",
+          "y <= 0.035",
+          "normal.y <= -0.35"
+        ],
+        "frame": "original mesh-bind",
+        "leftJoints": [
+          47,
+          48
+        ],
+        "leftNodes": [
+          44,
+          43
+        ],
+        "phaseWindows": "source support records preserved verbatim; minimum witnesses and pivot trajectories, not all sole points fixed"
+      },
+      "targetInput": null,
+      "transportXYZ": [
+        0,
+        0,
+        0
+      ],
+      "verticalOwner": "spatial-jump",
+      "windowPolicy": "inclusive-accessor-cell; half-open start-frame to frame-after-inclusive-end; exact Float32 source times; no retiming"
+    }
+  ],
+  "clips": [
+    {
+      "clipId": "RoundhouseKick",
+      "durationMs": 1488.8888597488403,
+      "side": "R",
+      "regions": [
+        "anterior-shin-hypothesis",
+        "instep-hypothesis"
+      ],
+      "axis": "Y",
+      "referenceJoint": 50,
+      "referenceNode": 49,
+      "referenceName": "shinR",
+      "recipePlanSha256": "50429342684caacbed3ec3aa2a466c28f675a9f4ce4d1f7d244f7688eccdf932",
+      "supportSide": "L",
+      "sourceFrames": [
+        30,
+        35
+      ],
+      "sourceClipPointer": "/clips/2",
+      "sourceEventPointer": "/clips/2/attack_and_timeline_events/strikes/0",
+      "sourceDirection": "source horizontal inward right shin/instep arc; no target-facing correction",
+      "sourceEvent": {
+        "limb": "right shin/instep",
+        "active_frames": [
+          30,
+          35
+        ],
+        "peak_frame": 31,
+        "technique": "Horizontal inward roundhouse arc after bent-knee chamber; continues across target before recoil"
+      },
+      "sourceSupport": {
+        "support": [
+          {
+            "frames": [
+              1,
+              10
+            ],
+            "contact": "both feet then left weight load"
+          },
+          {
+            "frames": [
+              11,
+              60
+            ],
+            "contact": "left sole, ball-centered pivot up to 1.25 rad"
+          },
+          {
+            "frames": [
+              61,
+              67
+            ],
+            "contact": "two-foot guard"
+          }
+        ]
+      },
+      "sourceRoot": {
+        "root_motion": {
+          "mode": "In-place one-shot weight shift and hip turn, no net travel",
+          "peak_yaw_radians": 0.85,
+          "endpoint": "Original guard position; no translational attack travel"
+        }
+      },
+      "sourceTimesSeconds": [
+        0.02222222276031971,
+        0.04444444552063942,
+        0.06666667014360428,
+        0.08888889104127884,
+        0.1111111119389534,
+        0.13333334028720856,
+        0.15555556118488312,
+        0.17777778208255768,
+        0.20000000298023224,
+        0.2222222238779068,
+        0.24444444477558136,
+        0.2666666805744171,
+        0.2888889014720917,
+        0.31111112236976624,
+        0.3333333432674408,
+        0.35555556416511536,
+        0.3777777850627899,
+        0.4000000059604645,
+        0.42222222685813904,
+        0.4444444477558136,
+        0.46666666865348816,
+        0.4888888895511627,
+        0.5111110806465149,
+        0.5333333611488342,
+        0.555555522441864,
+        0.5777778029441833,
+        0.5999999642372131,
+        0.6222222447395325,
+        0.6444444060325623,
+        0.6666666865348816,
+        0.6888888478279114,
+        0.7111111283302307,
+        0.7333333492279053,
+        0.7555555701255798,
+        0.7777777314186096,
+        0.800000011920929,
+        0.8222222328186035,
+        0.8444444537162781,
+        0.8666666150093079,
+        0.8888888955116272,
+        0.9111111164093018,
+        0.9333333373069763,
+        0.9555554986000061,
+        0.9777777791023254,
+        1,
+        1.0222221612930298,
+        1.0444444417953491,
+        1.0666667222976685,
+        1.0888888835906982,
+        1.111111044883728,
+        1.1333333253860474,
+        1.1555556058883667,
+        1.1777777671813965,
+        1.1999999284744263,
+        1.2222222089767456,
+        1.244444489479065,
+        1.2666666507720947,
+        1.2888888120651245,
+        1.3111110925674438,
+        1.3333333730697632,
+        1.355555534362793,
+        1.3777776956558228,
+        1.399999976158142,
+        1.4222222566604614,
+        1.4444445371627808,
+        1.4666666984558105,
+        1.4888888597488403
+      ],
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 666.6666865348816,
+        "endMs": 800.000011920929,
+        "peakMs": 688.8888478279114,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 644.4444444444445,
+          "endMs": 777.7777777777778,
+          "peakMs": 666.6666666666666
+        },
+        "initialHoldEndMs": 22.22222276031971
+      },
+      "rootPolicy": {
+        "version": 1,
+        "clipId": "RoundhouseKick",
+        "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+        "mode": "in-place-posture-xyz",
+        "provenance": {
+          "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+          "clipPointer": "/clips/2",
+          "supportPointer": "/clips/2/support_contacts/support"
+        }
+      },
+      "rootPolicyAcceptance": null,
+      "acceptance": null
+    },
+    {
+      "clipId": "SideThrustKick",
+      "durationMs": 1577.7777433395386,
+      "side": "R",
+      "regions": [
+        "heel-hypothesis",
+        "sole-hypothesis"
+      ],
+      "axis": "Z",
+      "referenceJoint": 51,
+      "referenceNode": 48,
+      "referenceName": "footR",
+      "recipePlanSha256": "e9b8ee23d60a7d16c61cfac52d47d867299214467d6cc0ac6213c30f234134f3",
+      "supportSide": "L",
+      "sourceFrames": [
+        34,
+        39
+      ],
+      "sourceClipPointer": "/clips/9",
+      "sourceEventPointer": "/clips/9/attack_and_timeline_events/attack_events/0",
+      "sourceDirection": "source lateral pushing thrust, Blender -X; no target-facing correction",
+      "sourceEvent": {
+        "limb": "right heel/sole",
+        "type": "lateral pushing thrust",
+        "active_frames": [
+          34,
+          39
+        ],
+        "peak_frame": 36,
+        "hit_count": 1,
+        "direction_blender": [
+          -1,
+          0,
+          0
+        ]
+      },
+      "sourceSupport": {
+        "support_contacts": [
+          {
+            "limb": "left foot",
+            "frames": [
+              1,
+              71
+            ],
+            "ankle_armature_m": [
+              0.23,
+              -0.05,
+              0.168
+            ],
+            "type": "flat-sole support; yaw pivots about fixed ankle without translation",
+            "yaw_radians": [
+              0,
+              1.43,
+              0
+            ]
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              1,
+              1
+            ],
+            "type": "startup stance"
+          },
+          {
+            "limb": "right foot",
+            "frames": [
+              71,
+              71
+            ],
+            "type": "recovered stance"
+          }
+        ]
+      },
+      "sourceRoot": {
+        "root_motion": {
+          "mode": "in-place one-shot with continuous weight transfer, not locomotion",
+          "net_translation_blender_m": [
+            0,
+            0,
+            0
+          ],
+          "net_yaw_radians": 0,
+          "lateral_pelvis_drive_during_thrust_m": -0.125,
+          "handling": "Do not extract temporary counterbalance as net travel. No terminal origin snap.",
+          "axes": "Blender +Z up, -Y initial front, -X character right. Exported glTF lateral attack remains -X."
+        }
+      },
+      "sourceTimesSeconds": [
+        0.02222222276031971,
+        0.04444444552063942,
+        0.06666667014360428,
+        0.08888889104127884,
+        0.1111111119389534,
+        0.13333334028720856,
+        0.15555556118488312,
+        0.17777778208255768,
+        0.20000000298023224,
+        0.2222222238779068,
+        0.24444444477558136,
+        0.2666666805744171,
+        0.2888889014720917,
+        0.31111112236976624,
+        0.3333333432674408,
+        0.35555556416511536,
+        0.3777777850627899,
+        0.4000000059604645,
+        0.42222222685813904,
+        0.4444444477558136,
+        0.46666666865348816,
+        0.4888888895511627,
+        0.5111110806465149,
+        0.5333333611488342,
+        0.555555522441864,
+        0.5777778029441833,
+        0.5999999642372131,
+        0.6222222447395325,
+        0.6444444060325623,
+        0.6666666865348816,
+        0.6888888478279114,
+        0.7111111283302307,
+        0.7333333492279053,
+        0.7555555701255798,
+        0.7777777314186096,
+        0.800000011920929,
+        0.8222222328186035,
+        0.8444444537162781,
+        0.8666666150093079,
+        0.8888888955116272,
+        0.9111111164093018,
+        0.9333333373069763,
+        0.9555554986000061,
+        0.9777777791023254,
+        1,
+        1.0222221612930298,
+        1.0444444417953491,
+        1.0666667222976685,
+        1.0888888835906982,
+        1.111111044883728,
+        1.1333333253860474,
+        1.1555556058883667,
+        1.1777777671813965,
+        1.1999999284744263,
+        1.2222222089767456,
+        1.244444489479065,
+        1.2666666507720947,
+        1.2888888120651245,
+        1.3111110925674438,
+        1.3333333730697632,
+        1.355555534362793,
+        1.3777776956558228,
+        1.399999976158142,
+        1.4222222566604614,
+        1.4444445371627808,
+        1.4666666984558105,
+        1.4888888597488403,
+        1.5111111402511597,
+        1.5333333015441895,
+        1.5555554628372192,
+        1.5777777433395386
+      ],
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 755.5555701255798,
+        "endMs": 888.8888955116272,
+        "peakMs": 800.000011920929,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 733.3333333333333,
+          "endMs": 866.6666666666667,
+          "peakMs": 777.7777777777778
+        },
+        "initialHoldEndMs": 22.22222276031971
+      },
+      "rootPolicy": {
+        "version": 1,
+        "clipId": "SideThrustKick",
+        "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+        "mode": "in-place-posture-xyz",
+        "provenance": {
+          "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+          "clipPointer": "/clips/9",
+          "supportPointer": "/clips/9/support_contacts/support_contacts"
+        }
+      },
+      "rootPolicyAcceptance": null,
+      "acceptance": null
+    }
+  ],
+  "planJsonUtf8": [
+    "{\n  \"acceptance\": null,\n  \"alreadyBakedSpeed\": 1.5,\n  \"axis\": \"mesh-bind +Y\",\n  \"axisMap\": {\n    \"forward\": \"(x,-z,y)\",\n    \"inverse\": \"(x,z,-y)\"\n  },\n  \"clipId\": \"RoundhouseKick\",\n  \"cpuGuardM\": 1e-07,\n  \"fit\": \"unchanged fitSourceAxisCapsule: radial bounds midpoint, maximum radial distance plus CPU guard, shortened feasible segment; no PCA/target fitting\",\n  \"fitCount\": 1,\n  \"fitSamples\": \"all original source keys and 240Hz grid in active interval, plus exact window endpoints as continuous-limit samples; endpoint is not an extra active instant\",\n  \"gameplayExcessAllowanceM\": null,\n  \"geometryLedger\": \"original primitive/triangle/vertex IDs, exact clipped barycentrics, region tags, full/clipped/excluded/overlap face counts; no welding\",\n  \"interpolationPaddingM\": null,\n  \"manifestPath\": \"assets/android/motions/completed42-speed15/kick/manifest.json\",\n  \"manifestSha256\": \"f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed\",\n  \"normalRule\": \"source vertex normals as scalar clipping fields, not geometric face-normal acceptance; bone-bind normal uses normalized inverse-transpose of mesh-bind-to-bone-bind matrix\",\n  \"proxy\": \"one capsule, broadphase diagnostic only\",\n  \"reference\": {\n    \"frame\": \"original mesh-bind attached through meshWorld * bindMatrixInverse * boneWorld * inverseBind * bindMatrix\",\n    \"joint\": 50,\n    \"node\": 49\n  },\n  \"regions\": [\n    {\n      \"fields\": [\n        \"shin influence >= 0.5\",\n        \"y >= 0.080\",\n        \"y <= 0.360\",\n        \"z <= -0.035\",\n        \"normal.z <= -0.25\"\n      ],\n      \"frame\": \"shin.R bone-bind\",\n      \"joint\": 50,\n      \"node\": 49,\n      \"tag\": \"anterior-shin-hypothesis\"\n    },\n    {\n      \"fields\": [\n        \"foot+toe influence >= 0.5\",\n        \"z >= 0.025\",\n        \"z <= 0.230\",\n        \"y >= 0.045\",\n        \"normal.y >= 0.35\"\n      ],\n      \"frame\": \"original mesh-bind\",\n      \"joints\": [\n        51,\n        52\n      ],\n      \"nodes\": [\n        48,\n        47\n      ],\n      \"tag\": \"instep-hypothesis\"\n    }\n  ],\n  \"rootMode\": \"in-place-posture-xyz\",\n  \"runtimeSpeed\": 1,\n  \"schemaVersion\": 1,\n  \"sourceClipIndex\": 2,\n  \"sourceClipPointer\": \"/clips/2\",\n  \"sourceEvent\": {\n    \"active_frames\": [\n      30,\n      35\n    ],\n    \"limb\": \"right shin/instep\",\n    \"peak_frame\": 31,\n    \"technique\": \"Horizontal inward roundhouse arc after bent-knee chamber; continues across target before recoil\"\n  },\n  \"sourceEventPointer\": \"/clips/2/attack_and_timeline_events/strikes/0\",\n  \"sourceFrames\": [\n    30,\n    35\n  ],\n  \"sourcePath\": \"assets/android/motions/completed42-speed15/kick/android_kick.glb\",\n  \"sourcePeakFrame\": 31,\n  \"sourceRoot\": {\n    \"root_motion\": {\n      \"endpoint\": \"Original guard position; no translational attack travel\",\n      \"mode\": \"In-place one-shot weight shift and hip turn, no net travel\",\n      \"peak_yaw_radians\": 0.85\n    }\n  },\n  \"sourceSha256\": \"697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd\",\n  \"sourceSupport\": {\n    \"support\": [\n      {\n        \"contact\": \"both feet then left weight load\",\n        \"frames\": [\n          1,\n          10\n        ]\n      },\n      {\n        \"contact\": \"left sole, ball-centered pivot up to 1.25 rad\",\n        \"frames\": [\n          11,\n          60\n        ]\n      },\n      {\n        \"contact\": \"two-foot guard\",\n        \"frames\": [\n          61,\n          67\n        ]\n      }\n    ]\n  },\n  \"status\": \"fixed-source-only-recipe-plan\",\n  \"supportRegion\": {\n    \"fields\": [\n      \"foot+toe influence >= 0.5\",\n      \"y <= 0.035\",\n      \"normal.y <= -0.35\"\n    ],\n    \"frame\": \"original mesh-bind\",\n    \"leftJoints\": [\n      47,\n      48\n    ],\n    \"leftNodes\": [\n      44,\n      43\n    ],\n    \"phaseWindows\": \"source support records preserved verbatim; minimum witnesses and pivot trajectories, not all sole points fixed\"\n  },\n  \"targetInput\": null,\n  \"transportXYZ\": [\n    0,\n    0,\n    0\n  ],\n  \"verticalOwner\": \"spatial-jump\",\n  \"windowPolicy\": \"inclusive-accessor-cell; half-open start-frame to frame-after-inclusive-end; exact Float32 source times; no retiming\"\n}\n",
+    "{\n  \"acceptance\": null,\n  \"alreadyBakedSpeed\": 1.5,\n  \"axis\": \"mesh-bind +Z\",\n  \"axisMap\": null,\n  \"clipId\": \"SideThrustKick\",\n  \"cpuGuardM\": 1e-07,\n  \"fit\": \"unchanged fitSourceAxisCapsule: radial bounds midpoint, maximum radial distance plus CPU guard, shortened feasible segment; no PCA/target fitting\",\n  \"fitCount\": 1,\n  \"fitSamples\": \"all original source keys and 240Hz grid in active interval, plus exact window endpoints as continuous-limit samples; endpoint is not an extra active instant\",\n  \"gameplayExcessAllowanceM\": null,\n  \"geometryLedger\": \"original primitive/triangle/vertex IDs, exact clipped barycentrics, region tags, full/clipped/excluded/overlap face counts; no welding\",\n  \"interpolationPaddingM\": null,\n  \"manifestPath\": \"assets/android/motions/completed42-speed15/kick/manifest.json\",\n  \"manifestSha256\": \"f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed\",\n  \"normalRule\": \"source vertex normals as scalar clipping fields, not geometric face-normal acceptance; bone-bind normal uses normalized inverse-transpose of mesh-bind-to-bone-bind matrix\",\n  \"proxy\": \"one capsule, broadphase diagnostic only\",\n  \"reference\": {\n    \"frame\": \"original mesh-bind attached through meshWorld * bindMatrixInverse * boneWorld * inverseBind * bindMatrix\",\n    \"joint\": 51,\n    \"node\": 48\n  },\n  \"regions\": [\n    {\n      \"fields\": [\n        \"foot influence >= 0.5\",\n        \"z <= -0.035\",\n        \"y <= 0.120\",\n        \"normal.z <= -0.25\"\n      ],\n      \"frame\": \"original mesh-bind\",\n      \"joints\": [\n        51\n      ],\n      \"nodes\": [\n        48\n      ],\n      \"tag\": \"heel-hypothesis\"\n    },\n    {\n      \"fields\": [\n        \"foot+toe influence >= 0.5\",\n        \"y <= 0.035\",\n        \"normal.y <= -0.35\"\n      ],\n      \"frame\": \"original mesh-bind\",\n      \"joints\": [\n        51,\n        52\n      ],\n      \"nodes\": [\n        48,\n        47\n      ],\n      \"tag\": \"sole-hypothesis\"\n    }\n  ],\n  \"rootMode\": \"in-place-posture-xyz\",\n  \"runtimeSpeed\": 1,\n  \"schemaVersion\": 1,\n  \"sourceClipIndex\": 9,\n  \"sourceClipPointer\": \"/clips/9\",\n  \"sourceEvent\": {\n    \"active_frames\": [\n      34,\n      39\n    ],\n    \"direction_blender\": [\n      -1,\n      0,\n      0\n    ],\n    \"hit_count\": 1,\n    \"limb\": \"right heel/sole\",\n    \"peak_frame\": 36,\n    \"type\": \"lateral pushing thrust\"\n  },\n  \"sourceEventPointer\": \"/clips/9/attack_and_timeline_events/attack_events/0\",\n  \"sourceFrames\": [\n    34,\n    39\n  ],\n  \"sourcePath\": \"assets/android/motions/completed42-speed15/kick/android_kick.glb\",\n  \"sourcePeakFrame\": 36,\n  \"sourceRoot\": {\n    \"root_motion\": {\n      \"axes\": \"Blender +Z up, -Y initial front, -X character right. Exported glTF lateral attack remains -X.\",\n      \"handling\": \"Do not extract temporary counterbalance as net travel. No terminal origin snap.\",\n      \"lateral_pelvis_drive_during_thrust_m\": -0.125,\n      \"mode\": \"in-place one-shot with continuous weight transfer, not locomotion\",\n      \"net_translation_blender_m\": [\n        0.0,\n        0.0,\n        0.0\n      ],\n      \"net_yaw_radians\": 0.0\n    }\n  },\n  \"sourceSha256\": \"697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd\",\n  \"sourceSupport\": {\n    \"support_contacts\": [\n      {\n        \"ankle_armature_m\": [\n          0.23,\n          -0.05,\n          0.168\n        ],\n        \"frames\": [\n          1,\n          71\n        ],\n        \"limb\": \"left foot\",\n        \"type\": \"flat-sole support; yaw pivots about fixed ankle without translation\",\n        \"yaw_radians\": [\n          0.0,\n          1.43,\n          0.0\n        ]\n      },\n      {\n        \"frames\": [\n          1,\n          1\n        ],\n        \"limb\": \"right foot\",\n        \"type\": \"startup stance\"\n      },\n      {\n        \"frames\": [\n          71,\n          71\n        ],\n        \"limb\": \"right foot\",\n        \"type\": \"recovered stance\"\n      }\n    ]\n  },\n  \"status\": \"fixed-source-only-recipe-plan\",\n  \"supportRegion\": {\n    \"fields\": [\n      \"foot+toe influence >= 0.5\",\n      \"y <= 0.035\",\n      \"normal.y <= -0.35\"\n    ],\n    \"frame\": \"original mesh-bind\",\n    \"leftJoints\": [\n      47,\n      48\n    ],\n    \"leftNodes\": [\n      44,\n      43\n    ],\n    \"phaseWindows\": \"source support records preserved verbatim; minimum witnesses and pivot trajectories, not all sole points fixed\"\n  },\n  \"targetInput\": null,\n  \"transportXYZ\": [\n    0,\n    0,\n    0\n  ],\n  \"verticalOwner\": \"spatial-jump\",\n  \"windowPolicy\": \"inclusive-accessor-cell; half-open start-frame to frame-after-inclusive-end; exact Float32 source times; no retiming\"\n}\n"
+  ]
+}
