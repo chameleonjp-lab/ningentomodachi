@@ -397,6 +397,24 @@ export function createSpatialEngine(
             }
             if (intent.type === 'JumpRequested') jump = true;
           }
+          // Outside combat, grounded travel supplies facing. Keep attack,
+          // takeoff, and airborne orientation under their existing owners.
+          if (
+            !targetPose &&
+            !actor.attack &&
+            old.grounded &&
+            !jump &&
+            actor.actions.move.allowed &&
+            Math.hypot(movement.x, movement.z) > 1e-8
+          )
+            old = {
+              ...old,
+              facing: faceToward(
+                old.facing,
+                movement,
+                (8 * request.step.durationMs) / 1000,
+              ),
+            };
           const attack = actor.attack,
             definition = attack ? catalog.get(attack.clipId) : undefined;
           if (attack && !definition)
