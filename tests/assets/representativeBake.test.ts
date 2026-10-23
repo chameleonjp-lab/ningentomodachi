@@ -1,3 +1,4 @@
+import * as representative from '../../tools/assets/representativeBake';
 import { Vector3 } from 'three';
 import { createThreeAssetPack } from '../../src/assets/threeAssetPack';
 import { selectSkinSurface } from '../../src/assets/skinSurface';
@@ -177,3 +178,29 @@ for (const category of ['punch', 'kick'] as const) {
     }
   }, 120000);
 }
+
+test('representative adaptive serialization preserves v2 fields without operational accounting', () => {
+  const input = {
+    toleranceM: 1e-7,
+    rounds: 2,
+    addedKeyCount: 2,
+    addedKeysMs: [1.125, 2.25],
+    maximumMeasuredResidualM: 0,
+    limitation: 'sampled only',
+    accounting: { bakeSampleAttempts: 42 },
+  };
+  expect(typeof representative.serializeAdaptiveDiagnostics).toBe('function');
+  const value = representative.serializeAdaptiveDiagnostics(input);
+  expect(JSON.stringify(value)).toBe(
+    '{"toleranceM":1e-7,"rounds":2,"addedKeyCount":2,"addedKeysMs":[1.125,2.25],"maximumMeasuredResidualM":0,"limitation":"sampled only"}',
+  );
+  expect(Object.keys(value)).toEqual([
+    'toleranceM',
+    'rounds',
+    'addedKeyCount',
+    'addedKeysMs',
+    'maximumMeasuredResidualM',
+    'limitation',
+  ]);
+  expect(input.accounting.bakeSampleAttempts).toBe(42);
+});
