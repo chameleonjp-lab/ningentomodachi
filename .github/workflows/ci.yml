@@ -291,6 +291,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Verify
+        env:
+          VITE_DIAGNOSTIC_PREVIEW: '1'
         shell: bash
         run: |
           set -o pipefail
@@ -456,6 +458,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
+      publication-channel: ${{ steps.package.outputs.publication-channel }}
       artifact-name: ${{ steps.package.outputs.artifact-name }}
       package-attempt: ${{ steps.package.outputs.package-attempt }}
       manifest-sha256: ${{ steps.package.outputs.manifest-sha256 }}
@@ -491,7 +494,7 @@ jobs:
         with:
           pattern: ci-build-${{ github.sha }}-${{ github.run_id }}-*
           path: pages-evidence
-      - name: Require accepted release and package exact verified build bytes
+      - name: Require explicit release or unaccepted preview and package verified build bytes
         id: package
         env:
           PAGES_DEPLOY_ENABLED: ${{ vars.PAGES_DEPLOY_ENABLED }}
@@ -553,6 +556,7 @@ jobs:
       - name: Verify public commit identity and every deployed static file
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          PUBLICATION_CHANNEL: ${{ needs.pages-package.outputs.publication-channel }}
           PAGE_URL: ${{ needs.pages-deploy.outputs.page-url }}
           BUILD_MANIFEST_SHA256: ${{ needs.pages-package.outputs.manifest-sha256 }}
           SITE_MANIFEST_SHA256: ${{ needs.pages-package.outputs.site-manifest-sha256 }}
@@ -585,6 +589,9 @@ jobs:
             if (!manifestBytes) throw new Error('Public manifest mismatch: inspect live version; last-good preservation is not guaranteed after deploy');
             const manifest = JSON.parse(manifestBytes);
             const version = JSON.parse(await read('version.json'));
+            if (!['release', 'device-preview'].includes(process.env.PUBLICATION_CHANNEL)) throw new Error('Unknown publication channel');
+            if (process.env.PUBLICATION_CHANNEL === 'device-preview' && (version.channel !== 'device-preview' || version.accepted !== false || version.externalSubmission !== false)) throw new Error('Preview identity mismatch');
+            if (process.env.PUBLICATION_CHANNEL === 'release' && version.channel !== undefined) throw new Error('Release contains preview identity');
             if (version.commit !== context.sha || version.ciRun !== String(context.runId) ||
                 version.ciAttempt !== process.env.PACKAGE_ATTEMPT || version.buildAttempt !== process.env.BUILD_ATTEMPT ||
                 version.buildManifestSha256 !== process.env.BUILD_MANIFEST_SHA256) throw new Error('Public version mismatch');
