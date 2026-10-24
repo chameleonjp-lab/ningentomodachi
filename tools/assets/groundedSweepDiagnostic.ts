@@ -283,6 +283,8 @@ export function loadGroundedSweepDiagnostics(
       const impactList = list(definition.impacts),
         impacts = impactList.map((value) => {
           const impact = record(value);
+          if (Object.hasOwn(impact, 'additionalShapeIds'))
+            throw new Error('Legacy diagnostic does not support additional shape references');
           if (typeof impact.shapeId !== 'string')
             throw new Error('Diagnostic shape ID');
           return {

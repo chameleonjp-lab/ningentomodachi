@@ -478,3 +478,33 @@ test('capsule interpolation uses represented-time catalog alpha on irregular ULP
     'interior',
   );
 });
+
+test('companion references verify the secondary shape rather than only the primary', async () => {
+  const multi: BakeInput = {
+    ...input,
+    impacts: input.impacts.map((i) => ({ ...i, additionalShapeIds: ['shin'] })),
+  };
+  const result = await refineActiveEnvelopes(multi, async () => ({
+    sample: (atMs) => ({
+      ...pose(0, 0),
+      shapes: [
+        ...pose(0, 0).shapes,
+        {
+          shapeId: 'shin',
+          volume: {
+            kind: 'capsule' as const,
+            start: { x: Math.cos((atMs / 100) * Math.PI), y: 0, z: 0 },
+            end: { x: Math.cos((atMs / 100) * Math.PI), y: 1, z: 0 },
+            radiusM: 0.1,
+          },
+        },
+      ],
+    }),
+    dispose: () => {},
+  }));
+  expect(result.asset.shapes.map((s) => s.shapeId)).toEqual(['hand', 'shin']);
+  expect(result.diagnostics.addedKeyCount).toBeGreaterThan(0);
+  expect(result.diagnostics.accounting.capsuleComparisons).toBeGreaterThan(0);
+  expect(result.diagnostics.maximumMeasuredResidualM).toBeLessThanOrEqual(1e-7);
+  expect(result.asset.definition.impacts).toEqual(multi.impacts);
+});

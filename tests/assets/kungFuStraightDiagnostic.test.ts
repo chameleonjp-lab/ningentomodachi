@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { expect, it } from 'vitest';
+import { vi, expect, it } from 'vitest';
 
 const input = () => ({
   sourceBytes: readFileSync(
@@ -150,4 +150,45 @@ it('loads only the pinned initial advancing sphere and retains qualification lim
       recipeBytes,
     }),
   ).toThrow(/hash/);
+});
+
+it('companion references are explicitly rejected at the legacy reconstruction boundary', async () => {
+  const { loadKungFuStraightDiagnostics } = await import(
+    '../../tools/assets/kungFuStraightDiagnostic'
+  );
+  const candidateBytes = readFileSync(
+    'tests/assets/fixtures/kungfu-straight-v1/candidate.json.fixture',
+  );
+  const recipeBytes = readFileSync(
+    'tests/assets/fixtures/kungfu-straight-v1/recipe.json.fixture',
+  );
+  const args = { ...input(), candidateBytes, recipeBytes };
+  const before = Buffer.from(candidateBytes);
+  const baseline = loadKungFuStraightDiagnostics(args);
+  expect(baseline.length).toBeGreaterThan(0);
+  const nativeParse = JSON.parse;
+  const extended = nativeParse(candidateBytes.toString());
+  extended.results[0].asset.definition.impacts[0].additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  // Pins stay exact. Only the candidate parser result is replaced to exercise this
+  // legacy schema boundary; source/recipe parsing remains real and no evaluator runs.
+  const spy = vi
+    .spyOn(JSON, 'parse')
+    .mockImplementation((text, reviver) =>
+      text === candidateBytes.toString()
+        ? extended
+        : nativeParse(text, reviver),
+    );
+  try {
+    expect(() => loadKungFuStraightDiagnostics(args)).toThrow(
+      /additional.*shape|companion/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(candidateBytes.equals(before)).toBe(true);
+  expect(JSON.stringify(loadKungFuStraightDiagnostics(args))).toBe(
+    JSON.stringify(baseline),
+  );
 });

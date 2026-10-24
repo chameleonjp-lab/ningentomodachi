@@ -2,6 +2,7 @@ import { upperBound, intervalKeyTimes } from './keyIndex';
 import { capturePoseBindings } from './poseBindings';
 import {
   durationMs,
+  impactShapeIds,
   MOTION_SPACE,
   validateMotionDefinition,
   type DurationMs,
@@ -112,7 +113,11 @@ function validate(asset: MotionAsset): void {
     if (shape.keys[0]?.atMs !== 0 || shape.keys.at(-1)?.atMs !== d.durationMs)
       throw new Error('Incomplete shape coverage');
   }
-  if (d.impacts.some((impact) => !shapeIds.has(impact.shapeId)))
+  if (
+    d.impacts.some((impact) =>
+      impactShapeIds(impact).some((id) => !shapeIds.has(id)),
+    )
+  )
     throw new Error('Unresolved impact shape');
   if (asset.ownership[0]?.atMs !== 0) throw new Error('Missing root ownership');
   let previous = -1;
@@ -178,24 +183,30 @@ function sample(
     const start = Math.max(fromMs, impact.startMs),
       end = Math.min(toMs, impact.endMs);
     if (start >= end) continue;
-    const curve = asset.shapes.find(
-      (shape) => shape.shapeId === impact.shapeId,
+    const curves = impactShapeIds(impact).map((id) => {
+      const curve = asset.shapes.find((shape) => shape.shapeId === id);
+      if (!curve) throw new Error('Missing shape');
+      return curve;
+    });
+    const times = intervalKeyTimes(
+      start,
+      end,
+      ...curves.map((curve) => curve.keys),
     );
-    if (!curve) throw new Error('Missing shape');
-    const times = intervalKeyTimes(start, end, curve.keys);
     for (let i = 1; i < times.length; i++) {
       const from = times[i - 1],
         to = times[i];
       if (from === undefined || to === undefined) continue;
-      hits.push({
-        impactIndex: impact.impactIndex,
-        shapeId: impact.shapeId,
-        fromMs: durationMs(from),
-        toMs: durationMs(to),
-        activeWindow: { startMs: impact.startMs, endMs: impact.endMs },
-        from: shapeAt(curve, from),
-        to: shapeAt(curve, to),
-      });
+      for (const curve of curves)
+        hits.push({
+          impactIndex: impact.impactIndex,
+          shapeId: curve.shapeId,
+          fromMs: durationMs(from),
+          toMs: durationMs(to),
+          activeWindow: { startMs: impact.startMs, endMs: impact.endMs },
+          from: shapeAt(curve, from),
+          to: shapeAt(curve, to),
+        });
     }
   }
   return freeze({ ...result, rootSegments: roots, hitVolumeSegments: hits });

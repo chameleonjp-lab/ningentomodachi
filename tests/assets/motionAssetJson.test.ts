@@ -1,3 +1,5 @@
+import { requireValue } from '../../src/core/invariant';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { expect, test } from 'vitest';
 import { decodeMotionAssetJson } from '../../src/assets/motionAssetJson';
@@ -276,3 +278,85 @@ test.each(semantic)(
     await expect(prepare(decoded)).rejects.toThrow();
   },
 );
+
+test('companion references round trip without altering old JSON and are deeply copied', () => {
+  const old = asset();
+  // Fixed output hash measured with the unmodified ab1f4c0 decoder, not raw fixture key order.
+  expect(
+    createHash('sha256')
+      .update(JSON.stringify(decodeMotionAssetJson(old)))
+      .digest('hex'),
+  ).toBe('2183641a24c7fdef640d601413dcb626dd1ee8b524867a792d7630a5b561a2b7');
+  const input = asset();
+  requireValue(input.definition.impacts[0]).additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  const output = decodeMotionAssetJson(input);
+  expect(output).toEqual(input);
+  expectFrozen(output);
+  requireValue(
+    requireValue(input.definition.impacts[0]).additionalShapeIds,
+  )[0] = 'changed';
+  expect(output.definition.impacts[0]?.additionalShapeIds).toEqual([
+    'synthetic-companion',
+  ]);
+});
+test('companion references reject malformed lists and accessors without invoking them', () => {
+  for (const refs of [
+    [],
+    [''],
+    [' '],
+    ['x', 'x'],
+    ['x', 2],
+    null,
+    undefined,
+    'x',
+    new Array(1),
+  ]) {
+    const input = asset();
+    Object.assign(requireValue(input.definition.impacts[0]), {
+      additionalShapeIds: refs,
+    });
+    expect(() => decodeMotionAssetJson(input)).toThrow();
+  }
+  const input = asset();
+  let called = 0;
+  Object.defineProperty(
+    requireValue(input.definition.impacts[0]),
+    'additionalShapeIds',
+    {
+      enumerable: true,
+      get: () => {
+        called++;
+        return ['x'];
+      },
+    },
+  );
+  expect(() => decodeMotionAssetJson(input)).toThrow();
+  expect(called).toBe(0);
+});
+
+test('legacy decoded sphere and capsule fixture bytes match pre-extension decoder hashes', () => {
+  const expected = [
+    [
+      'kungfu-hand-combo-v1',
+      ['2183641a24c7fdef640d601413dcb626dd1ee8b524867a792d7630a5b561a2b7'],
+    ],
+    [
+      'grounded-kicks-v1',
+      [
+        '02a46c235320c904989f1e048b7cff92b06e87287776e527660803e39c47b06a',
+        'c116bb32a3774ad778fe0296aa9680a792924b3bafb402c7c4a9ca2ace9b1809',
+      ],
+    ],
+  ] as const;
+  for (const [name, hashes] of expected) {
+    expect(
+      saved(name).results.map((row) =>
+        createHash('sha256')
+          .update(JSON.stringify(decodeMotionAssetJson(row.asset)))
+          .digest('hex'),
+      ),
+    ).toEqual(hashes);
+  }
+});

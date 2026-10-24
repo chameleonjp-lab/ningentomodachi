@@ -14,6 +14,25 @@ export interface MotionImpact {
   readonly damageShare: number;
   /** Stable reference into B's validated hit-shape/trajectory catalog. */
   readonly shapeId: string;
+  /** Optional companion primitives share this impact's window and damage, not a new hit. */
+  readonly additionalShapeIds?: readonly string[];
+}
+/** Validate the complete reference set before any consumer can drop companion geometry. */
+export function impactShapeIds(impact: MotionImpact): readonly string[] {
+  if (typeof impact.shapeId !== 'string' || !impact.shapeId.trim())
+    throw new Error('Invalid impact shape reference');
+  const ids = [impact.shapeId];
+  if (Object.hasOwn(impact, 'additionalShapeIds')) {
+    const extras = impact.additionalShapeIds;
+    if (!Array.isArray(extras) || extras.length === 0)
+      throw new Error('Invalid additional shape references');
+    for (const id of extras) {
+      if (typeof id !== 'string' || !id.trim() || ids.includes(id))
+        throw new Error('Invalid additional shape reference');
+      ids.push(id);
+    }
+  }
+  return ids;
 }
 export interface RootSample {
   readonly atMs: DurationMs;
@@ -59,7 +78,11 @@ export function validateMotionDefinition(
     )
       errors.push('impactIndex');
     ids.add(impact.impactIndex);
-    if (!impact.shapeId.trim()) errors.push('shapeId');
+    try {
+      impactShapeIds(impact);
+    } catch {
+      errors.push('shapeId');
+    }
     if (
       !Number.isFinite(impact.startMs) ||
       !Number.isFinite(impact.endMs) ||

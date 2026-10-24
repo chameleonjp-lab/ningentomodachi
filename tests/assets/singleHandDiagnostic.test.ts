@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { vi, describe, expect, it } from 'vitest';
 
 const sourceBytes = readFileSync(
   'assets/android/motions/completed42-speed15/punch/android_punch.glb',
@@ -233,4 +233,49 @@ it('loads only the exact initial three-event diagnostic candidate with native XY
       (p) => p.region === 'dorsal-hand-hypothesis',
     ),
   ).toBe(false);
+});
+
+it('companion references are explicitly rejected at the legacy reconstruction boundary', async () => {
+  const { loadSingleHandDiagnostics } = await import(
+    '../../tools/assets/singleHandDiagnostic'
+  );
+  const candidateBytes = readFileSync(
+    'tests/assets/fixtures/single-hand-v1/candidate.json.fixture',
+  );
+  const recipeBytes = readFileSync(
+    'tests/assets/fixtures/single-hand-v1/recipe.json.fixture',
+  );
+  const args = {
+    ...{ sourceBytes, manifestBytes },
+    candidateBytes,
+    recipeBytes,
+  };
+  const before = Buffer.from(candidateBytes);
+  const baseline = loadSingleHandDiagnostics(args);
+  expect(baseline.length).toBeGreaterThan(0);
+  const nativeParse = JSON.parse;
+  const extended = nativeParse(candidateBytes.toString());
+  extended.results[0].asset.definition.impacts[0].additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  // Pins stay exact. Only the candidate parser result is replaced to exercise this
+  // legacy schema boundary; source/recipe parsing remains real and no evaluator runs.
+  const spy = vi
+    .spyOn(JSON, 'parse')
+    .mockImplementation((text, reviver) =>
+      text === candidateBytes.toString()
+        ? extended
+        : nativeParse(text, reviver),
+    );
+  try {
+    expect(() => loadSingleHandDiagnostics(args)).toThrow(
+      /additional.*shape|companion/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(candidateBytes.equals(before)).toBe(true);
+  expect(JSON.stringify(loadSingleHandDiagnostics(args))).toBe(
+    JSON.stringify(baseline),
+  );
 });

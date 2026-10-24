@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from 'vitest';
+import { vi, expect, test } from 'vitest';
 
 const source = () => ({
   sourceBytes: readFileSync(
@@ -219,4 +219,45 @@ test('deterministic source-only regeneration is byte-identical to the untouched 
       fixtureInput().candidateBytes,
     ),
   ).toBe(true);
+});
+
+test('companion references are explicitly rejected at the legacy reconstruction boundary', async () => {
+  const { loadGroundedPunchDiagnostics } = await import(
+    '../../tools/assets/groundedPunchDiagnostic'
+  );
+  const candidateBytes = readFileSync(
+    'tests/assets/fixtures/grounded-punches-v1/candidate.json.fixture',
+  );
+  const recipeBytes = readFileSync(
+    'tests/assets/fixtures/grounded-punches-v1/recipe.json.fixture',
+  );
+  const args = { ...source(), candidateBytes, recipeBytes };
+  const before = Buffer.from(candidateBytes);
+  const baseline = loadGroundedPunchDiagnostics(args);
+  expect(baseline.length).toBeGreaterThan(0);
+  const nativeParse = JSON.parse;
+  const extended = nativeParse(candidateBytes.toString());
+  extended.results[0].asset.definition.impacts[0].additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  // Pins stay exact. Only the candidate parser result is replaced to exercise this
+  // legacy schema boundary; source/recipe parsing remains real and no evaluator runs.
+  const spy = vi
+    .spyOn(JSON, 'parse')
+    .mockImplementation((text, reviver) =>
+      text === candidateBytes.toString()
+        ? extended
+        : nativeParse(text, reviver),
+    );
+  try {
+    expect(() => loadGroundedPunchDiagnostics(args)).toThrow(
+      /additional.*shape|companion/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(candidateBytes.equals(before)).toBe(true);
+  expect(JSON.stringify(loadGroundedPunchDiagnostics(args))).toBe(
+    JSON.stringify(baseline),
+  );
 });

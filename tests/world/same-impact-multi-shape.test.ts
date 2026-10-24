@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest';
 import {
+  attackActivationId,
   contactId,
+  gameTimeMs,
   worldObjectId,
   durationMs,
   MOTION_SPACE,
@@ -246,39 +248,81 @@ test('mixed candidate kind does not enter body witness tie-break', () => {
   expect(b.events).toStrictEqual(baseline.events);
 });
 
-test('equivalent witnesses sort only in their existing slots around another evidence group', () => {
-  const orders = [
-    [0, 1, 2],
-    [0, 2, 1],
-    [1, 0, 2],
-    [1, 2, 0],
-    [2, 0, 1],
-    [2, 1, 0],
-  ];
-  const results = orders.map((order) => ({
-    order,
-    result: evaluate(
-      [sphere(-0.15, 0.2), capsule(0.15, 0.2)],
-      0,
-      false,
-      false,
-      (cs) => {
-        const other = {
-          ...requireValue(cs[0]),
-          evidence: 'overlap' as const,
-          point: { x: 9, y: 1, z: 0 },
-        };
-        const all = [...cs, other];
-        return order.map((i) => requireValue(all[i]));
+test.each(['evidence', 'interval'] as const)(
+  'equivalent damage witnesses remain deterministic across different %s',
+  (difference) => {
+    const orders = [
+      [0, 1, 2],
+      [0, 2, 1],
+      [1, 0, 2],
+      [1, 2, 0],
+      [2, 0, 1],
+      [2, 1, 0],
+    ];
+    const results = orders.map((order) => ({
+      order,
+      result: evaluate(
+        [sphere(-0.15, 0.2), capsule(0.15, 0.2)],
+        0,
+        false,
+        false,
+        (cs) => {
+          const other = {
+            ...requireValue(cs[0]),
+            ...(difference === 'evidence'
+              ? { evidence: 'overlap' as const }
+              : { interval: { from: gameTimeMs(0), to: gameTimeMs(11) } }),
+            point: { x: 9, y: 1, z: 0 },
+          };
+          const all = [...cs, other];
+          return order.map((i) => requireValue(all[i]));
+        },
+      ),
+    }));
+    console.log('INTERLEAVED_GROUP_EVIDENCE', JSON.stringify(results));
+    const baseline = requireValue(results[0]).result;
+    for (const { result } of results) {
+      expect.soft(result.events).toStrictEqual(baseline.events);
+      expect.soft(result.snapshot).toStrictEqual(baseline.snapshot);
+      expect(result.events).toHaveLength(1);
+      expect(result.events[0]?.actualHpLost).toBe(100);
+    }
+  },
+);
+
+test('invalid intervals cannot contribute a canonical point or normalize a unique witness', () => {
+  const shapes = [sphere(-0.15, 0.2), capsule(0.15, 0.2)];
+  const result = evaluate(shapes, 0, false, false, (cs) =>
+    cs.map((c, i) => ({
+      ...c,
+      interval: i ? { from: gameTimeMs(1), to: gameTimeMs(10) } : c.interval,
+      point: { x: i ? -9 : -0, y: 1, z: 0 },
+    })),
+  );
+  expect(result.events).toHaveLength(1);
+  expect(Object.is(result.events[0]?.contact.point.x, -0)).toBe(true);
+});
+
+test('invalid activation sharing contact ID cannot suppress valid body hit in either order', () => {
+  const shapes = [sphere(-0.15, 0.2)];
+  const baseline = evaluate(shapes, 0);
+  const mixed = (cs: readonly SpatialCandidate[]): SpatialCandidate[] => {
+    const c = requireValue(cs[0]);
+    if (c.kind !== 'body-hit') throw Error('Expected synthetic body hit');
+    return [
+      c,
+      {
+        ...c,
+        source: {
+          ...c.source,
+          activationId: attackActivationId('invalid-activation'),
+        },
       },
-    ),
-  }));
-  console.log('INTERLEAVED_GROUP_EVIDENCE', JSON.stringify(results));
-  for (const { order, result } of results) {
-    // Another evidence group retains its old slot; no new cross-group winner policy.
-    const expected = order[0] === 2 ? 9 : -0.05000000000000002;
-    expect.soft(result.events[0]?.contact.point.x).toBe(expected);
-    expect(result.events).toHaveLength(1);
-    expect(result.events[0]?.actualHpLost).toBe(100);
+    ];
+  };
+  for (const reverse of [false, true]) {
+    const result = evaluate(shapes, 0, false, reverse, mixed);
+    expect.soft(result.events).toStrictEqual(baseline.events);
+    expect.soft(result.snapshot).toStrictEqual(baseline.snapshot);
   }
 });
