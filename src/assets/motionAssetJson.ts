@@ -140,12 +140,15 @@ export function decodeMotionAssetJson(value: unknown): MotionAsset {
       durationMs: durationMs(number(d.durationMs)),
       effectiveRangeM: number(d.effectiveRangeM),
       impacts: list(d.impacts).map((value) => {
-        const i = record(value, [
+        const captured = captureRecord(value);
+        const hasAdditional = Object.hasOwn(captured, 'additionalShapeIds');
+        const i = exactKeys(captured, [
           'impactIndex',
           'startMs',
           'endMs',
           'damageShare',
           'shapeId',
+          ...(hasAdditional ? ['additionalShapeIds'] : []),
         ]);
         return {
           impactIndex: number(i.impactIndex),
@@ -153,6 +156,9 @@ export function decodeMotionAssetJson(value: unknown): MotionAsset {
           endMs: durationMs(number(i.endMs)),
           damageShare: number(i.damageShare),
           shapeId: text(i.shapeId),
+          ...(hasAdditional
+            ? { additionalShapeIds: list(i.additionalShapeIds).map(text) }
+            : {}),
         };
       }),
       rootCurve: list(d.rootCurve).map((value) => {

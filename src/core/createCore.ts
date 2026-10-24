@@ -856,8 +856,10 @@ export function createCore(
             : c.kind === 'destruction'
               ? 2
               : 3;
-      // Only equivalent body-hit evidence may use a geometric tie-break. This
-      // does not prioritize limbs, change damage, or order other candidate kinds.
+      // Body witnesses with the same damage identity share a canonical point.
+      // Finite points and containing intervals were checked above; evidence and
+      // interval do not change HP, cause, or consumption for this same identity.
+      // This adds no evidence/limb priority and does not order other candidate kinds.
       const bodyEvidenceKey = (c: SpatialCandidate): string | undefined =>
         c.kind === 'body-hit'
           ? JSON.stringify([
@@ -868,9 +870,6 @@ export function createCore(
               c.source.activationId,
               c.source.impactId,
               c.targetActorId,
-              c.interval.from,
-              c.interval.to,
-              c.evidence,
             ])
           : undefined;
       const bodySlots = new Map<string, number[]>();
@@ -916,7 +915,9 @@ export function createCore(
           compare(a.contactId, b.contactId),
       )) {
         if (c.kind === 'clash' || seenContacts.has(c.contactId)) continue;
-        seenContacts.add(c.contactId);
+        // A rejected body witness must not suppress another valid witness.
+        // Other candidate kinds retain their existing deduplication timing.
+        if (c.kind !== 'body-hit') seenContacts.add(c.contactId);
         if (c.kind === 'body-hit') {
           const a = reference(c.source, at),
             target = actors.find((a) => a.actorId === c.targetActorId);
@@ -931,6 +932,7 @@ export function createCore(
             hitTargets.has(key)
           )
             continue;
+          seenContacts.add(c.contactId);
           hitTargets.add(key);
           use(c.source);
           add(target.actorId, a.damage, cause(c.source, 'attack'), c, [

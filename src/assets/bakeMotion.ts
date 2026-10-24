@@ -1,5 +1,6 @@
 import {
   durationMs,
+  impactShapeIds,
   type AttackCategory,
   type ClipId,
   type DurationMs,
@@ -54,7 +55,8 @@ export function bakeMotion(
   const times = [...keys].sort((a, b) => a - b);
   const rootCurve: RootSample[] = [];
   const shapes = new Map<string, ShapeCurve['keys'][number][]>();
-  for (const impact of input.impacts) shapes.set(impact.shapeId, []);
+  for (const impact of input.impacts)
+    for (const id of impactShapeIds(impact)) shapes.set(id, []);
   let effectiveRangeM = 0;
   for (const time of times) {
     const atMs = durationMs(time),
@@ -79,7 +81,7 @@ export function bakeMotion(
       if (
         input.impacts.some(
           (impact) =>
-            impact.shapeId === shapeId &&
+            impactShapeIds(impact).includes(shapeId) &&
             impact.startMs <= time &&
             time <= impact.endMs,
         )

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { expect, it } from 'vitest';
+import { vi, expect, it } from 'vitest';
 
 const readCategory = (category: 'punch' | 'kick') => ({
   sourceBytes: new Uint8Array(
@@ -223,4 +223,45 @@ it('pins exactly the once-generated two-event candidate without hiding raw escap
       ) ?? []),
     ),
   ).toBeGreaterThan(0.17);
+});
+
+it('companion references are explicitly rejected at the legacy reconstruction boundary', async () => {
+  const { loadElbowCrescentDiagnostics } = await import(
+    '../../tools/assets/elbowCrescentDiagnostic'
+  );
+  const candidateBytes = readFileSync(
+    'tests/assets/fixtures/elbow-crescent-v1/candidate.json.fixture',
+  );
+  const recipeBytes = readFileSync(
+    'tests/assets/fixtures/elbow-crescent-v1/recipe.json.fixture',
+  );
+  const args = { ...sources(), candidateBytes, recipeBytes };
+  const before = Buffer.from(candidateBytes);
+  const baseline = loadElbowCrescentDiagnostics(args);
+  expect(baseline.length).toBeGreaterThan(0);
+  const nativeParse = JSON.parse;
+  const extended = nativeParse(candidateBytes.toString());
+  extended.results[0].asset.definition.impacts[0].additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  // Pins stay exact. Only the candidate parser result is replaced to exercise this
+  // legacy schema boundary; source/recipe parsing remains real and no evaluator runs.
+  const spy = vi
+    .spyOn(JSON, 'parse')
+    .mockImplementation((text, reviver) =>
+      text === candidateBytes.toString()
+        ? extended
+        : nativeParse(text, reviver),
+    );
+  try {
+    expect(() => loadElbowCrescentDiagnostics(args)).toThrow(
+      /additional.*shape|companion/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(candidateBytes.equals(before)).toBe(true);
+  expect(JSON.stringify(loadElbowCrescentDiagnostics(args))).toBe(
+    JSON.stringify(baseline),
+  );
 });

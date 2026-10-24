@@ -1,4 +1,4 @@
-import { durationMs, type HitVolume, type Vector3 } from '../../src/contracts';
+import { impactShapeIds, durationMs, type HitVolume, type Vector3 } from '../../src/contracts';
 import {
   bakeMotion,
   type BakeInput,
@@ -151,7 +151,7 @@ export async function refineActiveEnvelopes(
           const active = asset.shapes.filter((shape) =>
             input.impacts.some(
               (impact) =>
-                impact.shapeId === shape.shapeId &&
+                impactShapeIds(impact).includes(shape.shapeId) &&
                 a.atMs >= impact.startMs &&
                 b.atMs <= impact.endMs,
             ),

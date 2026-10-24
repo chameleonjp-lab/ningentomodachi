@@ -288,6 +288,8 @@ export function loadSingleHandDiagnostics(input: SingleHandDiagnosticInput) {
       const impacts = list(definition.impacts).map((value, index) => {
         const impact = record(value),
           event = descriptor.events[index];
+        if (Object.hasOwn(impact, 'additionalShapeIds'))
+          throw new Error('Legacy diagnostic does not support additional shape references');
         if (
           !event ||
           impact.impactIndex !== index ||

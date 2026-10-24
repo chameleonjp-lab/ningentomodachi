@@ -1,3 +1,4 @@
+import { requireValue } from '../../src/core/invariant';
 import { expect, test } from 'vitest';
 import { clipId, durationMs, type MotionDefinition } from '../../src/contracts';
 import {
@@ -208,4 +209,224 @@ test('deserialized unknown shape kind fails prepare before publishing any catalo
   expect(catalog.list()).toEqual([]);
   expect(catalog.get(id)).toBeUndefined();
   expect(catalog.sampleMotion(id, ms(10), ms(20))).toBeUndefined();
+});
+
+function companionAsset(): MotionAsset {
+  const old = asset();
+  return {
+    ...old,
+    definition: {
+      ...old.definition,
+      impacts: [
+        {
+          impactIndex: 0,
+          startMs: ms(10),
+          endMs: ms(70),
+          damageShare: 1,
+          shapeId: 'fist',
+          additionalShapeIds: ['shin'],
+        },
+      ],
+    },
+    shapes: [
+      ...old.shapes,
+      {
+        shapeId: 'shin',
+        keys: [0, 20, 60, 100].map((t) => ({
+          atMs: ms(t),
+          volume: {
+            kind: 'capsule' as const,
+            start: { x: t / 100, y: 0, z: 0 },
+            end: { x: t / 100, y: 1, z: 0 },
+            radiusM: 0.1,
+          },
+        })),
+      },
+    ],
+  };
+}
+test('companion references share one impact and union every curve key into common intervals', async () => {
+  const input = companionAsset(),
+    before = structuredClone(input);
+  const catalog = createMotionCatalog(async () => [input]);
+  await catalog.prepare(new AbortController().signal);
+  const result = catalog.sampleMotion(id, ms(0), ms(100));
+  expect(
+    result?.hitVolumeSegments.map((s) => [
+      s.impactIndex,
+      s.shapeId,
+      s.fromMs,
+      s.toMs,
+    ]),
+  ).toEqual(
+    [
+      [10, 20],
+      [20, 40],
+      [40, 60],
+      [60, 70],
+    ].flatMap(([a, b]) => [
+      [0, 'fist', a, b],
+      [0, 'shin', a, b],
+    ]),
+  );
+  expect(catalog.get(id)?.impacts).toEqual(input.definition.impacts);
+  expect(Object.isFrozen(catalog.get(id)?.impacts[0]?.additionalShapeIds)).toBe(
+    true,
+  );
+  expect(input).toEqual(before);
+  expect(catalog.sampleMotion(id, ms(70), ms(80))?.hitVolumeSegments).toEqual(
+    [],
+  );
+});
+test('companion references reject duplicate empty unresolved and malformed lists', async () => {
+  for (const refs of [
+    [],
+    ['fist'],
+    ['shin', 'shin'],
+    [''],
+    [' '],
+    ['missing'],
+    null,
+    'shin',
+    [1],
+  ]) {
+    const input = companionAsset();
+    Object.assign(requireValue(input.definition.impacts[0]), {
+      additionalShapeIds: refs,
+    });
+    const catalog = createMotionCatalog(async () => [input]);
+    await expect(
+      catalog.prepare(new AbortController().signal),
+    ).rejects.toThrow();
+  }
+});
+
+test('companion catalog segments join one runtime impact without duplicate damage', async () => {
+  const { setup, attack, step } = await import('../core/fixtures/scenarios');
+  const { combatContacts } = await import('../../src/world/contact-candidates');
+  const core = setup();
+  attack(core, 'white', 'kick');
+  const snapshot = core.read();
+  const source = requireValue(snapshot.actors.find((a) => a.color === 'white'));
+  const binding = requireValue(source.attack);
+  const base = companionAsset();
+  const input: MotionAsset = {
+    ...base,
+    definition: {
+      ...base.definition,
+      clipId: binding.clipId,
+      durationMs: ms(10),
+      impacts: [
+        {
+          ...requireValue(base.definition.impacts[0]),
+          startMs: ms(0),
+          endMs: ms(10),
+        },
+      ],
+      rootCurve: [0, 10].map((t) => ({
+        atMs: ms(t),
+        position: { x: 0, y: 0, z: 0 },
+        visualYawRad: 0,
+      })),
+    },
+    ownership: [
+      {
+        atMs: ms(0),
+        horizontalOwner: 'authored-root',
+        verticalOwner: 'authored-root',
+      },
+    ],
+    shapes: [
+      {
+        shapeId: 'fist',
+        keys: [0, 10].map((t) => ({
+          atMs: ms(t),
+          volume: {
+            kind: 'sphere' as const,
+            center: { x: -0.15, y: 1, z: 0 },
+            radiusM: 0.2,
+          },
+        })),
+      },
+      {
+        shapeId: 'shin',
+        keys: [0, 10].map((t) => ({
+          atMs: ms(t),
+          volume: {
+            kind: 'capsule' as const,
+            start: { x: 0.15, y: 0.8, z: 0 },
+            end: { x: 0.15, y: 1.2, z: 0 },
+            radiusM: 0.2,
+          },
+        })),
+      },
+    ],
+  };
+  const catalog = createMotionCatalog(async () => [input]);
+  await catalog.prepare(new AbortController().signal);
+  const actors: import('../../src/world/contact-candidates').ActorTrajectory[] =
+    (['white', 'blue'] as const).map((color) => {
+      const state = requireValue(
+        snapshot.actors.find((a) => a.color === color),
+      );
+      const position = { x: 0, y: 0, z: 0 };
+      return {
+        state,
+        actor: {
+          actorId: state.actorId,
+          position,
+          facing: { x: 0, y: 0, z: 1 },
+          velocity: position,
+          grounded: true,
+          locomotion: 'idle',
+        },
+        path: [
+          { at: 0, position },
+          { at: 10, position },
+        ],
+        sample:
+          color === 'white'
+            ? catalog.sampleMotion(binding.clipId, ms(0), ms(10))
+            : undefined,
+      };
+    });
+  const targetVolume = {
+    kind: 'sphere' as const,
+    center: { x: 0, y: 1, z: 0 },
+    radiusM: 0.05,
+  };
+  const candidates = combatContacts(
+    snapshot.runId,
+    actors,
+    actors.map((target) => ({
+      runId: snapshot.runId,
+      target,
+      sourceId: 'synthetic-only',
+      poseId: 'static',
+      space: 'actor-local-metres',
+      interpolation: 'piecewise-linear',
+      segments: [
+        {
+          partId: 'body',
+          from: 0,
+          to: 10,
+          start: targetVolume,
+          end: targetVolume,
+        },
+      ],
+    })),
+  );
+  expect(candidates).toHaveLength(2);
+  expect(
+    candidates.every(
+      (c) =>
+        c.kind === 'body-hit' &&
+        c.source.impactId === binding.impactBindings[0]?.impactId,
+    ),
+  ).toBe(true);
+  const changes = step(core, () => candidates).events.filter(
+    (e) => e.type === 'HpChanged',
+  );
+  expect(changes).toHaveLength(1);
+  expect(changes[0]?.actualHpLost).toBe(100);
 });

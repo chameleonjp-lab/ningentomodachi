@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { expect, it } from 'vitest';
+import { vi, expect, it } from 'vitest';
 
 const input = () => ({
   sourceBytes: readFileSync(
@@ -240,4 +240,45 @@ it('loads the exact initial four-capsule candidate without promoting raw escapes
   expect(r.acceptance).toBeNull();
   expect(r.continuousContainment).toBeNull();
   expect(r.gameplayAllowance).toBeNull();
+});
+
+it('companion references are explicitly rejected at the legacy reconstruction boundary', async () => {
+  const { loadKickChainDiagnostic } = await import(
+    '../../tools/assets/kickChainDiagnostic'
+  );
+  const candidateBytes = readFileSync(
+    'tests/assets/fixtures/kungfu-kick-chain-v1/candidate.json.fixture',
+  );
+  const recipeBytes = readFileSync(
+    'tests/assets/fixtures/kungfu-kick-chain-v1/recipe.json.fixture',
+  );
+  const args = { ...input(), candidateBytes, recipeBytes };
+  const before = Buffer.from(candidateBytes);
+  const baseline = loadKickChainDiagnostic(args);
+  expect(baseline.length).toBeGreaterThan(0);
+  const nativeParse = JSON.parse;
+  const extended = nativeParse(candidateBytes.toString());
+  extended.results[0].asset.definition.impacts[0].additionalShapeIds = [
+    'synthetic-companion',
+  ];
+  // Pins stay exact. Only the candidate parser result is replaced to exercise this
+  // legacy schema boundary; source/recipe parsing remains real and no evaluator runs.
+  const spy = vi
+    .spyOn(JSON, 'parse')
+    .mockImplementation((text, reviver) =>
+      text === candidateBytes.toString()
+        ? extended
+        : nativeParse(text, reviver),
+    );
+  try {
+    expect(() => loadKickChainDiagnostic(args)).toThrow(
+      /additional.*shape|companion/i,
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  expect(candidateBytes.equals(before)).toBe(true);
+  expect(JSON.stringify(loadKickChainDiagnostic(args))).toBe(
+    JSON.stringify(baseline),
+  );
 });
