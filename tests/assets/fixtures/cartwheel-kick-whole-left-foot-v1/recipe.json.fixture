@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "clipId": "CartwheelKick",
+  "status": "measured-diagnostic-only-not-production-accepted",
+  "candidateSha256": "ca5b6d8e7b88273a767ee391207f652652236bd7d25c5d85232e5406ceaf2783",
+  "candidateBytes": 1448245,
+  "sourceCommit": "9cec27b61e58cc9820444e0c629bfc075ad1d27b",
+  "sourceGlbSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+  "sourceManifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+  "model": "Developer whole-left-foot subtree foot.L/toe.L skin slots47/48; no shin/thigh/right union. Not source-authored contact anatomy.",
+  "window": {
+    "sourceFrames": null,
+    "diagnosticFramesInclusive": [
+      59,
+      68
+    ],
+    "nativeHalfOpenFrames": [
+      59,
+      69
+    ],
+    "peakFrame": 66,
+    "origin": "developer-provisional-phase-derived",
+    "startMs": 1311.1110925674438,
+    "endMs": 1533.3333015441895
+  },
+  "execution": {
+    "sampleUpdates": 764,
+    "attemptedSourceUpdates": 765,
+    "selectedVertexEvaluations": 1744976
+  },
+  "sourceRun": {
+    "loads": 1,
+    "startupUpdates": 1,
+    "sampleUpdates": 764,
+    "checkpointCount": 764,
+    "exactCheckpointReassembly": true,
+    "rejectedUpdates": 0,
+    "cleanupErrors": [],
+    "cacheBytes": 843989,
+    "cacheSha256": "9a381afddfe5aecdd2cc593584930e2f3fa97796e0f012690491ec74642d571c",
+    "completedAt": "2026-10-24T03:26:04Z"
+  },
+  "native": {
+    "count": 91,
+    "maximumQuaternionError": 1.0233136015666298e-07,
+    "maximumRootErrorM": 0,
+    "quaternionUnits": "radians",
+    "policy": "Retain full Z-roll quaternion and full XYZ displacement; measured center C-D plus rootCurve D reconstructs C once, no yaw rerotation."
+  },
+  "priorGeometryComparison": {
+    "poses": 12,
+    "maximumCenterErrorM": 5.928593550334434e-17,
+    "maximumRadiusErrorM": 2.7755575615628914e-17
+  },
+  "contacts": {
+    "passedControls": 11,
+    "coreSteps": 266,
+    "contactQueries": 19,
+    "sourceUpdates": 0,
+    "sha256": "41ae96570953bb3df65b2f92d1190e272fdaac3135e452638dda286969aadd06"
+  },
+  "contactLimitations": [
+    "Synthetic explicit targets, not anatomical target acceptance.",
+    "Actual Core duplicate hit and clash consumption tested with valid white19/blue4 move sets and31 definitions.",
+    "Legacy hurt capsule unchanged."
+  ],
+  "evidenceAvailability": "local-only-not-included-not-publicly-available",
+  "residual": {
+    "ownActiveMaximumM": [
+      0.001282037585967566
+    ],
+    "worldCenterMaximumM": 0.0008811869678426054,
+    "radiusMaximumM": 0.00040085061812494827,
+    "probeCount": 189,
+    "paddingAppliedM": 0,
+    "interpretation": "Finite quarter/mid/threequarter probe diagnostics, not a continuous bound or accepted gameplay allowance. No refit.",
+    "acceptance": null
+  },
+  "visuals": {
+    "kind": "candidate-only-not-source-geometry-overlay",
+    "actualViewed": true,
+    "actualViewedAt": "2026-10-24T03:40:02Z",
+    "files": [
+      {
+        "name": "hit.png",
+        "bytes": 152500,
+        "sha256": "6102c4661833e0f7e7b9fc321bdfd41f0ca29dc9b83b7d2b58b0225b3d5506c8"
+      },
+      {
+        "name": "miss.png",
+        "bytes": 152377,
+        "sha256": "1dde1f39707ebb5c6ce7987ced5685ea40b30b3e8fa599e2e5c30af63876cb62"
+      },
+      {
+        "name": "crossing.png",
+        "bytes": 145964,
+        "sha256": "50f06e0e513d0f39949d4c3da5ed7725c82ba11fd7a0c42e42ff86fb0038f410"
+      },
+      {
+        "name": "clash.png",
+        "bytes": 166285,
+        "sha256": "d71311822a5c8186a4574dd797cea670ba072d767d648d5a48245b0a930fab11"
+      }
+    ]
+  },
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "sourceAuthoredAnatomy": null,
+  "sourceFineAnatomyAcceptance": null,
+  "notVerified": [
+    "Gameplay acceptance",
+    "iPhone real-device acceptance",
+    "Source hand-contact metadata",
+    "Continuous-time containment",
+    "Publication/deployment"
+  ],
+  "reproduction": "Saved fixture tests parse exact candidate bytes and recipe only. Original source generation and full diagnostic evidence are separate local artifacts; this packet does not rerun or include them."
+}

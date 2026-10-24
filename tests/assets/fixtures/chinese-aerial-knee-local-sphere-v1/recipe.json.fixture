@@ -1,0 +1,389 @@
+{
+  "schemaVersion": 1,
+  "status": "measured-diagnostic-only-not-production-accepted",
+  "candidateSha256": "7fc2fcf3040149d80cb54c7eeeeb98fa094d5a9e29d26b2b21e6ffab70420769",
+  "candidateBytes": 499552,
+  "source": {
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed"
+  },
+  "sourcePaths": {
+    "source": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+    "manifest": "assets/android/motions/completed42-speed15/kick/manifest.json"
+  },
+  "sourceClipPointer": "/clips/17",
+  "sourceEvent": {
+    "type": "forward/upward knee",
+    "limb": "right knee / shin.R head",
+    "frames": [
+      34,
+      39
+    ],
+    "peak_frame": 37,
+    "foot_is_not_strike_surface": true
+  },
+  "model": {
+    "origin": "developer-selected-collision-model",
+    "shapeId": "ChineseAerialKnee:knee-local-sphere:0",
+    "bone": "shin.R",
+    "radiusM": 0.08590105297158424,
+    "measurement": "maximum-fixed-corner-distance-to-knee-origin-across-84-native-cached-poses",
+    "addedPaddingM": 0,
+    "sourceAuthoredAnatomy": null,
+    "continuousEnclosureVerified": false,
+    "inheritedRadiusM": 0.08590102228100256,
+    "deltaFromInheritedM": 3.0690581673264994e-08,
+    "scalePolicy": "native-nonunit-scales-retained",
+    "evidence": {
+      "primitive": 0,
+      "triangle": 14435,
+      "vertexIds": [
+        10926,
+        11012,
+        11008
+      ],
+      "sampleFrames": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84
+      ],
+      "skinJoint": 50,
+      "vertexWeight": 1,
+      "cacheSha256": "694c58f1a2e26e1278eb7394907bd038d6755cc0011bf77f62eae6725a707154",
+      "payloadSha256": "1a5f9209b83c6fefc85dcdcbebfe13d1ab08ab210d547c280989bc4bf942e01a",
+      "receiptSha256": "bde10401b138cf6a250d878573f3d8c5ee0fb44e872a11fafa7d36b62e5edd19"
+    },
+    "limitation": "Three outer-knee corner witnesses across84native poses support a developer approximation, not continuous enclosure, whole-knee anatomy or full-foot mesh exclusion. The tiny numerical radius difference is not evidence of a material visual change. Origin-cap witness p0/t13885 is not used."
+  },
+  "modelSha256": "d710105732220202606bc69694d1b6b934b3d77edb6a4013c4c0c1df46387fb5",
+  "impact": {
+    "impactIndex": 0,
+    "shapeId": "ChineseAerialKnee:knee-local-sphere:0",
+    "startMs": 755.5555701255798,
+    "endMs": 888.8888955116272,
+    "damageShare": 1
+  },
+  "rootPolicy": [
+    {
+      "atMs": 0,
+      "horizontalOwner": "authored-root",
+      "verticalOwner": "authored-root"
+    }
+  ],
+  "schedule": {
+    "candidateCount": 532,
+    "probeCount": 114,
+    "sampleCount": 646,
+    "hashes": {
+      "candidateTimesMs": "5bc1c5d7cc19cd2f9fa73cadbbe0cc8cfae62e161427e434dd2d6bbf69be2af6",
+      "probeTimesMs": "54d1eeb368cd7e355e871050821601837a4a0e82ec10d812be4d494ea9d13eff",
+      "sampleTimesMs": "293049bcad628d9e5f680970ba408945274f47ca80f8c531156bd99f5dcabfde"
+    }
+  },
+  "execution": {
+    "startupUpdates": 1,
+    "sampleUpdates": 646,
+    "attemptedSourceUpdates": 647
+  },
+  "declarationHistory": {
+    "embeddedPlanStatus": "UNEXECUTED_KNEE_LOCAL_SPHERE_PLAN",
+    "meaning": "Immutable pre-execution declaration retained verbatim inside completed measured candidate; not current execution status.",
+    "priorMeasurement": "Own ChineseAerialKnee84native3corner measurement. Metadata inherited-radius reference is historical, not selected model."
+  },
+  "evidence": {
+    "availability": "local-only-not-included-not-publicly-available",
+    "cache": {
+      "sha256": "55cb90642e4d81c8c336e5b126bc7cbd9bf0105281d34aebaf17b0876bd75c22",
+      "samples": 646
+    },
+    "native": {
+      "sha256": "2c719a581f8781ed69e1cbb9ba76ffbc93f0727d7e0ed4926b6407bc26bb234a",
+      "nativeSamples": 84,
+      "priorKneeSamples": 84,
+      "maximumRootErrorM": 0,
+      "maximumQuaternionError": 2.4224672157352204e-08,
+      "maximumPriorKneeErrorM": 5.551115123125783e-17,
+      "maximumRawQuaternionComponentError": 5.849360573684237e-08,
+      "maximumRawQuaternionNormDeviation": 5.854043183539659e-08,
+      "maximumCachedQuaternionNormDeviation": 2.220446049250313e-16,
+      "comparisonPolicy": "report-normalized-orientation-and-raw-magnitude-differences-no-gameplay-tolerance"
+    },
+    "contacts": {
+      "sha256": "c74cf2945d95bc84d92712228855309ab7751ebaf31e06eb2d3fea8c3558c9fc",
+      "passedControls": 12,
+      "coreSteps": 77,
+      "contactQueries": 7,
+      "sourceUpdates": 0
+    },
+    "visuals": {
+      "cases": 4,
+      "panels": 8,
+      "actualViewedAt": "2026-10-24T02:53:24Z",
+      "rootViewedAt": "2026-10-24T02:53:58Z",
+      "availability": "local-only-not-included-not-publicly-available",
+      "files": [
+        {
+          "name": "hit.png",
+          "bytes": 143938,
+          "sha256": "3828277c76e9b87bccc70404f522aaf90dccd02188e62f1fff8ad8f55ee25bab"
+        },
+        {
+          "name": "miss.png",
+          "bytes": 156865,
+          "sha256": "f9df24f0e7ed5943b3b1ee0686bd453b527eac1f848b4bbb54cf4fda7b8b4421"
+        },
+        {
+          "name": "clash.png",
+          "bytes": 143715,
+          "sha256": "ab451d425eb5a78f8a43717813a247542399c74c9b727c1d7db0a31ab89ece9b"
+        },
+        {
+          "name": "crossing.png",
+          "bytes": 148162,
+          "sha256": "369f733abaedb63e6c5fd0f388b9dbe4eabec0cb245463fb9535f9b1e8a7fac8"
+        }
+      ],
+      "limitation": "Receipt-only collision proxies; no reconstructed hit target, source-body anatomy or device acceptance."
+    }
+  },
+  "maximumPositiveEnvelopeExceedanceM": 2.404289190863218e-06,
+  "implementation": {
+    "commit": "276f06ab125caab43204a5372d468fe6945fa598"
+  },
+  "limitations": [
+    "Three outer-knee corner witnesses across84native poses support a developer approximation, not continuous enclosure, whole-knee anatomy or full-foot mesh exclusion. The tiny numerical radius difference is not evidence of a material visual change. Origin-cap witness p0/t13885 is not used.",
+    "Finite84native witnesses and114probes do not establish continuous enclosure.",
+    "Native root quaternion component/magnitude differences and normalized orientation residual remain visible; no arbitrary gameplay tolerance granted.",
+    "Source support phases24\u201350 airborne are metadata context, not validated grounding.",
+    "Local-only cache/contact/visual evidence is not included or publicly available; CI/publication/device acceptance unperformed."
+  ],
+  "surfaceSelections": [],
+  "sourceAuthoredAnatomy": null,
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "rootTransformRequirement": {
+    "rootNode": 52,
+    "pelvisNode": 51,
+    "parentNode": 54,
+    "parentTranslation": [
+      0,
+      -0.02199999988079071,
+      0
+    ],
+    "translationAccessor": 676,
+    "quaternionAccessor": 677,
+    "pelvisTranslationAccessor": 680,
+    "pelvisQuaternionAccessor": 681,
+    "shinNode": 49,
+    "shinSkinJoint": 50,
+    "shinTranslationAccessor": 827,
+    "shinQuaternionAccessor": 828,
+    "translationAccessorSha256": "f98b48c01eeda003ecde37c76f814947714c12f0081b5b7872d5299c552f2e39",
+    "quaternionAccessorSha256": "25bb32fb58b08c61bf4cda8fd0c1340dbcc9bcadb4e0ca102ac9ec28da333baf",
+    "shinQuaternionAccessorSha256": "5e268b61f5714451aa7342f3774777a32e8c0ac0e29af9d29e03aae18fda9043",
+    "translationAxes": [
+      "x",
+      "y",
+      "z"
+    ],
+    "rootRotationInterpolation": "LINEAR",
+    "rootQuaternionEndpoints": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0.3826834559440613,
+        0,
+        0.9238795042037964
+      ]
+    ],
+    "rootYawRangeRadians": [
+      -0.07999999413967027,
+      0.8800005469296825
+    ],
+    "rootYawMaximumFrame": 57,
+    "rootYawFinalRadians": 0.7853982286313229,
+    "pelvisRotationInterpolation": "STEP",
+    "pelvisQuaternionEndpoints": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "scaleChain": [
+      {
+        "node": 52,
+        "accessor": 679,
+        "interpolation": "STEP",
+        "sha256": "f46913286d895f62d646314f400fc3d7a543cf34eb4ae56df87f43dc4582a36b",
+        "endpoints": [
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1
+          ]
+        ]
+      },
+      {
+        "node": 51,
+        "accessor": 682,
+        "interpolation": "STEP",
+        "sha256": "f46913286d895f62d646314f400fc3d7a543cf34eb4ae56df87f43dc4582a36b",
+        "endpoints": [
+          [
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1
+          ]
+        ]
+      },
+      {
+        "node": 50,
+        "accessor": 826,
+        "interpolation": "LINEAR",
+        "sha256": "b1e99deff4f84b61e6c5fc16654e8ca552f2c5fd28901109b0d36b1206eb1643",
+        "endpoints": [
+          [
+            0.9999998211860657,
+            0.9999999403953552,
+            1
+          ],
+          [
+            0.9999992847442627,
+            0.9999997019767761,
+            1.0000008344650269
+          ]
+        ]
+      },
+      {
+        "node": 49,
+        "accessor": 829,
+        "interpolation": "LINEAR",
+        "sha256": "ec52e5cb863727133a09b57696ac457face35ac743ce86ed2c5a99792e08b1cf",
+        "endpoints": [
+          [
+            1,
+            1.000000238418579,
+            0.9999997615814209
+          ],
+          [
+            0.9999996423721313,
+            1.0000007152557373,
+            1
+          ]
+        ]
+      }
+    ],
+    "scalePolicy": "preserve-native-nonunit-linear-scales; do-not-normalize",
+    "rootRotationPolicy": "retain-native-quaternion; not-monotonic-final-heading-interpolation",
+    "initialHoldMs": 22.22222276031971,
+    "preserveAllAnimationChannels": true,
+    "endReset": false,
+    "applyOrExtractExactlyOnce": true,
+    "acceptance": null,
+    "pelvisLocalRotation": "authored-identity-STEP-two-endpoints-accessor-681"
+  }
+}
