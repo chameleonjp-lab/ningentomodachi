@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "status": "measured-diagnostic-only-not-production-accepted",
+  "candidateSha256": "a79e96b51a7795782fbd0eee074ee42c088a2aa418e4335706fa72d162c84fd5",
+  "candidateBytes": 365073,
+  "source": {
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed"
+  },
+  "sourcePaths": {
+    "source": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+    "manifest": "assets/android/motions/completed42-speed15/kick/manifest.json"
+  },
+  "sourceClipPointer": "/clips/6",
+  "sourceEvent": {
+    "type": "upward/forward knee",
+    "limb": "shin.R head / right knee",
+    "frames": [
+      26,
+      31
+    ],
+    "peak_frame": 29,
+    "foot_is_not_strike_surface": true
+  },
+  "model": {
+    "origin": "developer-selected-collision-model",
+    "shapeId": "AerialKnee:knee-local-sphere:0",
+    "bone": "shin.R",
+    "radiusM": 0.08590102228100256,
+    "measurement": "maximum-fixed-corner-distance-to-knee-origin-across-12-cached-poses",
+    "addedPaddingM": 0,
+    "sourceAuthoredAnatomy": null,
+    "evidence": {
+      "primitive": 0,
+      "triangle": 14435,
+      "vertexIds": [
+        10926,
+        11012,
+        11008
+      ],
+      "sampleFrames": [
+        1,
+        11,
+        17,
+        18,
+        26,
+        29,
+        31,
+        39,
+        40,
+        47,
+        48,
+        66
+      ],
+      "skinJoint": 50,
+      "vertexWeight": 1,
+      "cacheSha256": "4bb0c6bc87decd3251e755dbf9156cdce003ba57c1721eb42be2d8717d1f1254",
+      "payloadSha256": "090e56bf8410b7bad3f6f7aaaca9726dde709be88c1751b48126244c8e1de95c",
+      "receiptSha256": "f98ddba770cadf3fc3a29b6ff06269d16b305465fbf6d0972e03d8cb6925c715"
+    },
+    "limitation": "Three outer-knee corner witnesses support a developer approximation, not whole-knee anatomy or full-foot mesh exclusion. Origin-cap witness p0/t13885 is not used."
+  },
+  "modelSha256": "b9ca0f0651282a0198079968110c057c8d8004a1876fe915bb81887f87b9bf45",
+  "impact": {
+    "impactIndex": 0,
+    "shapeId": "AerialKnee:knee-local-sphere:0",
+    "startMs": 577.7778029441833,
+    "endMs": 711.1111283302307,
+    "damageShare": 1
+  },
+  "rootPolicy": [
+    {
+      "atMs": 0,
+      "horizontalOwner": "authored-root",
+      "verticalOwner": "authored-root"
+    }
+  ],
+  "schedule": {
+    "candidateCount": 418,
+    "probeCount": 114,
+    "sampleCount": 532,
+    "hashes": {
+      "candidateTimesMs": "a7c4321ad0d95f219a6b79a04652d2d709fefa7b7742329bc4b6a72a5998048f",
+      "probeTimesMs": "c5c5fdf60c5be8c8a24304090a3e818d40c297de58ba94cfad650c73251fef07",
+      "sampleTimesMs": "1cc6e3f5cf8f6933971c64dadfef74cbe8abaec610e09f07f9fa3331cee5f90c"
+    }
+  },
+  "execution": {
+    "startupUpdates": 1,
+    "sampleUpdates": 532,
+    "attemptedSourceUpdates": 533
+  },
+  "declarationHistory": {
+    "embeddedPlanStatus": "UNEXECUTED_KNEE_LOCAL_SPHERE_PLAN",
+    "meaning": "Immutable pre-execution declaration retained verbatim inside the completed measured candidate; not the current execution status.",
+    "pelvisCorrection": "Actual raw accessor 198 has two identity STEP quaternion endpoints. Earlier nonidentity prose was corrected before any generation attempt."
+  },
+  "evidence": {
+    "availability": "local-only-not-included-not-publicly-available",
+    "cache": {
+      "sha256": "47569e6a78b7a153d9304227035ea3fa6c9393773488bf3c977cf2c0fa64ef24",
+      "samples": 532
+    },
+    "native": {
+      "sha256": "ce852660b25ac6e4c295bc82341ba376e1f1395376b2377c62953d595a25f2f9",
+      "nativeSamples": 66,
+      "priorKneeSamples": 12,
+      "maximumRootErrorM": 0,
+      "maximumQuaternionError": 0,
+      "maximumPriorKneeErrorM": 0
+    },
+    "contacts": {
+      "sha256": "2b84ef8014bb94dda674a5ec84b1f9a8af0379caa1989f0ba00115fd1de7e0b2",
+      "passedControls": 12,
+      "coreSteps": 59,
+      "contactQueries": 7,
+      "sourceUpdates": 0
+    }
+  },
+  "maximumPositiveEnvelopeExceedanceM": 6.077060893255881e-07,
+  "implementation": {
+    "commit": "91e296d14b9ae2b20f42f6a726cd0509dd588f76"
+  },
+  "limitations": [
+    "Three outer-knee corner witnesses support a developer approximation, not whole-knee anatomy or full-foot mesh exclusion. Origin-cap witness p0/t13885 is not used.",
+    "Finite local-only diagnostics, not continuous coverage, full-foot mesh exclusion, CI, publication, or device acceptance.",
+    "Fixed radius; empty surface selections; no padding, fitting, or adaptive refinement."
+  ],
+  "surfaceSelections": [],
+  "sourceAuthoredAnatomy": null,
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "rootTransformRequirement": {
+    "translationAxes": [
+      "x",
+      "y",
+      "z"
+    ],
+    "rootQuaternionEndpoints": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "pelvisLocalRotation": "authored-identity-STEP-two-endpoints-accessor-198",
+    "preserveAllAnimationChannels": true
+  }
+}
