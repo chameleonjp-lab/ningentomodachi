@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import type { GameCommand } from '../../src/contracts';
 import { bindPointerControls } from '../../src/input/dom';
 import { createPointerInput } from '../../src/input/PointerInput';
 import { player, run, snapshot, viewport } from '../ui/fixtures/core';
-import type { GameCommand } from '../../src/contracts';
+
 function pointer(
   target: HTMLElement,
   type: string,
@@ -205,6 +206,8 @@ function lifecycleFixture() {
   const binding = bindPointerControls(input, elements, document);
   return {
     ...elements,
+    elements,
+    input,
     commands,
     ended,
     releases,
@@ -423,6 +426,178 @@ test('disposing twice releases captures once and removes document and window lis
       'JumpRequested',
     ]);
   } finally {
+    f.cleanup();
+  }
+});
+
+for (const addedBeforeThrow of [false, true]) {
+  test(`startup rollback removes listeners when registration throws ${addedBeforeThrow ? 'after' : 'before'} adding`, () => {
+    const f = lifecycleFixture();
+    f.binding.dispose();
+    f.releases.length = 0;
+    const documentRemove = vi.spyOn(document, 'removeEventListener');
+    const originalAdd = document.addEventListener.bind(document);
+    const failure = new Error('registration failed');
+    const add = vi
+      .spyOn(document, 'addEventListener')
+      .mockImplementation((type, listener, options) => {
+        if (type === 'pointerup') {
+          if (addedBeforeThrow) originalAdd(type, listener, options);
+          throw failure;
+        }
+        originalAdd(type, listener, options);
+      });
+    try {
+      expect(() => bindPointerControls(f.input, f.elements, document)).toThrow(
+        failure,
+      );
+      pointer(f.move, 'pointerdown', 1);
+      f.jump.click();
+      expect(f.commands).toEqual([]);
+      expect(f.releases).toEqual(['dispose']);
+      expect(documentRemove.mock.calls.map(([type]) => type)).toEqual([
+        'pointermove',
+        'pointerup',
+      ]);
+      expect(pointer(f.move, 'contextmenu', 1).defaultPrevented).toBe(false);
+    } finally {
+      add.mockRestore();
+      documentRemove.mockRestore();
+      f.cleanup();
+    }
+  });
+}
+
+test('failed removal cannot skip later cleanup or leave an active listener', () => {
+  const f = lifecycleFixture();
+  pointer(f.move, 'pointerdown', 1);
+  pointer(f.jump, 'pointerdown', 2);
+  const documentRemove = vi.spyOn(document, 'removeEventListener');
+  const windowRemove = vi.spyOn(window, 'removeEventListener');
+  const failure = new Error('removal failed');
+  const remove = vi
+    .spyOn(f.move, 'removeEventListener')
+    .mockImplementation(() => {
+      throw failure;
+    });
+  try {
+    expect(() => f.binding.dispose()).toThrow(failure);
+    expect(f.released).toEqual([1, 2]);
+    expect(f.captures.size).toBe(0);
+    expect(documentRemove.mock.calls.map(([type]) => type)).toEqual([
+      'pointermove',
+      'pointerup',
+      'pointercancel',
+      'visibilitychange',
+    ]);
+    expect(windowRemove.mock.calls.map(([type]) => type)).toEqual([
+      'blur',
+      'pagehide',
+    ]);
+    expect(f.releases).toEqual(['dispose']);
+    const count = f.commands.length;
+    expect(pointer(f.move, 'pointerdown', 3).defaultPrevented).toBe(false);
+    expect(pointer(f.move, 'contextmenu', 3).defaultPrevented).toBe(false);
+    f.jump.click();
+    window.dispatchEvent(new Event('blur'));
+    expect(f.commands).toHaveLength(count);
+    expect(f.releases).toEqual(['dispose']);
+    expect(() => f.binding.dispose()).not.toThrow();
+  } finally {
+    remove.mockRestore();
+    documentRemove.mockRestore();
+    windowRemove.mockRestore();
+    f.cleanup();
+  }
+});
+
+test('startup preserves a thrown undefined even when rollback also fails', () => {
+  const f = lifecycleFixture();
+  f.binding.dispose();
+  f.releases.length = 0;
+  const add = vi.spyOn(document, 'addEventListener').mockImplementation(() => {
+    throw undefined;
+  });
+  const remove = vi
+    .spyOn(f.move, 'removeEventListener')
+    .mockImplementation(() => {
+      throw new Error('rollback failed');
+    });
+  let thrown = false;
+  let error: unknown = new Error('not thrown');
+  try {
+    try {
+      bindPointerControls(f.input, f.elements, document);
+    } catch (caught) {
+      thrown = true;
+      error = caught;
+    }
+    expect(thrown).toBe(true);
+    expect(error).toBeUndefined();
+    expect(f.releases).toEqual(['dispose']);
+    expect(pointer(f.move, 'pointerdown', 1).defaultPrevented).toBe(false);
+  } finally {
+    add.mockRestore();
+    remove.mockRestore();
+    f.cleanup();
+  }
+});
+
+test('dispose preserves the first thrown undefined and attempts cancellation only once', () => {
+  const f = lifecycleFixture();
+  pointer(f.move, 'pointerdown', 1);
+  const remove = vi
+    .spyOn(f.move, 'removeEventListener')
+    .mockImplementation(() => {
+      throw undefined;
+    });
+  const originalCancel = f.input.cancel.bind(f.input);
+  const cancel = vi.spyOn(f.input, 'cancel').mockImplementation((reason) => {
+    originalCancel(reason);
+    throw new Error('cancel failed');
+  });
+  let thrown = false;
+  let error: unknown = new Error('not thrown');
+  try {
+    try {
+      f.binding.dispose();
+    } catch (caught) {
+      thrown = true;
+      error = caught;
+    }
+    expect(thrown).toBe(true);
+    expect(error).toBeUndefined();
+    expect(f.released).toEqual([1]);
+    expect(f.releases).toEqual(['dispose']);
+    expect(() => f.binding.dispose()).not.toThrow();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  } finally {
+    remove.mockRestore();
+    cancel.mockRestore();
+    f.cleanup();
+  }
+});
+
+test('capture release failure cannot skip other captures or input cancellation', () => {
+  const f = lifecycleFixture();
+  pointer(f.move, 'pointerdown', 1);
+  pointer(f.jump, 'pointerdown', 2);
+  const release = vi
+    .spyOn(f.move, 'releasePointerCapture')
+    .mockImplementation(() => {
+      throw new Error('capture already gone');
+    });
+  try {
+    expect(() => f.binding.dispose()).not.toThrow();
+    expect(f.released).toEqual([2]);
+    expect(f.releases).toEqual(['dispose']);
+    expect(pointer(document.body, 'pointermove', 1).defaultPrevented).toBe(
+      false,
+    );
+    expect(() => f.binding.dispose()).not.toThrow();
+    expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    release.mockRestore();
     f.cleanup();
   }
 });
