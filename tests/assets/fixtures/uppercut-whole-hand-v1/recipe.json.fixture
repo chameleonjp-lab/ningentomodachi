@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "status": "measured-diagnostic-only-not-production-accepted",
+  "candidateSha256": "751b35049ef935deb75bdfe8511f553cef9c7eefba69d14a1806568bc47eaa34",
+  "candidateBytes": 341012,
+  "source": {
+    "sourceSha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+    "manifestSha256": "dcb21aefd7e07cfe9019bc65d573e88db4fb477c1a10da619c3ab5afbc18aff0"
+  },
+  "sourcePaths": {
+    "source": "assets/android/motions/completed42-speed15/punch/android_punch.glb",
+    "manifest": "assets/android/motions/completed42-speed15/punch/manifest.json"
+  },
+  "sourceClipPointer": "/clips/3",
+  "sourceEventPointer": "/clips/3/attack_and_timeline_events/attack_events/0",
+  "sourceEvent": {
+    "limb": "hand.R",
+    "frames": [
+      21,
+      24
+    ],
+    "peakFrame": 23,
+    "regionClaim": "generic source-authored hand only"
+  },
+  "model": {
+    "kind": "developer-whole-right-hand-joint-subtree",
+    "joints": [
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "vertexCount": 4223,
+    "forearmIncluded": false
+  },
+  "measurement": {
+    "origin": "developer-selected-collision-model",
+    "shapeId": "Uppercut:whole-hand:0",
+    "bone": "hand.R",
+    "surface": "dominant-skin-subtree",
+    "jointIndices": [
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "measurement": "posed-selected-vertex-AABB-center-plus-farthest-vertex-sphere",
+    "tiePolicy": "first-accessor-component",
+    "includesForearm": false,
+    "narrowPatchUnion": false,
+    "addedPaddingM": 0,
+    "sourceAuthoredAnatomy": null,
+    "limitation": "Dominant-weight rendered-vertex cluster, not exact anatomical segmentation or an accepted contact surface."
+  },
+  "selectionProvenance": {
+    "status": "raw-accessor-derived-expectation-not-evaluator-receipt",
+    "hashEncoding": "rendered-reference-order-uint32-little-endian",
+    "sourceMeshIndex": 0,
+    "primitives": [
+      {
+        "index": 0,
+        "count": 1513,
+        "sha256": "dc13229a4b5b059af10a7b0ef3a5c736669090f0d3733fdeb326cb84c13aea35"
+      },
+      {
+        "index": 1,
+        "count": 122,
+        "sha256": "3f2cd4c3ac9d6708cd3e697a146c6654b72ee51596b88a3d7ae5e72aacde7555"
+      },
+      {
+        "index": 2,
+        "count": 1676,
+        "sha256": "d181aeb9d8a089f36c5f9a645d492ce5c42f425a587c3dc1761a5734809696db"
+      },
+      {
+        "index": 3,
+        "count": 912,
+        "sha256": "f8907c907f24228de47d3e621a50c1025313c5a0c29b5a7553975ef7bc06ed1d"
+      },
+      {
+        "index": 4,
+        "count": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "impact": {
+    "impactIndex": 0,
+    "shapeId": "Uppercut:whole-hand:0",
+    "startMs": 466.66666865348816,
+    "endMs": 555.555522441864,
+    "damageShare": 1
+  },
+  "rootPolicy": {
+    "mode": "full-translation",
+    "horizontalOwner": "authored-root",
+    "verticalOwner": "authored-root",
+    "preserveNativeParentRootQuaternion": true,
+    "scalarYawInterpretation": "Euler-YXZ observation; not arbitrary-axis heading"
+  },
+  "schedule": {
+    "bakeKeys": 297,
+    "finiteProbes": 75,
+    "uniqueSamples": 372,
+    "hashes": {
+      "candidateTimesMs": "f59e2fa09e8c640d2da0876619110c9039a2b6e8697d11a8afe1be411302a417",
+      "probeTimesMs": "873386020b370385db225eb5580dc82c95cc2b48d7c8b35a681a64a95c351d27",
+      "sampleTimesMs": "4e978caacabe7315029b242d678a01ec2c70eb20eb58be9c73849fd331d0a957"
+    }
+  },
+  "execution": {
+    "startupUpdates": 1,
+    "sampleUpdates": 372,
+    "attemptedSourceUpdates": 373
+  },
+  "evidence": {
+    "availability": "local-only-not-included-not-publicly-available",
+    "cache": {
+      "sha256": "7a699a47dfe19cef1296d6474c73bb68217ad2c71cd33d76caf44cd8e957ec67",
+      "samples": 372
+    },
+    "executionReceiptSha256": "33d2c8224592dca5dd7875896dd65b0a406dfdde43e99d50d277627822951073",
+    "nativeWitnessSha256": "a9ba3b83d57e15bb851184efbf1996c6dae1297556a9b6a953de499cf378c71c",
+    "contacts": {
+      "sha256": "1e2bd95e50316df5011c3684c7e6ff8511b316425ce6a27615042b12dcbdecd0",
+      "passedControls": 12,
+      "coreSteps": 48,
+      "contactQueries": 7,
+      "sourceUpdates": 0
+    },
+    "visualManifestSha256": "ee8d133de99ca2d62ec49b7ad793da8fe7799ed8bb17825446b84cdd4a3fd464",
+    "actualViewedPngCount": 4,
+    "orthographicPanels": 8
+  },
+  "maximumPositiveEnvelopeExceedanceM": 0.00021060032733988265,
+  "implementation": {
+    "sourceCommit": "ffac59ff7d364ae90228382f62e6bd3d2c9f116e",
+    "wrapperSha256": "1353499f1292ba963fcfba5c988134810ce6cea215844f6789f0f4d303a4705b",
+    "wrapperTestSha256": "e021e7193faafbdba80630fe7277fcca0939fabcb3246dacfbfc429d8f7244c6"
+  },
+  "limitations": [
+    "The exact candidate preserves its original embedded pre-execution plan; completed execution is identified separately by the outer candidate and this recipe.",
+    "Whole-hand dominant-weight cluster is a developer collision model, not source-authored anatomy or a narrow-contact-surface assertion.",
+    "Positive finite envelope exceedance is retained, not accepted as a tolerance and not refined. Finite probes do not prove continuous source coverage.",
+    "Native full XYZ and authored nonidentity pelvis rotation remain in measured geometry. Identity root quaternion does not authorize flattening; scalar yaw is only an Euler-YXZ observation.",
+    "Cached synthetic contacts and full-roster Core diagnostic tests are not production runtime activation or full-body/anatomical acceptance.",
+    "Aligned legacy capsule overlaps the diagnostic hand sphere at the native peak; this is not an aerial-miss claim or anatomy acceptance.",
+    "Full cache and raw diagnostic evidence are local-only hashes, not publicly accessible links; the fixture does not include those files.",
+    "No accepted catalog, move registry, body region or gameplay allowance was changed."
+  ],
+  "sourceAuthoredAnatomy": null,
+  "acceptance": null,
+  "gameplayAllowance": null,
+  "rootTransformRequirement": {
+    "rootNode": 52,
+    "pelvisNode": 51,
+    "translationAccessor": 6287,
+    "quaternionAccessor": 6289,
+    "pelvisQuaternionAccessor": 6292,
+    "translationAccessorSha256": "678074325096ad36a60d646d8e7b9cc2199f71f0f292d809b6c997e4f14563b2",
+    "quaternionAccessorSha256": "bf2022dccf9d8fba203301d60bd02bc2f5a8ad2b80747468c8cd27115ff848a3",
+    "pelvisQuaternionAccessorSha256": "a291dabf69c34224e30373bb774cfb957ad289ed13c193d23cfb56c26dd585ce",
+    "translationAxes": [
+      "x",
+      "y",
+      "z"
+    ],
+    "rootRotationInterpolation": "STEP",
+    "rootQuaternionEndpoints": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "pelvisLocalRotation": "authored-nonidentity",
+    "parentNode": 54,
+    "parentTranslation": [
+      0,
+      -0.02199999988079071,
+      0
+    ],
+    "preserveAllAnimationChannels": true,
+    "sourceDescription": "Temporary 0.19 m vertical drive and small forward weight shift; zero net travel. Smooth guard recovery, no terminal teleport.",
+    "endReset": false,
+    "acceptance": null
+  }
+}
