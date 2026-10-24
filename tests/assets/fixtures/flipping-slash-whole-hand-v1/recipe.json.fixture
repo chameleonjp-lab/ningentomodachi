@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "status": "measured-diagnostic-only-not-production-accepted",
+  "candidateSha256": "677852d9f98461a7c72a4cf43761e76c10cfb8cd4def7435ae82bf0392f0ca6c",
+  "candidateBytes": 578842,
+  "source": {
+    "sourceSha256": "c5dd6733fc1ba208cb90b4a556dc8e0b05964d6c49e330d09220ade9b991d95d",
+    "manifestSha256": "dcb21aefd7e07cfe9019bc65d573e88db4fb477c1a10da619c3ab5afbc18aff0"
+  },
+  "sourcePaths": {
+    "source": "assets/android/motions/completed42-speed15/punch/android_punch.glb",
+    "manifest": "assets/android/motions/completed42-speed15/punch/manifest.json"
+  },
+  "sourceClipPointer": "/clips/5",
+  "sourceEventPointer": "/clips/5/attack_and_timeline_events/strikes/0",
+  "sourceEvent": {
+    "limb": "hand.R",
+    "frames": [
+      41,
+      46
+    ],
+    "peakFrame": 44,
+    "regionClaim": "generic source-authored hand only"
+  },
+  "model": {
+    "kind": "developer-whole-right-hand-joint-subtree",
+    "joints": [
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "vertexCount": 4223,
+    "forearmIncluded": false
+  },
+  "measurement": {
+    "origin": "developer-selected-collision-model",
+    "shapeId": "FlippingSlash:whole-hand:0",
+    "bone": "hand.R",
+    "surface": "dominant-skin-subtree",
+    "jointIndices": [
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "measurement": "posed-selected-vertex-AABB-center-plus-farthest-vertex-sphere",
+    "tiePolicy": "first-accessor-component",
+    "includesForearm": false,
+    "narrowPatchUnion": false,
+    "addedPaddingM": 0,
+    "sourceAuthoredAnatomy": null,
+    "limitation": "Dominant-weight rendered-vertex cluster, not exact anatomical segmentation or an accepted contact surface."
+  },
+  "selectionProvenance": {
+    "status": "raw-accessor-derived-expectation-not-evaluator-receipt",
+    "hashEncoding": "rendered-reference-order-uint32-little-endian",
+    "sourceMeshIndex": 0,
+    "primitives": [
+      {
+        "index": 0,
+        "count": 1513,
+        "sha256": "dc13229a4b5b059af10a7b0ef3a5c736669090f0d3733fdeb326cb84c13aea35"
+      },
+      {
+        "index": 1,
+        "count": 122,
+        "sha256": "3f2cd4c3ac9d6708cd3e697a146c6654b72ee51596b88a3d7ae5e72aacde7555"
+      },
+      {
+        "index": 2,
+        "count": 1676,
+        "sha256": "d181aeb9d8a089f36c5f9a645d492ce5c42f425a587c3dc1761a5734809696db"
+      },
+      {
+        "index": 3,
+        "count": 912,
+        "sha256": "f8907c907f24228de47d3e621a50c1025313c5a0c29b5a7553975ef7bc06ed1d"
+      },
+      {
+        "index": 4,
+        "count": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "impact": {
+    "impactIndex": 0,
+    "shapeId": "FlippingSlash:whole-hand:0",
+    "startMs": 911.1111164093018,
+    "endMs": 1044.4444417953491,
+    "damageShare": 1
+  },
+  "rootPolicy": {
+    "mode": "full-translation",
+    "horizontalOwner": "authored-root",
+    "verticalOwner": "authored-root",
+    "preserveNativeParentRootQuaternion": true,
+    "scalarYawInterpretation": "Euler-YXZ observation; not arbitrary-axis heading"
+  },
+  "schedule": {
+    "bakeKeys": 575,
+    "finiteProbes": 111,
+    "uniqueSamples": 686,
+    "hashes": {
+      "candidateTimesMs": "f4ef3e756a604b1450f6b7bdda14d6c0668f2633d6008b159d5f26b364af2d82",
+      "probeTimesMs": "5f26cbe93ab94e7562a85c5c792d97b3b2a0e335411b9ca96112b91b17aa44fe",
+      "sampleTimesMs": "1de7d4872509a16961cbdc0cefee6f1018d2663880bc98f501a63e0aab48a9b1"
+    }
+  },
+  "execution": {
+    "startupUpdates": 1,
+    "sampleUpdates": 686,
+    "attemptedSourceUpdates": 687
+  },
+  "evidence": {
+    "availability": "local-only-not-included-not-publicly-available",
+    "cache": {
+      "sha256": "04b77c836fb4b08efea8c1eae3e14658d0260e0c95ccbcbb1bed4d00cc4e5371",
+      "samples": 686
+    },
+    "executionReceiptSha256": "95d9098e8de3f4f9f685865d1bd66ba69427bd232c6210f5225c6072a6a1283d",
+    "nativeWitnessSha256": "131b5e2ffdf49629fc9f38b889d8e23f106122b6c5072483972a26305ba3696f",
+    "contacts": {
+      "sha256": "ed4b9a4a806fcf8131da21028f6f76e3d4166077b93cd51723fda07fda2210c1",
+      "passedControls": 12,
+      "coreSteps": 93,
+      "contactQueries": 7,
+      "sourceUpdates": 0
+    },
+    "visualManifestSha256": "c21d223b4b23a7e2bdad966afe3dbf37ff54e03eb180ec77210a901b642e168c",
+    "actualViewedPngCount": 4,
+    "orthographicPanels": 8
+  },
+  "maximumPositiveEnvelopeExceedanceM": 0.0008219884506556474,
+  "implementation": {
+    "sourceCommit": "a4c71cd427b4049216629d831094d3915b48498c",
+    "wrapperSha256": "0a1dd886ec30da0fa637a7ef076126feeb1ae2488136bb8f885b7984a454ed6f",
+    "wrapperTestSha256": "5c59629496157594b0f3a11f256170bd83bc5995ac29a0e5e2a82f6f1e106649"
+  },
+  "limitations": [
+    "The exact candidate preserves its original embedded pre-execution plan; completed execution is identified separately by the outer candidate and this recipe.",
+    "Whole-hand dominant-weight cluster is a developer collision model, not source-authored anatomy or a narrow-contact-surface assertion.",
+    "Positive finite envelope exceedance is retained, not accepted as a tolerance and not refined. Finite probes do not prove continuous source coverage.",
+    "Native full XYZ and parent-root X rotation remain in measured geometry. Euler-YXZ scalar yaw is not arbitrary-axis heading.",
+    "Cached synthetic contacts and full-roster Core diagnostic tests are not production runtime activation or full-body/anatomical acceptance.",
+    "Grounded legacy proxy miss at actual aerial hand height is not automatically a defect.",
+    "Full cache and raw diagnostic evidence are local-only hashes, not publicly accessible links; the fixture does not include those files.",
+    "No accepted catalog, move registry, body region or gameplay allowance was changed."
+  ],
+  "sourceAuthoredAnatomy": null,
+  "acceptance": null,
+  "gameplayAllowance": null
+}
