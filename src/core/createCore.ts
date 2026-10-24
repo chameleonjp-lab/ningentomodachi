@@ -856,7 +856,60 @@ export function createCore(
             : c.kind === 'destruction'
               ? 2
               : 3;
-      for (const c of [...same].sort(
+      // Only equivalent body-hit evidence may use a geometric tie-break. This
+      // does not prioritize limbs, change damage, or order other candidate kinds.
+      const bodyEvidenceKey = (c: SpatialCandidate): string | undefined =>
+        c.kind === 'body-hit'
+          ? JSON.stringify([
+              c.runId,
+              c.at,
+              c.contactId,
+              c.source.actorId,
+              c.source.activationId,
+              c.source.impactId,
+              c.targetActorId,
+              c.interval.from,
+              c.interval.to,
+              c.evidence,
+            ])
+          : undefined;
+      const bodySlots = new Map<string, number[]>();
+      same.forEach((c, index) => {
+        const key = bodyEvidenceKey(c);
+        if (key === undefined) return;
+        const slots = bodySlots.get(key) ?? [];
+        slots.push(index);
+        bodySlots.set(key, slots);
+      });
+      const canonical = [...same];
+      for (const slots of bodySlots.values()) {
+        if (slots.length < 2) continue;
+        // Sort within this group's original slots, never across another group.
+        // A conditional pairwise comparator would violate strict weak ordering.
+        const zero = (n: number) => (n === 0 ? 0 : n);
+        const ordered = slots
+          .map((index) => {
+            const c = requireValue(same[index]);
+            return {
+              ...c,
+              point: {
+                x: zero(c.point.x),
+                y: zero(c.point.y),
+                z: zero(c.point.z),
+              },
+            };
+          })
+          .sort(
+            (a, b) =>
+              a.point.x - b.point.x ||
+              a.point.y - b.point.y ||
+              a.point.z - b.point.z,
+          );
+        slots.forEach((slot, index) => {
+          canonical[slot] = requireValue(ordered[index]);
+        });
+      }
+      for (const c of canonical.sort(
         (a, b) =>
           priority(a) - priority(b) ||
           compare(identityKey(a), identityKey(b)) ||
