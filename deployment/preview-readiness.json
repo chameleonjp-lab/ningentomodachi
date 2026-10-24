@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "channel": "device-preview",
+  "accepted": false,
+  "externalSubmission": false,
+  "baselineCommit": "847a5d4f516d66304bec45511dc87a516b21fb1a",
+  "evidence": "docs/deployment/preview.md",
+  "publicFiles": [
+    {
+      "path": "game-assets/android/derived-pack-v1.glb",
+      "sha256": "78113b6f409633a8ae127a0c4cf149e6e0db8a8f023da53693f5976ddeaac37b"
+    },
+    {
+      "path": "game-assets/android/runtime-artifact-v1.json",
+      "sha256": "04dd9e6ee5dd9600eb93a4083a18e721634e4b136afe3b1b02d7835e6caf5c22"
+    },
+    {
+      "path": "game-assets/diagnostic-preview-v1/catalog.json",
+      "sha256": "0746cf12f393e9d083fbfd91b1a49bed64591f21ffbc614a7fd05c42ec417b9e"
+    }
+  ],
+  "publicInventorySha256": "b35b7975f561a10a2e291e0ae4fc088e7720aa76109b618c27251d00b270c3af"
+}

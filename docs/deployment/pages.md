@@ -63,3 +63,7 @@ Local tests do not prove remote Actions behavior, Pages settings, live availabil
 - https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request (merge/squash/rebase merge-commit identity)
 
 - https://docs.github.com/en/rest/pages/pages#get-a-github-pages-site (read-only destination/build-mode preflight)
+
+## Separately gated device preview
+
+The activation candidate in [preview.md](preview.md) configures an explicit unaccepted channel and pinned diagnostic runtime without changing release acceptance. Preview readiness is enabled in the candidate, but the remote repository publication flag is separate and unchanged. Publication, browser gameplay and actual-device acceptance are not yet verified. Exactly one channel may be enabled. Preview publication additionally requires an exact reviewed static-asset hash inventory and narrowly allowed CI-built index/JS/CSS and an unaccepted marker in the index; it retains the same CI/provenance/freshness/HTTP checks. A preview does not satisfy the usable-game acceptance described above.
