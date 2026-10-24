@@ -1,0 +1,262 @@
+{
+  "status": "measured-developer-collision-candidate-not-accepted",
+  "acceptance": null,
+  "candidateSha256": "72f5cb0a81b910d3238d073acdbd26e2d1b6431a93fa4bf4b3a240714e763f76",
+  "candidateBytes": 281988,
+  "sourcePins": {
+    "sourcePath": "assets/android/motions/completed42-speed15/kick/android_kick.glb",
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "manifestPath": "assets/android/motions/completed42-speed15/kick/manifest.json",
+    "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed"
+  },
+  "nativeTimesSha256": "1f4e830ec599551be7ac8e9cc58d113d388417ec5326b2921a88133865f7c031",
+  "rootPolicy": {
+    "version": 1,
+    "clipId": "KickCombo4",
+    "sourceSha256": "697eb9cfc9dbfd353b6257659bb3d4132b1b0c9cd67e0612581549a5ac862afd",
+    "mode": "in-place-posture-xyz",
+    "provenance": {
+      "manifestSha256": "f0e69488d0a2b72fb4cf00cf4cbba1f36b643a6450056458c50e4dd974bfdeed",
+      "clipPointer": "/clips/4",
+      "supportPointer": "/clips/4/support_contacts/support_contacts/0"
+    }
+  },
+  "rootMeaning": "All native XYZ and quaternion geometry retained once; zero extracted translation only. Observed native scalar yaw is retained in root metadata and not reapplied to collision geometry. Raw root observation is startup-relative, not absolute authored position.",
+  "model": {
+    "origin": "developer-collision-abstraction",
+    "selection": "whole-right-foot-joint-subtree",
+    "primitive": "posed-cluster-enclosing-sphere",
+    "includesShin": false,
+    "narrowPatchUnion": false,
+    "expectedSelectionCountsByPrimitive": [
+      615,
+      440,
+      386,
+      588,
+      255
+    ],
+    "expectedSelectedVertexCount": 2284,
+    "selectionProvenance": "raw-accessor dominant-weight inspection; evaluator must verify exact membership before sampling",
+    "limitation": "Dominant-weight subtree is a deterministic rendered cluster, not complete anatomical segmentation. Event 1 may contact other foot surfaces; event 2 chooses the foot-side interpretation and excludes shin. Candidate requires visual, intended-hit, near-miss and clash review."
+  },
+  "events": [
+    {
+      "impactIndex": 0,
+      "sourceEvent": {
+        "frame": 22,
+        "active_frames": [
+          20,
+          23
+        ],
+        "limb": "right foot",
+        "kind": "front kick"
+      },
+      "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/0",
+      "modelInterpretation": "whole-source-authored-right-foot",
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 444.4444477558136,
+        "endMs": 533.3333611488342,
+        "peakMs": 488.8888895511627,
+        "initialHoldEndMs": 22.22222276031971,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 422.22222222222223,
+          "endMs": 511.1111111111111,
+          "peakMs": 466.6666666666667
+        }
+      },
+      "acceptance": null
+    },
+    {
+      "impactIndex": 1,
+      "sourceEvent": {
+        "frame": 43,
+        "active_frames": [
+          41,
+          44
+        ],
+        "limb": "right heel/sole",
+        "kind": "side kick"
+      },
+      "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/1",
+      "modelInterpretation": "whole-foot-may-contact-other-foot-surfaces",
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 911.1111164093018,
+        "endMs": 1000,
+        "peakMs": 955.5554986000061,
+        "initialHoldEndMs": 22.22222276031971,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 888.8888888888888,
+          "endMs": 977.7777777777777,
+          "peakMs": 933.3333333333334
+        }
+      },
+      "acceptance": null
+    },
+    {
+      "impactIndex": 2,
+      "sourceEvent": {
+        "frame": 68,
+        "active_frames": [
+          66,
+          72
+        ],
+        "limb": "right instep/shin",
+        "kind": "roundhouse kick"
+      },
+      "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/2",
+      "modelInterpretation": "foot-side-interpretation-excludes-shin",
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 1466.6666984558105,
+        "endMs": 1622.2223043441772,
+        "peakMs": 1511.1111402511597,
+        "initialHoldEndMs": 22.22222276031971,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 1444.4444444444443,
+          "endMs": 1600,
+          "peakMs": 1488.888888888889
+        }
+      },
+      "acceptance": null
+    },
+    {
+      "impactIndex": 3,
+      "sourceEvent": {
+        "frame": 106,
+        "active_frames": [
+          101,
+          110
+        ],
+        "limb": "right foot",
+        "kind": "low sweep"
+      },
+      "sourceEventPointer": "/clips/4/attack_and_timeline_events/attack_events/3",
+      "modelInterpretation": "whole-source-authored-right-foot",
+      "window": {
+        "policy": "inclusive-accessor-frame-cells-v1",
+        "acceptance": "provisional-policy",
+        "startMs": 2244.4443702697754,
+        "endMs": 2466.6666984558105,
+        "peakMs": 2355.555534362793,
+        "initialHoldEndMs": 22.22222276031971,
+        "relativeClock": {
+          "policy": "inclusive-source-frame-cells-v1",
+          "acceptance": "provisional-policy",
+          "startMs": 2222.222222222222,
+          "endMs": 2444.444444444445,
+          "peakMs": 2333.3333333333335
+        }
+      },
+      "acceptance": null
+    }
+  ],
+  "damageShareOrigin": "provisional-developer-balancing-not-source-fact",
+  "schedule": {
+    "baseKeys": 859,
+    "probeKeys": 477,
+    "uniquePoses": 1336,
+    "startupUpdates": 1,
+    "sourceUpdates": 1337,
+    "verticesPerPose": 2284,
+    "vertexEvaluations": 3051424
+  },
+  "selectionHashes": [
+    "994b4cf8aa18e08ec78f12bba339d8802669f589f31c7a57f38bbb691ef115d3",
+    "a2e4efcc3ccd20c009195e70282f07818faf386e7aa026c9b32e5662e982918d",
+    "4acd9dc0a84833b1282b0719403550e9255e44837ad09808db3c0fe277e17473",
+    "25bc4c5d0dadb73313de75462a6cbc0808bdbc011e862a40199627e24d442a1f",
+    "87f98f1e9798f28ad88b9889211afb985c8eceada22c614f5c626fe764c73a39"
+  ],
+  "peakWitnesses": [
+    {
+      "impactIndex": 0,
+      "atMs": 488.8888895511627,
+      "volume": {
+        "kind": "sphere",
+        "center": {
+          "x": -0.14000019877427367,
+          "y": 1.0293651256167586,
+          "z": 1.018918063333609
+        },
+        "radiusM": 0.19427066254381947
+      }
+    },
+    {
+      "impactIndex": 1,
+      "atMs": 955.5554986000061,
+      "volume": {
+        "kind": "sphere",
+        "center": {
+          "x": -0.929613983634701,
+          "y": 1.1388239560737632,
+          "z": 0.0350567413267895
+        },
+        "radiusM": 0.20018739548765752
+      }
+    },
+    {
+      "impactIndex": 2,
+      "atMs": 1511.1111402511597,
+      "volume": {
+        "kind": "sphere",
+        "center": {
+          "x": -0.19080212669786534,
+          "y": 1.1446843466525005,
+          "z": 1.0675608870019604
+        },
+        "radiusM": 0.20708134196209135
+      }
+    },
+    {
+      "impactIndex": 3,
+      "atMs": 2355.555534362793,
+      "volume": {
+        "kind": "sphere",
+        "center": {
+          "x": -0.34241671971810494,
+          "y": 0.17149948810046275,
+          "z": 0.8710253436846684
+        },
+        "radiusM": 0.20091998385129978
+      }
+    }
+  ],
+  "externalEvidence": {
+    "availability": "local-only retained evidence; not included in repository; hashes are provenance, not public URLs",
+    "sampleCacheSha256": "538ef222722af6fa9c44e141167749e63bc0f975f6669ee0b015071e5bd1d701",
+    "generationReceiptSha256": "e08dfd1bc2b3b6372e7e7cc034d63277eb85af437f03988803823a747aaef248",
+    "contactReceiptSha256": "0cdb316c8283877af720e07aa9d72f8e7345bc47cad1ef43af3f5335557e6b34",
+    "visualManifestSha256": "b1a46e37f4110cc963a9894d12c7351078f1e1cc5f766b3cd8d52cabf99540d8",
+    "visualReviewSha256": "c59b547b96e3abf4f69d0a411a5963e2f3d98d4e74a5c9ada52a1267532cd4c4"
+  },
+  "diagnosticResult": {
+    "testsPassed": 9,
+    "scenes": 52,
+    "coreRuns": 7,
+    "fixedSteps": 2240,
+    "queries": 2292,
+    "sourceCalls": 0,
+    "target": "synthetic radius 0.1 m, not anatomical body",
+    "cadence": "Full actor state compared at equal clocks; raw HeatChanged streams differ 7/12/22. Not device FPS performance."
+  },
+  "finiteProbeLimit": "477 quarter/mid/threequarter sphere comparisons, not continuous or exact surface proof; no radius inflation or acceptance.",
+  "rootCurveWitness": {
+    "sha256": "e070dded3001953281a974ee507f1d04be7f90c9fb943f8fee8bdbee49a6f14b",
+    "encoding": "JavaScript JSON.stringify (not Python json.dumps) of all ordered {atMs,position,visualYawRad} keys, independently reconstructed from the pinned full sample cache",
+    "keys": 859,
+    "nonzeroYawKeys": 543,
+    "minimumYawRad": -0.2000000119780635,
+    "maximumYawRad": 0.8500000549101201
+  }
+}
