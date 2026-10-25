@@ -33,6 +33,7 @@ export interface InputPacket {
 export type GameplayCommand = Envelope & {
   readonly input: InputPacket;
 } & (
+    | GuardRequested
     | {
         readonly type: 'MoveRequested';
         readonly actorId: ActorId;
@@ -55,7 +56,7 @@ export type GameplayCommand = Envelope & {
         readonly category: AttackCategory;
       }
   );
-/** Opt-in until Core and transport install explicit guard handling. */
+/** Compatibility export retained now that guard is a canonical gameplay command. */
 export type FightingGameplayCommand = GameplayCommand | GuardRequested;
 export type GameCommand =
   | GameplayCommand

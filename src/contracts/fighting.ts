@@ -232,6 +232,12 @@ export interface FightingClockContext {
   readonly fromGameMs: GameTimeMs;
   readonly toGameMs: GameTimeMs;
 }
+/** Physical ground-to-air seam (jump or lost support), not accepted input intent. */
+export interface FightingTakeoffWitness {
+  readonly actorId: ActorId;
+  readonly atGameMs: GameTimeMs;
+  readonly position: Vector3;
+}
 export interface FightingLandingWitness {
   readonly actorId: ActorId;
   readonly atGameMs: GameTimeMs;
@@ -252,6 +258,7 @@ export interface FightingContactWitness {
 export interface FightingSpatialStepResult extends SpatialStepResult {
   readonly fighting: {
     readonly stepTick: Tick;
+    readonly takeoffs: readonly FightingTakeoffWitness[];
     readonly landings: readonly FightingLandingWitness[];
     readonly contacts: readonly FightingContactWitness[];
   };
@@ -739,6 +746,16 @@ export function fightingClockSliceAt(
     ) ?? null
   );
 }
+export function captureFightingTakeoffWitness(
+  input: FightingTakeoffWitness,
+): FightingTakeoffWitness {
+  requireRecord(input);
+  return Object.freeze({
+    actorId: actorId(text(input.actorId)),
+    atGameMs: gameTimeMs(input.atGameMs),
+    position: vector(input.position),
+  });
+}
 export function captureFightingLandingWitness(
   input: FightingLandingWitness,
 ): FightingLandingWitness {
@@ -793,6 +810,7 @@ function validateFightingSpatial(
   requireRecord(extension);
   if (
     tick(extension.stepTick) !== tick(value.snapshot.tick) ||
+    !Array.isArray(extension.takeoffs) ||
     !Array.isArray(extension.landings) ||
     !Array.isArray(extension.contacts) ||
     !Array.isArray(value.snapshot.actors) ||
@@ -852,6 +870,15 @@ function validateFightingSpatial(
       );
     candidateIds.add(candidate.contactId);
   }
+  const takeoffTimes = new Map<ActorId, Set<GameTimeMs>>();
+  for (const original of extension.takeoffs) {
+    const witness = captureFightingTakeoffWitness(original);
+    const times = takeoffTimes.get(witness.actorId) ?? new Set<GameTimeMs>();
+    if (!actors.has(witness.actorId) || times.has(witness.atGameMs))
+      throw new RangeError('Duplicate or foreign fighting takeoff');
+    times.add(witness.atGameMs);
+    takeoffTimes.set(witness.actorId, times);
+  }
   const landingActors = new Set<ActorId>();
   for (const original of extension.landings) {
     const witness = captureFightingLandingWitness(original);
@@ -881,6 +908,14 @@ export function captureFightingSpatialStepResult(
   for (const actor of input.snapshot.actors)
     if (!actors.has(actor.actorId))
       throw new RangeError('Unexpected fighting spatial actor');
+  for (const witness of input.fighting.takeoffs) {
+    if (
+      !actors.has(witness.actorId) ||
+      witness.atGameMs < from ||
+      witness.atGameMs > endpoint
+    )
+      throw new RangeError('Takeoff witness outside requested interval/actors');
+  }
   for (const witness of input.fighting.landings) {
     if (
       !actors.has(witness.actorId) ||
@@ -910,6 +945,7 @@ export function captureFightingSpatialStepResult(
     candidates: input.candidates,
     fighting: {
       stepTick: input.fighting.stepTick,
+      takeoffs: input.fighting.takeoffs.map(captureFightingTakeoffWitness),
       landings: input.fighting.landings.map(captureFightingLandingWitness),
       contacts: input.fighting.contacts.map(captureFightingContactWitness),
     },
