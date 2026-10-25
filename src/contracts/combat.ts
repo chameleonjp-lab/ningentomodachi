@@ -2,6 +2,8 @@ import type {
   FightingAttackState,
   FightingClock,
   FightingCombatantState,
+  FightingPoseContext,
+  FightingPoseHold,
 } from './fighting';
 import type {
   ActiveRealTimeMs,
@@ -52,6 +54,9 @@ export interface AttackState {
   readonly impactBindings: readonly ImpactBinding[];
 }
 export interface ActorState {
+  readonly fightingPose?: FightingPoseContext;
+  /** Visual-only hold: never adds or removes accepted blockstun defense. */
+  readonly fightingPoseHold?: FightingPoseHold;
   readonly fighting?: FightingCombatantState;
   /** Sole delivery field for planned beginStep and accepted completeStep motion slices. */
   readonly fightingClock?: FightingClock;
