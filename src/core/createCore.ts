@@ -3,6 +3,9 @@ import {
   type ActorColor,
   type ActorId,
   type ActorState,
+  type ClipId,
+  type CommandId,
+  type SpatialStepRequest,
   activeRealTimeMs,
   actorId,
   attackActivationId,
@@ -34,6 +37,123 @@ import {
 } from '../contracts';
 import { requireValue } from './invariant';
 import {
+  FIGHTING_ENTRIES,
+  FIGHTING_MOVE_SPECS,
+  FIGHTING_CANCEL_EDGES,
+  captureFightingCombatantState,
+  captureFightingClock,
+  captureFightingPolicy,
+  captureLegacyImpactProfile,
+  captureFightingSpatialStepResult,
+  type FightingPolicy,
+  type FightingEntry,
+  type FightingCombatantState,
+  type FightingClockSlice,
+  type FightingInputEdge,
+  type FightingAttackDescriptor,
+  type FightingSpatialStepResult,
+  type FightingContactWitness,
+  type LegacyImpactProfile,
+} from '../contracts/fighting';
+import {
+  createFightingCombatant,
+  applyFightingTransition,
+  receiveFightingInputs,
+  fightingHeatCost,
+} from './fightingState';
+import {
+  normalizeFightingInputs,
+  resolveFightingContact,
+  fightingDamageHp,
+} from './fightingRules';
+import {
+  createFightingClockSlice,
+  projectFightingHeatTime,
+} from './fightingClock';
+
+export type FightingPoseKey =
+  | 'standing'
+  | 'crouching'
+  | 'airborne'
+  | 'landing'
+  | 'guard-standing'
+  | 'guard-crouching'
+  | 'hit-standing'
+  | 'hit-crouching';
+/** Explicit Core-only admission. Real assets, spatial paths and public readiness are F/C/D gates. */
+export interface CoreFightingOptions {
+  readonly policy: FightingPolicy;
+  readonly entries: readonly (FightingEntry & { readonly clipId: ClipId })[];
+  readonly catalog: Pick<MotionCatalogPort, 'get' | 'list'>;
+  readonly legacyImpactProfiles: readonly LegacyImpactProfile[];
+  readonly poseClips: Readonly<Record<FightingPoseKey, ClipId>>;
+}
+const FIGHTING_TICK_MS = 1000 / 60;
+// Normalize only binary arithmetic roundoff (8 ULP), never a gameplay epsilon or TOI tick bucket.
+const sameClockPoint = (a: number, b: number) =>
+  Math.abs(a - b) <= Number.EPSILON * Math.max(1, Math.abs(a), Math.abs(b)) * 8;
+const reached = (value: number, boundary: number) =>
+  value >= boundary || sameClockPoint(value, boundary);
+const clockTicks = (ms: number) => {
+  const ticks = ms / FIGHTING_TICK_MS,
+    nearest = Math.round(ticks);
+  return sameClockPoint(ticks, nearest) ? nearest : ticks;
+};
+const clockFloor = (ms: number) => Math.floor(clockTicks(ms));
+const clockRemaining = (ms: number) => Math.max(0, Math.ceil(clockTicks(ms)));
+// Captured finite components may still overflow products, lengths or subtraction.
+function horizontalUnit(x: number, z: number) {
+  const scale = Math.max(Math.abs(x), Math.abs(z));
+  if (scale === 0) return null;
+  const sx = x / scale,
+    sz = z / scale,
+    length = Math.hypot(sx, sz);
+  return { x: sx / length, z: sz / length };
+}
+function fightingFrontDot(witness: FightingContactWitness) {
+  const source = witness.sourcePosition,
+    target = witness.targetPosition;
+  let dx = source.x - target.x,
+    dz = source.z - target.z;
+  if (!Number.isFinite(dx) || !Number.isFinite(dz)) {
+    // Only rescale before subtraction when required: shared large coordinates
+    // must not erase an otherwise representable tiny displacement on the other axis.
+    const scale = Math.max(
+      Math.abs(source.x),
+      Math.abs(source.z),
+      Math.abs(target.x),
+      Math.abs(target.z),
+    );
+    dx = source.x / scale - target.x / scale;
+    dz = source.z / scale - target.z / scale;
+  }
+  const direction = horizontalUnit(dx, dz),
+    facing = horizontalUnit(witness.targetFacing.x, witness.targetFacing.z);
+  if (!direction || !facing) return -1;
+  // Clamp only unit-vector dot roundoff, never witness components or world bounds.
+  return Math.max(
+    -1,
+    Math.min(1, direction.x * facing.x + direction.z * facing.z),
+  );
+}
+interface FightingRuntime {
+  airborne: boolean;
+  actionMs: number;
+  heatMs: number;
+  stopUntil: number;
+  moveStart: number;
+  contactAt: number | null;
+  stunUntil: number;
+  landingUntil: number;
+  bufferAt: number | null;
+  epochId: string;
+  clipId: ClipId;
+  activationId: import('../contracts').AttackActivationId | null;
+  motionMs: number;
+  poseKey: string;
+}
+
+import {
   advanceHeat,
   calculateScore,
   createRandom,
@@ -46,6 +166,7 @@ import {
 } from './rules';
 import { createWorldLedger, type WorldSeed } from './worldLedger';
 export interface CoreOptions {
+  readonly fighting?: CoreFightingOptions;
   readonly catalog: Pick<MotionCatalogPort, 'get' | 'list'> &
     Partial<Pick<MotionCatalogPort, 'pose'>>;
   readonly moves: Readonly<Record<ActorColor, MoveSet>>;
@@ -83,6 +204,26 @@ export function createCore(
   options: CoreOptions,
 ): CorePort {
   const random = createRandom(context.seed);
+  const fighting = options.fighting
+    ? {
+        ...options.fighting,
+        policy: captureFightingPolicy(options.fighting.policy),
+        entries: immutableDto(options.fighting.entries),
+        poseClips: immutableDto(options.fighting.poseClips),
+        legacyImpactProfiles: options.fighting.legacyImpactProfiles.map(
+          captureLegacyImpactProfile,
+        ),
+      }
+    : null;
+  const fightingMetadata = new Map<ClipId, MotionDefinition>();
+  const profiles = new Map<string, LegacyImpactProfile>();
+  const fightingRuntime = new Map<ActorId, FightingRuntime>();
+  let epochSerial = 0;
+  let fightingCursor = 0;
+  let fightingRequest: SpatialStepRequest | null = null;
+  let fightingResult: FightingSpatialStepResult | null = null;
+  const acceptedSlices = new Map<ActorId, FightingClockSlice[]>();
+
   const world = createWorldLedger(
     context.runId,
     options.world ?? { vehicles: [], objects: [] },
@@ -123,6 +264,121 @@ export function createCore(
         throw new Error(
           `Invalid motion ${motion.clipId}: ${validation.errors.join(',')}`,
         );
+    }
+    if (fighting) {
+      if (
+        Object.values(FIGHTING_MOVE_SPECS).some(
+          (spec) =>
+            !Number.isFinite(
+              spec.damageNormalized * fighting.policy.hpPerNormalizedPoint,
+            ),
+        )
+      )
+        throw new RangeError('Normalized fighting HP scale overflows');
+      const player = fighting.catalog.list();
+      if (new Set(player.map((m) => m.clipId)).size !== player.length)
+        throw new Error('Duplicate fighting clip');
+      for (const motion of player) {
+        if (
+          metadata.has(motion.clipId) ||
+          !validateMotionDefinition(motion).valid
+        )
+          throw new Error(
+            'Fighting repertoire must be valid and separate from legacy inventory',
+          );
+        fightingMetadata.set(motion.clipId, immutableDto(motion));
+      }
+      if (
+        fighting.entries.length !== FIGHTING_ENTRIES.length ||
+        player.length !== FIGHTING_ENTRIES.length
+      )
+        throw new Error(
+          'Fighting requires all eleven separately bound entries',
+        );
+      for (const entry of FIGHTING_ENTRIES) {
+        const matches = fighting.entries.filter(
+          (e) => e.posture === entry.posture && e.moveId === entry.moveId,
+        );
+        const bound = matches[0];
+        const motion = bound ? fightingMetadata.get(bound.clipId) : null;
+        const spec = FIGHTING_MOVE_SPECS[entry.moveId];
+        const expectedCategory =
+          entry.moveId.startsWith('k_') || entry.moveId === 'a_kick'
+            ? 'kick'
+            : 'punch';
+        if (
+          matches.length !== 1 ||
+          !motion ||
+          motion.category !== expectedCategory ||
+          Math.abs(
+            motion.durationMs -
+              (spec.startupTicks + spec.activeTicks + spec.recoveryTicks) *
+                FIGHTING_TICK_MS,
+          ) > 1e-7 ||
+          motion.impacts.length !== 1 ||
+          !motion.impacts.every(
+            (i) =>
+              Math.abs(i.startMs - spec.startupTicks * FIGHTING_TICK_MS) <
+                1e-7 &&
+              Math.abs(
+                i.endMs -
+                  (spec.startupTicks + spec.activeTicks) * FIGHTING_TICK_MS,
+              ) < 1e-7,
+          )
+        )
+          throw new Error('Fighting entry timing/category mismatch');
+      }
+      if (
+        new Set(fighting.entries.map((e) => e.clipId)).size !==
+        fighting.entries.length
+      )
+        throw new Error('Fighting entries require separate clip bindings');
+      for (const key of [
+        'standing',
+        'crouching',
+        'airborne',
+        'landing',
+        'guard-standing',
+        'guard-crouching',
+        'hit-standing',
+        'hit-crouching',
+      ] as const)
+        if (!fighting.poseClips[key]?.trim())
+          throw new Error('Missing explicit fighting pose clip');
+      for (const profile of fighting.legacyImpactProfiles) {
+        const key = `${profile.clipId}:${profile.impactIndex}`;
+        if (
+          profiles.has(key) ||
+          !metadata
+            .get(profile.clipId)
+            ?.impacts.some((i) => i.impactIndex === profile.impactIndex)
+        )
+          throw new Error('Duplicate or foreign legacy impact profile');
+        profiles.set(key, profile);
+      }
+      for (const motion of metadata.values())
+        for (const impact of motion.impacts)
+          if (!profiles.has(`${motion.clipId}:${impact.impactIndex}`))
+            throw new Error('Unclassified legacy impact');
+      for (const actor of actors) {
+        updateActor(actor.actorId, { fighting: createFightingCombatant() });
+        fightingRuntime.set(actor.actorId, {
+          airborne: false,
+          actionMs: 0,
+          heatMs: 0,
+          stopUntil: 0,
+          moveStart: 0,
+          contactAt: null,
+          stunUntil: 0,
+          landingUntil: 0,
+          bufferAt: null,
+          epochId: `${context.runId}:epoch:${++epochSerial}`,
+          clipId: fighting.poseClips.standing,
+          activationId: null,
+          motionMs: 0,
+          poseKey: 'standing',
+        });
+      }
     }
     for (const color of colors) {
       const set = sets[color];
@@ -222,7 +478,8 @@ export function createCore(
   const consumed = new Set<string>();
   const hitTargets = new Set<string>();
   const seenContacts = new Set<string>();
-  const seenCommands = new Set<string>();
+  const seenCommands = new Set<CommandId>();
+  const seenActorSequences = new Map<string, CommandId>();
   let intents: GameplayCommand[] = [];
   const moves = new Map<ActorId, GameplayCommand>();
   const crouchOwners = new Map<
@@ -236,7 +493,15 @@ export function createCore(
       if (id !== undefined && actor !== id) continue;
       if (close) closedCrouchSessions.add(owner.sessionId);
       crouchOwners.delete(actor);
-      updateActor(actor, { crouching: false });
+      const current = actors.find((a) => a.actorId === actor);
+      if (fighting && current?.fighting) {
+        if (current.fighting.phase === 'neutral')
+          setFighting(actor, {
+            ...current.fighting,
+            posture: runtime(actor).airborne ? 'airborne' : 'standing',
+            guardHeight: null,
+          });
+      } else updateActor(actor, { crouching: false });
       changed = true;
     }
     return changed;
@@ -256,12 +521,628 @@ export function createCore(
       at: gameTimeMs(at),
     } as DomainEvent);
   }
+  const motionFor = (id: ClipId) =>
+    requireValue(fightingMetadata.get(id) ?? metadata.get(id));
+  const combatant = (id: ActorId) =>
+    requireValue(actors.find((a) => a.actorId === id));
+  const runtime = (id: ActorId) => requireValue(fightingRuntime.get(id));
+  const stateOf = (id: ActorId) => requireValue(combatant(id).fighting);
+  const invalidPathAfter = new Map<ActorId, number>();
+  const appliedPhysical = new Set<string>();
+  function poseKey(a: ActorState): FightingPoseKey | 'attack' {
+    const s = requireValue(a.fighting);
+    if (a.attack) return 'attack';
+    if (s.phase === 'hitstun')
+      return s.posture === 'crouching' ? 'hit-crouching' : 'hit-standing';
+    if (s.guardHeight)
+      return s.guardHeight === 'crouching'
+        ? 'guard-crouching'
+        : 'guard-standing';
+    if (s.phase === 'landing') return 'landing';
+    return s.posture;
+  }
+  function syncEpoch(id: ActorId) {
+    if (!fighting) return;
+    const a = combatant(id),
+      r = runtime(id);
+    if (a.fighting?.phase === 'defeated') return;
+    const key = poseKey(a);
+    const clip =
+      key === 'attack'
+        ? requireValue(a.attack).clipId
+        : fighting.poseClips[key];
+    const activationId = a.attack?.activationId ?? null;
+    if (
+      r.poseKey === key &&
+      r.clipId === clip &&
+      r.activationId === activationId
+    )
+      return;
+    r.poseKey = key;
+    r.clipId = clip;
+    r.activationId = activationId;
+    r.epochId = `${context.runId}:epoch:${++epochSerial}`;
+    r.motionMs = 0;
+  }
+  function setFighting(id: ActorId, state: FightingCombatantState) {
+    updateActor(id, {
+      fighting: captureFightingCombatantState(state),
+      crouching:
+        (state.phase === 'blockstun' ? state.guardHeight : state.posture) ===
+        'crouching',
+    });
+    syncEpoch(id);
+  }
+  function heldPosture(id: ActorId): FightingCombatantState['posture'] {
+    if (runtime(id).airborne) return 'airborne';
+    return crouchOwners.has(id) ? 'crouching' : 'standing';
+  }
+  function finishFightingAttack(id: ActorId) {
+    const a = combatant(id),
+      r = runtime(id);
+    if (a.attack) {
+      heat.set(id, finishHeat(requireValue(heat.get(id)), r.heatMs));
+      updateActor(id, { attack: null });
+    }
+  }
+  function resetFighting(reason: 'pause' | 'KO' | 'switch', id?: ActorId) {
+    if (!fighting) return;
+    for (const actor of actors) {
+      if (
+        (id !== undefined && id !== actor.actorId) ||
+        !fightingRuntime.has(actor.actorId)
+      )
+        continue;
+      const r = runtime(actor.actorId);
+      if (reason !== 'pause') {
+        finishFightingAttack(actor.actorId);
+        r.stopUntil = 0;
+        r.stunUntil = r.actionMs;
+        r.landingUntil = r.actionMs;
+        r.contactAt = null;
+      }
+      r.bufferAt = null;
+      setFighting(
+        actor.actorId,
+        applyFightingTransition(stateOf(actor.actorId), {
+          type: 'reset',
+          reason: actor.defeated ? 'KO' : reason,
+        }),
+      );
+    }
+  }
+  /** Scalar counters are a projection, never a second advancing clock. Deadlines retain TOI fractions. */
+  function syncFighting(id: ActorId, at: number) {
+    const a = combatant(id),
+      r = runtime(id),
+      before = stateOf(id);
+    if (before.phase === 'defeated') return;
+    let s = { ...before };
+    const age = r.actionMs - r.moveStart;
+    s.tick = clockFloor(r.actionMs);
+    s.stopTicksRemaining = clockRemaining(r.stopUntil - at);
+    s.stunTicksRemaining = reached(r.actionMs, r.stunUntil)
+      ? 0
+      : clockRemaining(r.stunUntil - r.actionMs);
+    s.landingTicksRemaining = reached(r.actionMs, r.landingUntil)
+      ? 0
+      : clockRemaining(r.landingUntil - r.actionMs);
+    if (s.buffer && r.bufferAt !== null) {
+      const ageTicks = clockFloor(r.actionMs - r.bufferAt);
+      s.buffer = ageTicks > 6 ? null : { ...s.buffer, ageTicks };
+      if (!s.buffer) r.bufferAt = null;
+    }
+    if (
+      s.phase === 'hitstun' ||
+      s.phase === 'blockstun' ||
+      s.phase === 'landing'
+    ) {
+      if (
+        s.stunTicksRemaining === 0 &&
+        (s.phase === 'hitstun' || s.phase === 'blockstun')
+      )
+        s.phase = s.landingTicksRemaining > 0 ? 'landing' : 'neutral';
+      if (s.phase === 'landing' && s.landingTicksRemaining === 0)
+        s.phase = 'neutral';
+    } else if (a.attack) {
+      const motion = motionFor(a.attack.clipId);
+      if (reached(age, motion.durationMs)) {
+        finishFightingAttack(id);
+        s = {
+          ...s,
+          phase: 'neutral',
+          moveId: null,
+          moveAgeTicks: 0,
+          stage: 0,
+          route: '',
+          hitConfirmed: false,
+          contactAgeTicks: null,
+        };
+        r.contactAt = null;
+      } else {
+        s.moveAgeTicks = s.moveId ? clockFloor(age) : 0;
+        const first = requireValue(motion.impacts[0]);
+        const last = requireValue(motion.impacts.at(-1));
+        s.phase = !reached(age, first.startMs)
+          ? 'startup'
+          : !reached(age, last.endMs)
+            ? 'active'
+            : 'recovery';
+        if (a.attack.fighting)
+          updateActor(id, {
+            attack: {
+              ...a.attack,
+              fighting: { ...a.attack.fighting, elapsedTicks: clockFloor(age) },
+            },
+          });
+      }
+    }
+    if (s.phase === 'neutral') {
+      s.posture = heldPosture(id);
+      s.guardHeight =
+        s.guardHeld && s.posture !== 'airborne' ? s.posture : null;
+    } else if (s.phase !== 'blockstun') s.guardHeight = null;
+    setFighting(id, s);
+  }
+  function nextFightingBoundary(
+    id: ActorId,
+    cursor: number,
+    limit: number,
+  ): number {
+    const a = combatant(id),
+      r = runtime(id),
+      s = stateOf(id);
+    if (!reached(cursor, r.stopUntil)) return Math.min(limit, r.stopUntil);
+    const actionDeadlines = [r.stunUntil, r.landingUntil];
+    if (a.attack)
+      actionDeadlines.push(r.moveStart + motionFor(a.attack.clipId).durationMs);
+    if (s.buffer && r.bufferAt !== null)
+      actionDeadlines.push(r.bufferAt + 7 * FIGHTING_TICK_MS);
+    for (const deadline of actionDeadlines)
+      if (!reached(r.actionMs, deadline))
+        limit = Math.min(limit, cursor + deadline - r.actionMs);
+    return limit;
+  }
+  function appendFightingSlice(
+    id: ActorId,
+    a: number,
+    b: number,
+    frozen: boolean,
+  ) {
+    if (!(b > a)) return;
+    const r = runtime(id);
+    const slice = createFightingClockSlice({
+      actorId: id,
+      epochId: r.epochId,
+      clipId: r.clipId,
+      activationId: r.activationId,
+      fromGameMs: gameTimeMs(a),
+      toGameMs: gameTimeMs(b),
+      fromMotionMs: durationMs(r.motionMs),
+      frozen,
+    });
+    requireValue(acceptedSlices.get(id)).push(slice);
+    r.motionMs = slice.toMotionMs;
+  }
+  function advanceFightingThrough(at: number) {
+    if (!fighting) return;
+    for (const actor of actors) {
+      const id = actor.actorId,
+        r = runtime(id);
+      let cursor = fightingCursor;
+      while (cursor < at) {
+        const boundary = nextFightingBoundary(id, cursor, at);
+        const frozen =
+          snapshot.phase === 'terminal' ||
+          !reached(cursor, r.stopUntil) ||
+          actor.defeated;
+        appendFightingSlice(id, cursor, boundary, frozen);
+        const realElapsed = Math.max(0, realAt(boundary) - realAt(cursor));
+        r.heatMs = projectFightingHeatTime(
+          activeRealTimeMs(r.heatMs),
+          durationMs(realElapsed),
+          durationMs(frozen ? realElapsed : 0),
+        );
+        if (!frozen) r.actionMs += boundary - cursor;
+        heat.set(
+          id,
+          advanceHeat(
+            requireValue(heat.get(id)),
+            r.heatMs,
+            !!combatant(id).attack,
+          ),
+        );
+        syncFighting(id, boundary);
+        cursor = boundary;
+      }
+    }
+    fightingCursor = at;
+  }
+  function neutralFightingFacing(id: ActorId) {
+    const a = combatant(id),
+      source = spatial?.actors.find((p) => p.actorId === id);
+    const targetId =
+      a.color === 'white'
+        ? snapshot.currentOpponentId
+        : requireValue(actors[0]).actorId;
+    const target = spatial?.actors.find((p) => p.actorId === targetId);
+    if (source && target) {
+      const x = target.position.x - source.position.x,
+        z = target.position.z - source.position.z;
+      const size = Math.hypot(x, z);
+      if (size > 0) return { x: x / size, y: 0, z: z / size };
+    }
+    return source?.facing ?? { x: 0, y: 0, z: a.color === 'white' ? 1 : -1 };
+  }
+  function startFightingMove(
+    id: ActorId,
+    before: FightingCombatantState,
+    after: FightingCombatantState,
+    at: number,
+  ) {
+    if (!fighting || !fightingHeatCost(before, after)) return;
+    const a = combatant(id),
+      r = runtime(id),
+      move = requireValue(after.moveId);
+    const entry = requireValue(
+      fighting.entries.find(
+        (e) => e.moveId === move && e.posture === after.posture,
+      ),
+    );
+    const motion = motionFor(entry.clipId);
+    const facing = a.attack?.fighting?.facing ?? neutralFightingFacing(id);
+    const activationId = attackActivationId(
+      `${context.runId}:attack:${++activation}`,
+    );
+    heat.set(id, startHeat(requireValue(heat.get(id)), r.heatMs));
+    r.moveStart = r.actionMs;
+    r.contactAt = null;
+    r.bufferAt = null;
+    updateActor(id, {
+      attack: {
+        activationId,
+        clipId: motion.clipId,
+        category: motion.category,
+        startedAt: gameTimeMs(at),
+        consumedImpacts: [],
+        impactBindings: motion.impacts.map((i) => ({
+          impactIndex: i.impactIndex,
+          impactId: impactId(`${activationId}:impact:${i.impactIndex}`),
+        })),
+        fighting: {
+          kind: 'v3',
+          moveId: move,
+          stage: after.stage === 0 ? 1 : after.stage,
+          elapsedTicks: 0,
+          facing,
+        },
+      },
+    });
+    emit(
+      {
+        type: 'AttackAccepted',
+        actorId: id,
+        activationId,
+        clipId: motion.clipId,
+      },
+      at,
+    );
+  }
+  function receiveFighting(
+    id: ActorId,
+    edges: readonly FightingInputEdge[],
+    at: number,
+  ) {
+    const a = combatant(id);
+    if (
+      !participant(id) ||
+      snapshot.phase !== 'running' ||
+      pendingOpponent ||
+      a.defeated ||
+      !a.fighting
+    )
+      return;
+    const r = runtime(id),
+      before = stateOf(id);
+    const h = requireValue(heat.get(id));
+    let allowStart = h.lockedUntil === null && !h.pendingLock && h.amount < 7;
+    if (before.moveId && before.hitConfirmed && r.contactAt !== null) {
+      const edge = before.buffer?.edge ?? edges[0];
+      const cancel = FIGHTING_CANCEL_EDGES.find(
+        (c) => c.from === before.route && c.to === before.route + edge?.button,
+      );
+      allowStart &&=
+        !!cancel &&
+        reached(r.actionMs, r.contactAt + FIGHTING_TICK_MS) &&
+        (r.actionMs <= r.contactAt + cancel.maxDelayTicks * FIGHTING_TICK_MS ||
+          sameClockPoint(
+            r.actionMs,
+            r.contactAt + cancel.maxDelayTicks * FIGHTING_TICK_MS,
+          ));
+    }
+    const after = receiveFightingInputs(
+      before,
+      edges,
+      before.guardHeld,
+      allowStart,
+    );
+    if (!before.buffer && after.buffer) r.bufferAt = r.actionMs;
+    if (!after.buffer) r.bufferAt = null;
+    startFightingMove(id, before, after, at);
+    setFighting(id, after);
+  }
+  function fightingDescriptor(
+    a: NonNullable<ReturnType<typeof reference>>,
+  ): FightingAttackDescriptor {
+    const attack = a.attack.fighting;
+    if (attack?.kind === 'v3') {
+      const spec = FIGHTING_MOVE_SPECS[attack.moveId];
+      return {
+        ...spec,
+        kind: 'v3',
+        moveId: attack.moveId,
+        stage: attack.stage,
+        damage: { kind: 'v3-normalized', value: spec.damageNormalized },
+      };
+    }
+    const profile = requireValue(
+      profiles.get(`${a.motion.clipId}:${a.impactIndex}`),
+    );
+    return {
+      ...profile,
+      kind: 'legacy',
+      damage: { kind: 'legacy-hp', value: a.damage },
+    };
+  }
+  function stopFighting(id: ActorId, at: number, count: number) {
+    const r = runtime(id);
+    r.stopUntil = Math.max(r.stopUntil, at + count * FIGHTING_TICK_MS);
+    invalidPathAfter.set(
+      id,
+      Math.min(invalidPathAfter.get(id) ?? Infinity, at),
+    );
+    setFighting(id, {
+      ...stateOf(id),
+      stopTicksRemaining: clockRemaining(r.stopUntil - at),
+    });
+  }
+  function applyLanding(
+    witness: FightingSpatialStepResult['fighting']['landings'][number],
+  ) {
+    const id = witness.actorId,
+      r = runtime(id),
+      s = stateOf(id),
+      attack = combatant(id).attack;
+    r.airborne = false;
+    const elapsed = attack ? r.actionMs - r.moveStart : r.motionMs;
+    const remaining = attack
+      ? motionFor(attack.clipId).durationMs - elapsed
+      : 0;
+    const landingDuration = s.airAttackUsed
+      ? Math.max(8 * FIGHTING_TICK_MS, remaining)
+      : 3 * FIGHTING_TICK_MS;
+    const next = applyFightingTransition(s, {
+      type: 'landed',
+      atGameMs: witness.atGameMs,
+      motionElapsedMs: durationMs(elapsed),
+    });
+    finishFightingAttack(id);
+    r.landingUntil = r.actionMs + landingDuration;
+    r.bufferAt = null;
+    r.contactAt = null;
+    setFighting(id, {
+      ...next,
+      landingTicksRemaining: clockRemaining(landingDuration),
+    });
+  }
+  function physicalTransitions(result: FightingSpatialStepResult) {
+    return [
+      ...result.fighting.takeoffs.map((witness) => ({
+        kind: 'takeoff' as const,
+        witness,
+      })),
+      ...result.fighting.landings.map((witness) => ({
+        kind: 'landing' as const,
+        witness,
+      })),
+    ].sort(
+      (a, b) =>
+        a.witness.atGameMs - b.witness.atGameMs ||
+        (a.kind === b.kind
+          ? compare(a.witness.actorId, b.witness.actorId)
+          : a.kind === 'takeoff'
+            ? -1
+            : 1),
+    );
+  }
+  function validateFightingResult(
+    input: import('../contracts').SpatialStepResult,
+  ) {
+    const result = captureFightingSpatialStepResult(
+      input,
+      requireValue(fightingRequest),
+    );
+    for (const actor of result.snapshot.actors) {
+      if (
+        ![actor.position, actor.facing, actor.velocity].every(
+          (v) => v && [v.x, v.y, v.z].every(Number.isFinite),
+        ) ||
+        typeof actor.grounded !== 'boolean'
+      )
+        throw new RangeError('Invalid fighting physical actor');
+    }
+    const validVector = (v: import('../contracts').Vector3) =>
+      v && [v.x, v.y, v.z].every(Number.isFinite);
+    const validReference = (ref: ImpactReference) =>
+      actors.some((a) => a.actorId === ref.actorId) &&
+      typeof ref.activationId === 'string' &&
+      !!ref.activationId.trim() &&
+      typeof ref.impactId === 'string' &&
+      !!ref.impactId.trim();
+    for (const candidate of result.candidates) {
+      if (
+        candidate.runId !== context.runId ||
+        !Number.isFinite(candidate.at) ||
+        candidate.at < from ||
+        candidate.at > end ||
+        !Number.isFinite(candidate.interval.from) ||
+        !Number.isFinite(candidate.interval.to) ||
+        candidate.interval.from < from ||
+        candidate.interval.to > end ||
+        candidate.interval.from > candidate.at ||
+        candidate.interval.to < candidate.at ||
+        !validVector(candidate.point) ||
+        typeof candidate.contactId !== 'string' ||
+        !candidate.contactId.trim() ||
+        (candidate.evidence !== 'swept-shape' &&
+          candidate.evidence !== 'overlap')
+      )
+        throw new RangeError('Invalid fighting candidate envelope');
+      switch (candidate.kind) {
+        case 'body-hit':
+          if (
+            !validReference(candidate.source) ||
+            !actors.some((a) => a.actorId === candidate.targetActorId)
+          )
+            throw new RangeError('Invalid body identities');
+          break;
+        case 'clash':
+          if (
+            !validReference(candidate.first) ||
+            !validReference(candidate.second)
+          )
+            throw new RangeError('Invalid clash identities');
+          break;
+        case 'vehicle-launch':
+          if (!validReference(candidate.source))
+            throw new RangeError('Invalid launch source');
+          break;
+        case 'vehicle-contact':
+          if (!actors.some((a) => a.actorId === candidate.targetActorId))
+            throw new RangeError('Invalid vehicle target');
+          break;
+        case 'destruction':
+          if (
+            !actors.some((a) => a.actorId === candidate.sourceActorId) ||
+            (candidate.source && !validReference(candidate.source)) ||
+            !Number.isFinite(candidate.contactSpeedMps) ||
+            candidate.contactSpeedMps < 0
+          )
+            throw new RangeError('Invalid destruction source/speed');
+          break;
+        default:
+          throw new RangeError('Unknown fighting candidate kind');
+      }
+    }
+    const vehicles = new Set<string>();
+    for (const vehicle of result.snapshot.vehicles) {
+      if (
+        vehicles.has(vehicle.vehicleId) ||
+        !world.read().vehicles.some((v) => v.vehicleId === vehicle.vehicleId) ||
+        !validVector(vehicle.position) ||
+        !validVector(vehicle.velocity) ||
+        typeof vehicle.grounded !== 'boolean'
+      )
+        throw new RangeError('Invalid fighting physical vehicle');
+      vehicles.add(vehicle.vehicleId);
+    }
+    const airborne = new Map(
+      actors.map((a) => [a.actorId, runtime(a.actorId).airborne]),
+    );
+    for (const event of physicalTransitions(result)) {
+      const witness = event.witness,
+        a = combatant(witness.actorId);
+      if (!participant(a.actorId))
+        throw new RangeError('Foreign physical fighting transition');
+      if (event.kind === 'takeoff') {
+        if (airborne.get(a.actorId))
+          throw new RangeError('Takeoff requires actual grounded state');
+        airborne.set(a.actorId, true);
+      } else {
+        if (!airborne.get(a.actorId))
+          throw new RangeError('Landing requires actual airborne state');
+        const clock = requireValue(
+          fightingRequest?.snapshot.actors.find((p) => p.actorId === a.actorId)
+            ?.fightingClock,
+        );
+        const slice =
+          clock.slices.find(
+            (s) =>
+              event.witness.atGameMs >= s.fromGameMs &&
+              event.witness.atGameMs < s.toGameMs,
+          ) ?? clock.slices.at(-1);
+        let activationId = slice?.activationId ?? null;
+        if (
+          slice &&
+          event.witness.atGameMs === slice.toGameMs &&
+          a.attack &&
+          reached(slice.toMotionMs, motionFor(a.attack.clipId).durationMs)
+        )
+          activationId = null;
+        if (event.witness.airborneActivationId !== activationId)
+          throw new RangeError(
+            'Landing activation differs from the planned airborne path',
+          );
+        airborne.set(a.actorId, false);
+      }
+    }
+    for (const a of actors.filter((a) => participant(a.actorId))) {
+      const physical = result.snapshot.actors.find(
+        (p) => p.actorId === a.actorId,
+      );
+      if (!physical || physical.grounded === airborne.get(a.actorId))
+        throw new RangeError(
+          'Physical grounded state requires complete takeoff/landing witnesses',
+        );
+    }
+    return result;
+  }
+  /** Planned coverage is a disposable simulation of known clock transitions, never accepted authority. */
+  function planFightingClocks() {
+    const savedActors = actors;
+    const savedRuntime = new Map(
+      [...fightingRuntime].map(([id, r]) => [id, { ...r }]),
+    );
+    const savedHeat = new Map(heat);
+    for (const a of actors) acceptedSlices.set(a.actorId, []);
+    fightingCursor = from;
+    advanceFightingThrough(end);
+    const clocks = new Map(
+      actors.map((a) => [
+        a.actorId,
+        captureFightingClock({
+          stepTick: snapshot.clocks.tick,
+          activeEpochId: requireValue(acceptedSlices.get(a.actorId)?.at(-1))
+            .epochId,
+          slices: requireValue(acceptedSlices.get(a.actorId)),
+        }),
+      ]),
+    );
+    actors = savedActors;
+    fightingRuntime.clear();
+    heat.clear();
+    for (const [id, r] of savedRuntime) fightingRuntime.set(id, r);
+    for (const [id, h] of savedHeat) heat.set(id, h);
+    // Published planned epochs are already issued identities. Never recycle one
+    // for a different accepted reaction when contact invalidates that plan.
+    for (const a of actors) {
+      acceptedSlices.set(a.actorId, []);
+      updateActor(a.actorId, {
+        fightingClock: requireValue(clocks.get(a.actorId)),
+      });
+    }
+    fightingCursor = from;
+  }
+
   function permissions() {
     actors = actors.map((a) => {
       let reason: ReturnType<typeof denied> | typeof allowed = allowed;
       const canonical = requireValue(heat.get(a.actorId));
       const h =
-        snapshot.phase === 'terminal' || a.defeated || !participant(a.actorId)
+        fighting ||
+        snapshot.phase === 'terminal' ||
+        a.defeated ||
+        !participant(a.actorId)
           ? canonical
           : advanceHeat(
               canonical,
@@ -279,14 +1160,23 @@ export function createCore(
         snapshot.presentation.kind === 'opponent-defeat'
       )
         reason = denied('not-running');
+      if (
+        reason.allowed &&
+        fighting &&
+        a.fighting &&
+        (a.fighting.phase !== 'neutral' || a.fighting.stopTicksRemaining > 0)
+      )
+        reason = denied('busy');
       const movement = reason;
       let attack = reason;
       if (reason.allowed) {
         if (pendingOpponent) attack = denied('not-running');
-        else if (a.attack) attack = denied('busy');
+        else if (a.attack || (fighting && a.fighting?.guardHeld))
+          attack = denied('busy');
         else if (h.lockedUntil !== null || h.pendingLock || h.amount >= 7)
           attack = denied('cooling-lock');
         else if (
+          !fighting &&
           (options.groundedAttacksOnly ?? true) &&
           spatial?.actors.find((p) => p.actorId === a.actorId)?.grounded ===
             false
@@ -314,12 +1204,12 @@ export function createCore(
         (snapshot.phase !== 'running' ||
           pendingOpponent ||
           actor.defeated ||
-          actor.attack ||
+          (!fighting && actor.attack) ||
           !participant(actor.actorId) ||
           spatial?.actors.find((p) => p.actorId === actor.actorId)?.grounded ===
             false)
       )
-        clearCrouch(actor.actorId);
+        if (!fighting) clearCrouch(actor.actorId);
     permissions();
     snapshot = immutableDto({
       ...snapshot,
@@ -380,6 +1270,80 @@ export function createCore(
   function accept(command: GameplayCommand) {
     if (command.runId !== context.runId) return;
     const a = actors.find((a) => a.actorId === command.actorId);
+    if (command.type === 'GuardRequested') {
+      if (!fighting || !a?.fighting || typeof command.active !== 'boolean')
+        return;
+      const s = stateOf(a.actorId);
+      if (
+        command.active &&
+        (!participant(a.actorId) ||
+          snapshot.phase !== 'running' ||
+          a.defeated ||
+          a.attack ||
+          s.phase === 'hitstun' ||
+          s.phase === 'landing')
+      )
+        return;
+      const next = command.active
+        ? applyFightingTransition(s, { type: 'guard-begin' })
+        : {
+            ...s,
+            guardHeld: false,
+            guardHeight: s.phase === 'blockstun' ? s.guardHeight : null,
+          };
+      if (command.active) runtime(a.actorId).bufferAt = null;
+      setFighting(a.actorId, next);
+      publish();
+      return;
+    }
+    if (fighting && command.type === 'CrouchRequested') {
+      if (
+        !a?.fighting ||
+        typeof command.active !== 'boolean' ||
+        !command.movementSessionId?.trim() ||
+        !Number.isSafeInteger(command.basisRevision) ||
+        command.basisRevision < 0
+      )
+        return;
+      const owner = crouchOwners.get(a.actorId),
+        s = stateOf(a.actorId);
+      if (!command.active) {
+        if (
+          owner?.sessionId !== command.movementSessionId ||
+          owner.revision !== command.basisRevision
+        )
+          return;
+        crouchOwners.delete(a.actorId);
+      } else {
+        if (
+          !participant(a.actorId) ||
+          snapshot.phase !== 'running' ||
+          a.defeated ||
+          closedCrouchSessions.has(command.movementSessionId) ||
+          s.posture === 'airborne'
+        )
+          return;
+        crouchOwners.set(a.actorId, {
+          sessionId: command.movementSessionId,
+          revision: command.basisRevision,
+        });
+      }
+      if (s.phase === 'neutral' || s.phase === 'blockstun') {
+        const posture = command.active ? 'crouching' : 'standing';
+        setFighting(a.actorId, {
+          ...s,
+          posture,
+          guardHeight:
+            s.phase === 'blockstun'
+              ? s.guardHeight
+              : s.guardHeld
+                ? posture
+                : null,
+        });
+      }
+      publish();
+      return;
+    }
     if (command.type === 'CrouchRequested') {
       if (
         !a ||
@@ -428,11 +1392,12 @@ export function createCore(
     if (command.type === 'AttackRequested') {
       const currentHeat = advanceHeat(
         requireValue(heat.get(a.actorId)),
-        processedReal,
+        fighting ? runtime(a.actorId).heatMs : processedReal,
         !!a.attack,
       );
       heat.set(a.actorId, currentHeat);
       const isGrounded =
+        !!fighting ||
         !(options.groundedAttacksOnly ?? true) ||
         spatial?.actors.find((p) => p.actorId === a.actorId)?.grounded !==
           false;
@@ -440,6 +1405,10 @@ export function createCore(
         !a.defeated &&
         !pendingOpponent &&
         !a.attack &&
+        (!fighting ||
+          (stateOf(a.actorId).phase === 'neutral' &&
+            stateOf(a.actorId).stopTicksRemaining === 0 &&
+            !stateOf(a.actorId).guardHeld)) &&
         snapshot.presentation.kind !== 'opponent-defeat' &&
         isGrounded &&
         currentHeat.lockedUntil === null &&
@@ -469,15 +1438,28 @@ export function createCore(
       );
       heat.set(
         a.actorId,
-        startHeat(requireValue(heat.get(a.actorId)), processedReal),
+        startHeat(
+          requireValue(heat.get(a.actorId)),
+          fighting ? runtime(a.actorId).heatMs : processedReal,
+        ),
       );
-      clearCrouch(a.actorId);
+      if (!fighting) clearCrouch(a.actorId);
       updateActor(a.actorId, {
         attack: {
           activationId,
           clipId: motion.clipId,
           category: motion.category,
           startedAt: snapshot.clocks.gameTimeMs,
+          ...(fighting
+            ? {
+                fighting: {
+                  kind: 'legacy' as const,
+                  clipId: motion.clipId,
+                  elapsedTicks: 0,
+                  facing: neutralFightingFacing(a.actorId),
+                },
+              }
+            : {}),
           consumedImpacts: [],
           impactBindings: motion.impacts.map((i) => ({
             impactIndex: i.impactIndex,
@@ -485,6 +1467,16 @@ export function createCore(
           })),
         },
       });
+      if (fighting) {
+        const r = runtime(a.actorId);
+        r.moveStart = r.actionMs;
+        setFighting(a.actorId, {
+          ...stateOf(a.actorId),
+          phase: motion.impacts[0]?.startMs === 0 ? 'active' : 'startup',
+          buffer: null,
+          guardHeight: null,
+        });
+      }
       // Held direction is intent, not free movement; C gates its application during attacks.
       emit({
         type: 'AttackAccepted',
@@ -507,6 +1499,7 @@ export function createCore(
       }
       return;
     }
+    if (command.type !== 'MoveRequested') return;
     if (
       !a.defeated &&
       (!pendingOpponent ||
@@ -523,6 +1516,83 @@ export function createCore(
       moves.set(a.actorId, immutableDto(command));
   }
   function batch(commands: readonly GameplayCommand[]) {
+    if (fighting) {
+      if (inStep)
+        throw new Error(
+          'Fighting inputs cannot mutate an active spatial request',
+        );
+      const packetKey = (command: GameplayCommand) =>
+        JSON.stringify(
+          Object.entries({
+            ...command,
+            input: [command.input.commandId, command.input.sequence],
+          }).sort(([a], [b]) => compare(a, b)),
+        );
+      const unique = new Map<CommandId, GameplayCommand>();
+      for (const c of commands) {
+        if (
+          c.runId !== context.runId ||
+          !actors.some((a) => a.actorId === c.actorId) ||
+          seenCommands.has(c.input.commandId)
+        )
+          continue;
+        const sequenceKey = `${c.actorId}:${c.input.sequence}`;
+        const seenSequence = seenActorSequences.get(sequenceKey);
+        if (seenSequence !== undefined && seenSequence !== c.input.commandId)
+          throw new RangeError('Conflicting actor sequence');
+        const prior = unique.get(c.input.commandId);
+        if (prior && packetKey(prior) !== packetKey(c))
+          throw new RangeError('Conflicting command identity');
+        unique.set(c.input.commandId, c);
+      }
+      const normalized = new Map<
+        ActorId,
+        ReturnType<typeof normalizeFightingInputs>
+      >();
+      for (const a of actors) {
+        const group = [...unique.values()].filter(
+          (c) => c.actorId === a.actorId,
+        );
+        if (group.length)
+          normalized.set(
+            a.actorId,
+            normalizeFightingInputs(
+              context.runId,
+              a.actorId,
+              group,
+              seenCommands,
+            ),
+          );
+      }
+      for (const n of normalized.values())
+        for (const id of n.newlySeenCommandIds) seenCommands.add(id);
+      for (const c of unique.values())
+        seenActorSequences.set(
+          `${c.actorId}:${c.input.sequence}`,
+          c.input.commandId,
+        );
+      const ordered = [...unique.values()].sort(
+        (a, b) =>
+          a.input.sequence - b.input.sequence ||
+          compare(a.input.commandId, b.input.commandId),
+      );
+      for (const c of ordered) {
+        if (
+          c.type === 'AttackRequested' &&
+          combatant(c.actorId).color === 'white'
+        ) {
+          const edge = requireValue(
+            normalized
+              .get(c.actorId)
+              ?.edges.find((e) => e.commandId === c.input.commandId),
+          );
+          receiveFighting(c.actorId, [edge], snapshot.clocks.gameTimeMs);
+          publish();
+        } else accept(c);
+      }
+      return;
+    }
+
     const unique = commands
       .filter((c) => {
         if (
@@ -593,6 +1663,7 @@ export function createCore(
         if (['running', 'paused', 'terminal'].includes(snapshot.phase)) {
           if (snapshot.phase !== 'paused') phaseBeforePause = snapshot.phase;
           pauses.add(command.reason);
+          resetFighting('pause');
           clearCrouch(undefined, true);
           moves.clear();
           intents = [];
@@ -603,6 +1674,7 @@ export function createCore(
         if (snapshot.phase !== 'paused') phaseBeforePause = snapshot.phase;
         pauses.add('background');
         pauses.add('interruption');
+        resetFighting('pause');
         clearCrouch(undefined, true);
         moves.clear();
         intents = [];
@@ -626,9 +1698,10 @@ export function createCore(
         publish({ quality: command.quality });
         break;
       case 'InputsReleased':
+        resetFighting('pause');
         moves.clear();
         intents = [];
-        if (clearCrouch(undefined, true)) publish();
+        if (clearCrouch(undefined, true) || fighting) publish();
         break;
       case 'MovementSessionEnded': {
         closedCrouchSessions.add(command.sessionId);
@@ -649,6 +1722,7 @@ export function createCore(
       case 'MoveRequested':
       case 'CrouchRequested':
       case 'JumpRequested':
+      case 'GuardRequested':
         batch([command]);
         break;
       case 'RetryRequested':
@@ -669,21 +1743,28 @@ export function createCore(
     const binding = attack.impactBindings.find(
       (i) => i.impactId === ref.impactId,
     );
-    const motion = requireValue(metadata.get(attack.clipId));
+    const motion = motionFor(attack.clipId);
     const index = motion.impacts.findIndex(
       (i) => i.impactIndex === binding?.impactIndex,
     );
     const impact = motion.impacts[index];
+    const elapsed = fighting
+      ? runtime(actor.actorId).actionMs - runtime(actor.actorId).moveStart
+      : at - attack.startedAt;
     if (
       !impact ||
-      at < attack.startedAt + impact.startMs ||
-      at >= attack.startedAt + impact.endMs
+      (fighting && at > (invalidPathAfter.get(actor.actorId) ?? Infinity)) ||
+      (fighting
+        ? !reached(elapsed, impact.startMs)
+        : elapsed < impact.startMs) ||
+      (fighting ? reached(elapsed, impact.endMs) : elapsed >= impact.endMs)
     )
       return null;
     return {
       actor,
       attack,
       motion,
+      impactIndex: requireValue(impact).impactIndex,
       damage: requireValue(
         distributeDamage(
           damageForRange(motion.effectiveRangeM),
@@ -722,6 +1803,29 @@ export function createCore(
   }
   /** Settle attack ends before observing any later contact time. Contacts are half-open. */
   function completeAttacksThrough(at: number) {
+    if (fighting) {
+      for (const event of fightingResult
+        ? physicalTransitions(fightingResult)
+        : []) {
+        const witness = event.witness,
+          key = `${event.kind}:${witness.actorId}:${witness.atGameMs}`;
+        if (witness.atGameMs > at || appliedPhysical.has(key)) continue;
+        advanceFightingThrough(witness.atGameMs);
+        if (event.kind === 'takeoff') {
+          runtime(witness.actorId).airborne = true;
+          runtime(witness.actorId).bufferAt = null;
+          setFighting(witness.actorId, {
+            ...stateOf(witness.actorId),
+            posture: 'airborne',
+            guardHeight: null,
+            buffer: null,
+          });
+        } else applyLanding(event.witness);
+        appliedPhysical.add(key);
+      }
+      advanceFightingThrough(at);
+      return;
+    }
     for (const actor of actors) {
       if (!actor.attack || actor.defeated) continue;
       const attackEnd =
@@ -752,12 +1856,13 @@ export function createCore(
           actor.actorId,
           advanceHeat(
             requireValue(heat.get(actor.actorId)),
-            eventReal,
+            fighting ? runtime(actor.actorId).heatMs : eventReal,
             !!actor.attack,
           ),
         );
     const fallen = actors.filter((a) => a.hp === 0 && !a.defeated);
     for (const a of fallen) {
+      if (fighting) resetFighting('KO', a.actorId);
       const source = lastCauses.get(a.actorId);
       const category =
         source?.kind === 'vehicle' ? 'kick' : (source?.category ?? 'kick');
@@ -778,6 +1883,7 @@ export function createCore(
     const lost = white.hp === 0;
     const enemyFell = fallen.some((a) => a.color !== 'white');
     if (!lost && !enemyFell) return;
+    resetFighting('switch');
     if (!lost && enemyFell) {
       const hp = Math.min(500, white.hp + 100);
       updateActor(white.actorId, { hp });
@@ -802,7 +1908,10 @@ export function createCore(
       if (a.attack) {
         heat.set(
           a.actorId,
-          finishHeat(requireValue(heat.get(a.actorId)), eventReal),
+          finishHeat(
+            requireValue(heat.get(a.actorId)),
+            fighting ? runtime(a.actorId).heatMs : eventReal,
+          ),
         );
         updateActor(a.actorId, { attack: null });
       }
@@ -883,6 +1992,17 @@ export function createCore(
         candidate: SpatialCandidate;
         impacts: ImpactReference[];
       }[] = [];
+      const reactions: {
+        source: ActorId;
+        target: ActorId;
+        contactId: string;
+        descriptor: FightingAttackDescriptor;
+        decision: Exclude<
+          ReturnType<typeof resolveFightingContact>,
+          { kind: 'ignored' }
+        >;
+      }[] = [];
+      const damagedContacts = new Set<string>();
       const lastCauses = new Map<ActorId, DamageCause>();
       const add = (
         target: ActorId,
@@ -1058,15 +2178,70 @@ export function createCore(
             target.actorId === a.actor.actorId ||
             !participant(target.actorId) ||
             consumed.has(c.source.impactId) ||
-            hitTargets.has(key)
+            hitTargets.has(key) ||
+            (fighting &&
+              at > (invalidPathAfter.get(target.actorId) ?? Infinity))
           )
             continue;
+          let amount = a.damage;
+          if (fighting) {
+            const witness = requireValue(
+              fightingResult?.fighting.contacts.find(
+                (w) => w.contactId === c.contactId,
+              ),
+            );
+            const frontDot = fightingFrontDot(witness);
+            const descriptor = fightingDescriptor(a);
+            const decision = resolveFightingContact(
+              descriptor,
+              stateOf(target.actorId),
+              frontDot,
+              fighting.policy,
+            );
+            if (decision.kind === 'ignored') continue;
+            reactions.push({
+              source: a.actor.actorId,
+              target: target.actorId,
+              contactId: c.contactId,
+              descriptor,
+              decision,
+            });
+            amount =
+              decision.kind === 'blocked'
+                ? 0
+                : fightingDamageHp(
+                    decision.damage,
+                    descriptor.kind === 'v3' ? descriptor.stage : 1,
+                    fighting.policy,
+                  );
+            if (decision.kind === 'blocked') {
+              const defender = stateOf(target.actorId);
+              emit(
+                {
+                  type: 'GuardResolved',
+                  actorId: target.actorId,
+                  sourceActorId: a.actor.actorId,
+                  activationId: c.source.activationId,
+                  impactId: c.source.impactId,
+                  contact: {
+                    contactId: c.contactId,
+                    point: c.point,
+                    impacts: [c.source],
+                  },
+                  height:
+                    defender.guardHeight ??
+                    (defender.posture === 'crouching'
+                      ? 'crouching'
+                      : 'standing'),
+                },
+                at,
+              );
+            }
+          }
           seenContacts.add(c.contactId);
           hitTargets.add(key);
           use(c.source);
-          add(target.actorId, a.damage, cause(c.source, 'attack'), c, [
-            c.source,
-          ]);
+          add(target.actorId, amount, cause(c.source, 'attack'), c, [c.source]);
         } else if (c.kind === 'vehicle-launch') {
           const a = reference(c.source, at);
           if (
@@ -1185,6 +2360,7 @@ export function createCore(
         const afterHp = Math.max(0, a.hp - loss.amount);
         if (afterHp === a.hp) continue;
         updateActor(a.actorId, { hp: afterHp });
+        damagedContacts.add(loss.candidate.contactId);
         lastCauses.set(a.actorId, loss.cause);
         emit(
           {
@@ -1205,6 +2381,70 @@ export function createCore(
           at,
         );
       }
+      if (fighting) {
+        // Resolve simultaneous bodies before reaction invalidation, preserving mutual hits/KO.
+        const accepted = reactions.filter(
+          (r) =>
+            r.decision.kind === 'blocked' || damagedContacts.has(r.contactId),
+        );
+        for (const reaction of accepted) {
+          const { source, decision } = reaction;
+          const s = stateOf(source),
+            r = runtime(source);
+          if (decision.kind === 'hit' && s.moveId && !s.hitConfirmed) {
+            setFighting(
+              source,
+              applyFightingTransition(s, {
+                type: 'hit-confirmed',
+                contactAgeTicks: clockFloor(r.actionMs - r.moveStart),
+              }),
+            );
+            r.contactAt = r.actionMs;
+          } else if (decision.kind === 'blocked') {
+            setFighting(source, { ...s, buffer: null });
+            r.bufferAt = null;
+          }
+          stopFighting(source, at, decision.stopTicks);
+        }
+        for (const reaction of accepted) {
+          const { target, decision } = reaction,
+            r = runtime(target);
+          const state = stateOf(target);
+          const retained =
+            decision.kind === 'hit' &&
+            fighting.policy.hitstunPosture === 'force-standing' &&
+            state.posture !== 'airborne'
+              ? { ...state, posture: 'standing' as const, guardHeight: null }
+              : state;
+          const stunTicks =
+            decision.kind === 'hit'
+              ? decision.hitstunTicks
+              : decision.blockstunTicks;
+          const next = applyFightingTransition(
+            retained,
+            decision.kind === 'hit'
+              ? {
+                  type: 'received-hit',
+                  stunTicks,
+                  stopTicks: decision.stopTicks,
+                }
+              : {
+                  type: 'received-block',
+                  stunTicks,
+                  stopTicks: decision.stopTicks,
+                  height:
+                    state.guardHeight ??
+                    (state.posture === 'crouching' ? 'crouching' : 'standing'),
+                },
+          );
+          finishFightingAttack(target);
+          r.stunUntil = r.actionMs + stunTicks * FIGHTING_TICK_MS;
+          r.contactAt = null;
+          r.bufferAt = null;
+          setFighting(target, next);
+          stopFighting(target, at, decision.stopTicks);
+        }
+      }
       finalize(at, batch, lastCauses);
     }
   }
@@ -1215,6 +2455,7 @@ export function createCore(
       opponentTransitionEndsAt !== null &&
       processedReal + 1e-7 >= opponentTransitionEndsAt
     ) {
+      resetFighting('switch');
       pendingOpponent = false;
       opponentTransitionEndsAt = null;
       opponent(actors[nextOpponent]?.actorId ?? null, {
@@ -1292,6 +2533,7 @@ export function createCore(
         : 0;
       const scaled = step.durationMs - slowOverlap * 0.75;
       end = from + scaled;
+      if (fighting) from = end - scaled;
       publish({
         clocks: {
           ...snapshot.clocks,
@@ -1299,13 +2541,21 @@ export function createCore(
           gameTimeMs: gameTimeMs(end),
         },
       });
+      if (fighting) {
+        invalidPathAfter.clear();
+        appliedPhysical.clear();
+        planFightingClocks();
+        publish();
+      }
       const accepted = [...moves.values(), ...intents];
       intents = [];
-      return immutableDto({
+      const request = immutableDto({
         snapshot,
         step: { durationMs: durationMs(scaled) },
         intents: accepted,
       });
+      if (fighting) fightingRequest = request;
+      return request;
     },
     completeStep(result) {
       if (
@@ -1314,8 +2564,9 @@ export function createCore(
         result.snapshot.tick !== snapshot.clocks.tick
       )
         throw new Error('Spatial result does not match active step/run');
+      if (fighting) fightingResult = validateFightingResult(result);
       inStep = false;
-      spatial = immutableDto(result.snapshot);
+      if (!fighting) spatial = immutableDto(result.snapshot);
       processedReal = stepRealTo;
       if (
         snapshot.phase === 'running' &&
@@ -1323,6 +2574,27 @@ export function createCore(
       )
         resolve(result.candidates);
       if (snapshot.phase === 'running') completeAttacksThrough(end);
+      if (fighting) {
+        // Terminal time stays at the accepted KO. The unprocessed remainder is
+        // an accepted frozen tail, not the moving plan (including a KO at from).
+        if (snapshot.phase === 'terminal') advanceFightingThrough(end);
+        spatial = immutableDto(result.snapshot);
+        for (const actor of actors) {
+          const slices = requireValue(acceptedSlices.get(actor.actorId));
+          if (slices.length)
+            updateActor(actor.actorId, {
+              fightingClock: captureFightingClock({
+                stepTick: snapshot.clocks.tick,
+                activeEpochId: requireValue(slices.at(-1)).epochId,
+                slices,
+              }),
+            });
+          syncFighting(actor.actorId, end);
+        }
+        receiveFighting(requireValue(actors[0]).actorId, [], end);
+        fightingRequest = null;
+        fightingResult = null;
+      }
       publish();
       advancePresentation();
       advanceEncounter();
@@ -1362,12 +2634,16 @@ export function createCore(
     fail(message) {
       if (disposed) return;
       inStep = false;
+      resetFighting('switch');
+      fightingRequest = null;
+      fightingResult = null;
       clearCrouch(undefined, true);
       progress('error');
       emit({ type: 'FoundationError', message });
     },
     dispose() {
       if (disposed) return;
+      resetFighting('switch');
       disposed = true;
       inStep = false;
       clearCrouch();
@@ -1380,6 +2656,15 @@ export function createCore(
       hitTargets.clear();
       seenContacts.clear();
       seenCommands.clear();
+      seenActorSequences.clear();
+      fightingRequest = null;
+      fightingResult = null;
+      fightingRuntime.clear();
+      fightingMetadata.clear();
+      profiles.clear();
+      acceptedSlices.clear();
+      invalidPathAfter.clear();
+      appliedPhysical.clear();
       metadata.clear();
       heat.clear();
       spatial = null;

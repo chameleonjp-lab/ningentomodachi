@@ -17,6 +17,8 @@ import {
   type AttackState,
   type DomainEvent,
   type FightingGameplayCommand,
+  type GameplayCommand,
+  type GameplayInputBatch,
   type SpatialStepRequest,
   type SpatialStepResult,
 } from '../../src/contracts';
@@ -43,6 +45,7 @@ import {
   captureFightingClockSlice,
   captureFightingClock,
   fightingClockSliceAt,
+  captureFightingTakeoffWitness,
   captureFightingLandingWitness,
   captureFightingContactWitness,
   captureFightingSpatialStepResult,
@@ -51,6 +54,7 @@ import {
   type FightingClock,
   type FightingClockSlice,
   type FightingSpatialStepResult,
+  type FightingTakeoffWitness,
 } from '../../src/contracts/fighting';
 import { captureGuardRequested } from '../../src/contracts/commands';
 import {
@@ -168,7 +172,12 @@ const result = (): FightingSpatialStepResult => ({
       targetActorId: target,
     },
   ],
-  fighting: { stepTick: tick(8), landings: [landing()], contacts: [contact()] },
+  fighting: {
+    stepTick: tick(8),
+    takeoffs: [],
+    landings: [landing()],
+    contacts: [contact()],
+  },
 });
 const actorSnapshot = (id = actor): ActorState => ({
   actorId: id,
@@ -753,7 +762,7 @@ describe('clock epochs and physical witnesses', () => {
     const noContacts = {
       ...result(),
       candidates: [],
-      fighting: { stepTick: tick(8), landings: [], contacts: [] },
+      fighting: { stepTick: tick(8), takeoffs: [], landings: [], contacts: [] },
     };
     expect(isFightingSpatialStepResult(noContacts)).toBe(true);
     expect(
@@ -868,6 +877,33 @@ describe('legacy-compatible command, snapshot, event and pose declarations', () 
         captureGuardRequested({ ...input, ...patch } as typeof input),
       ).toThrow(RangeError);
     expect('height' in captured).toBe(false);
+  });
+  it('retains captured guard identity in canonical gameplay commands and input batches', () => {
+    const producer = {
+      type: 'GuardRequested' as const,
+      runId: run,
+      actorId: actor,
+      active: false,
+      input: { commandId: commandId('canonical-guard-release'), sequence: 100 },
+    };
+    const guard: GameplayCommand = captureGuardRequested(producer);
+    const batch: GameplayInputBatch = {
+      runId: run,
+      tick: tick(9),
+      commands: [guard],
+    };
+    producer.input.sequence = 101;
+    expect(batch.commands).toEqual([
+      {
+        type: 'GuardRequested',
+        runId: 'run',
+        actorId: 'player',
+        active: false,
+        input: { commandId: 'canonical-guard-release', sequence: 100 },
+      },
+    ]);
+    expect(Object.isFrozen(batch.commands[0])).toBe(true);
+    expect(Object.isFrozen(batch.commands[0]?.input)).toBe(true);
   });
   it('keeps contract version 1 and optional fighting fields absent in legacy snapshots/attacks', () => {
     const legacy = {
@@ -1114,6 +1150,170 @@ describe('primitive fighting role and route membership', () => {
     expect(Object.isFrozen(capturedState)).toBe(true);
     expect(() =>
       captureFightingCombatantState({ ...state(), route: 'PPPP' }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('physical fighting takeoff witness boundary', () => {
+  const takeoff = (): FightingTakeoffWitness => ({
+    actorId: actor,
+    atGameMs: gameTimeMs(103.625),
+    position: { x: -2.25, y: 0, z: 3 },
+  });
+  const takeoffResult = (
+    takeoffs: readonly FightingTakeoffWitness[] = [takeoff()],
+  ): FightingSpatialStepResult => ({
+    ...result(),
+    fighting: { ...result().fighting, takeoffs },
+  });
+  it('captures actual fractional takeoff time without sharing a mutable position', () => {
+    const position = { x: -2.25, y: 0, z: 3 };
+    const captured = captureFightingTakeoffWitness({ ...takeoff(), position });
+    position.x = 50;
+    expect(captured).toEqual({
+      actorId: 'player',
+      atGameMs: 103.625,
+      position: { x: -2.25, y: 0, z: 3 },
+    });
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(Object.isFrozen(captured.position)).toBe(true);
+    expect('damage' in captured).toBe(false);
+    expect('guarded' in captured).toBe(false);
+  });
+  it.each([
+    { name: 'negative time', patch: { atGameMs: -1 } },
+    { name: 'NaN time', patch: { atGameMs: NaN } },
+    { name: 'infinite time', patch: { atGameMs: Infinity } },
+    { name: 'empty actor', patch: { actorId: '' } },
+    { name: 'NaN position', patch: { position: { x: 0, y: NaN, z: 0 } } },
+    {
+      name: 'infinite position',
+      patch: { position: { x: Infinity, y: 0, z: 0 } },
+    },
+  ])('rejects a takeoff witness with $name', ({ patch }) => {
+    const malformed = { ...takeoff(), ...patch } as FightingTakeoffWitness;
+    expect(() => captureFightingTakeoffWitness(malformed)).toThrow(RangeError);
+    expect(isFightingSpatialStepResult(takeoffResult([malformed]))).toBe(false);
+    expect(() =>
+      captureFightingSpatialStepResult(takeoffResult([malformed]), request()),
+    ).toThrow(RangeError);
+  });
+  it('requires the takeoff array for new-mode results but not legacy results', () => {
+    const missing = {
+      ...result(),
+      candidates: [],
+      fighting: { stepTick: tick(8), landings: [], contacts: [] },
+    };
+    expect(isFightingSpatialStepResult(missing)).toBe(false);
+    expect(() => captureFightingSpatialStepResult(missing, request())).toThrow(
+      RangeError,
+    );
+    const legacy: SpatialStepResult = {
+      snapshot: result().snapshot,
+      candidates: [],
+    };
+    expect(isFightingSpatialStepResult(legacy)).toBe(false);
+    expect(legacy.snapshot.runId).toBe('run');
+    const captured = captureFightingSpatialStepResult(
+      takeoffResult([]),
+      request(),
+    );
+    expect(captured.fighting.takeoffs).toEqual([]);
+    expect(Object.isFrozen(captured.fighting.takeoffs)).toBe(true);
+  });
+  it('captures takeoff arrays and nested positions independently at the actual timestamp', () => {
+    const input = {
+      actorId: actor,
+      atGameMs: gameTimeMs(103.625),
+      position: { x: 0, y: 0, z: 1 },
+    };
+    const original = takeoffResult([input]);
+    const captured = captureFightingSpatialStepResult(original, request());
+    input.position.x = 99;
+    expect(captured.fighting.takeoffs[0]).toEqual({
+      actorId: 'player',
+      atGameMs: 103.625,
+      position: { x: 0, y: 0, z: 1 },
+    });
+    expect(Object.isFrozen(captured.fighting.takeoffs)).toBe(true);
+    expect(Object.isFrozen(captured.fighting.takeoffs[0]?.position)).toBe(true);
+    expect(captured.fighting.contacts).toHaveLength(1);
+    expect(captured.fighting.landings).toHaveLength(1);
+  });
+  it('rejects takeoffs for actors absent from the spatial or requested actor set', () => {
+    const witness = { ...takeoff(), actorId: actorId('stranger') };
+    const unknownSpatialActor = takeoffResult([witness]);
+    expect(isFightingSpatialStepResult(unknownSpatialActor)).toBe(false);
+    expect(() =>
+      captureFightingSpatialStepResult(unknownSpatialActor, request()),
+    ).toThrow(RangeError);
+    const unknownRequestedActor = {
+      ...unknownSpatialActor,
+      snapshot: {
+        ...unknownSpatialActor.snapshot,
+        actors: [
+          ...unknownSpatialActor.snapshot.actors,
+          spatialActor(witness.actorId),
+        ],
+      },
+    };
+    expect(isFightingSpatialStepResult(unknownRequestedActor)).toBe(true);
+    expect(() =>
+      captureFightingSpatialStepResult(unknownRequestedActor, request()),
+    ).toThrow(RangeError);
+  });
+  it.each([100.249, 110.751])(
+    'rejects a takeoff outside the exact request interval at %s',
+    (at) => {
+      expect(() =>
+        captureFightingSpatialStepResult(
+          takeoffResult([{ ...takeoff(), atGameMs: gameTimeMs(at) }]),
+          request(),
+        ),
+      ).toThrow(RangeError);
+    },
+  );
+  it.each([100.25, 110.75])(
+    'retains the exact request boundary timestamp %s',
+    (at) => {
+      expect(
+        captureFightingSpatialStepResult(
+          takeoffResult([{ ...takeoff(), atGameMs: gameTimeMs(at) }]),
+          request(),
+        ).fighting.takeoffs[0]?.atGameMs,
+      ).toBe(at);
+    },
+  );
+  it('rejects duplicate actor/time takeoffs without merging or silently dropping evidence', () => {
+    const duplicate = takeoffResult([takeoff(), takeoff()]);
+    expect(isFightingSpatialStepResult(duplicate)).toBe(false);
+    expect(() =>
+      captureFightingSpatialStepResult(duplicate, request()),
+    ).toThrow(RangeError);
+    const distinct = takeoffResult([
+      takeoff(),
+      { ...takeoff(), atGameMs: gameTimeMs(104) },
+      { ...takeoff(), actorId: target },
+    ]);
+    expect(
+      captureFightingSpatialStepResult(distinct, request()).fighting.takeoffs,
+    ).toHaveLength(3);
+  });
+  it('retains request run/tick validation for results containing takeoffs', () => {
+    const input = takeoffResult();
+    expect(() =>
+      captureFightingSpatialStepResult(
+        { ...input, snapshot: { ...input.snapshot, runId: runId('other') } },
+        request(),
+      ),
+    ).toThrow(RangeError);
+    const mismatchedTick: FightingSpatialStepResult = {
+      ...input,
+      snapshot: { ...input.snapshot, tick: tick(9) },
+      fighting: { ...input.fighting, stepTick: tick(9) },
+    };
+    expect(() =>
+      captureFightingSpatialStepResult(mismatchedTick, request()),
     ).toThrow(RangeError);
   });
 });

@@ -109,6 +109,43 @@ function startMove(state: MutableState, edge: FightingInputEdge): void {
   if (state.posture === 'airborne') state.airAttackUsed = true;
 }
 
+/** Accept a boundary edge without inventing elapsed time. Core owns continuous TOI time. */
+export function receiveFightingInputs(
+  inputState: FightingCombatantState,
+  input: readonly FightingInputEdge[],
+  heldGuard: boolean,
+  allowStart = true,
+): FightingCombatantState {
+  const state = captureFightingCombatantState(inputState);
+  const edges = captureNormalizedFightingInputs({
+    edges: input,
+    newlySeenCommandIds: input.map((edge) => edge.commandId),
+  }).edges;
+  if (typeof heldGuard !== 'boolean' || typeof allowStart !== 'boolean')
+    throw new RangeError('Invalid fighting input control');
+  if (state.phase === 'defeated') return state;
+  const next: MutableState = { ...state, guardHeld: heldGuard };
+  if (!canReceiveInput(state, heldGuard)) next.buffer = null;
+  else {
+    if (!next.buffer && edges[0]) next.buffer = { edge: edges[0], ageTicks: 0 };
+    if (
+      allowStart &&
+      state.stopTicksRemaining === 0 &&
+      next.buffer &&
+      canStart(next, next.buffer.edge)
+    )
+      startMove(next, next.buffer.edge);
+  }
+  currentGuard(next);
+  if (
+    next.phase === 'neutral' &&
+    next.posture === 'airborne' &&
+    next.airAttackUsed
+  )
+    next.buffer = null;
+  return captureFightingCombatantState(next);
+}
+
 /**
  * One unfrozen actor interval, followed by its boundary input. Existing attacks and
  * reservations age once; a newly started move/reservation is age zero. state.tick is
