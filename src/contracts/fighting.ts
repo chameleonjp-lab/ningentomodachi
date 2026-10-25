@@ -21,8 +21,20 @@ import {
   type RunId,
   runId,
 } from './ids';
-import type { Vector3 } from './motion';
-import type { SpatialStepRequest, SpatialStepResult } from './ports';
+import type { HitVolume, Vector3 } from './motion';
+import type { DomainEvent } from './events';
+import type { GameSnapshot } from './snapshot';
+import type {
+  SpatialActor,
+  SpatialSnapshot,
+  SpatialCandidate,
+  ImpactReference,
+} from './spatial';
+import type {
+  CoreOutput,
+  SpatialStepRequest,
+  SpatialStepResult,
+} from './ports';
 
 /** Additive opt-in protocol; the legacy snapshot CONTRACT_VERSION remains 1. */
 export const FIGHTING_HZ = 60 as const;
@@ -222,6 +234,8 @@ export interface FightingClockSlice {
   readonly frozen: boolean;
 }
 export interface FightingClock {
+  /** Same Core runtime sampled after exact right-boundary selections. */
+  readonly endpoint?: FightingClockPoint;
   readonly stepTick: Tick;
   readonly activeEpochId: string;
   readonly slices: readonly FightingClockSlice[];
@@ -679,12 +693,17 @@ export function captureFightingClock(
   input: FightingClock,
   context?: FightingClockContext,
 ): FightingClock {
+  assertPureData(input);
+  if (context) assertPureData(context);
   requireRecord(input);
   const stepTick = tick(input.stepTick),
     activeEpochId = text(input.activeEpochId);
-  if (!Array.isArray(input.slices) || input.slices.length === 0)
-    throw new RangeError('Missing fighting clock coverage');
+  denseArray(input.slices);
   const slices = input.slices.map(captureFightingClockSlice);
+  const endpoint =
+    input.endpoint === undefined
+      ? undefined
+      : captureFightingClockPoint(input.endpoint);
   const epochs = new Set<string>();
   for (const [index, current] of slices.entries()) {
     const previous = slices[index - 1];
@@ -711,17 +730,46 @@ export function captureFightingClock(
     epochs.add(current.epochId);
   }
   const first = slices[0],
-    last = slices[slices.length - 1];
-  if (!first || !last || last.epochId !== activeEpochId)
+    last = slices.at(-1);
+  if (!first || !last) {
+    if (!endpoint || !context || context.fromGameMs !== context.toGameMs)
+      throw new RangeError('Missing fighting clock coverage');
+  }
+  if (endpoint) {
+    if (endpoint.stepTick !== stepTick || endpoint.epochId !== activeEpochId)
+      throw new RangeError('Active epoch must match clock endpoint');
+    if (last) {
+      if (
+        endpoint.actorId !== last.actorId ||
+        endpoint.atGameMs !== last.toGameMs
+      )
+        throw new RangeError('Foreign clock endpoint');
+      if (endpoint.epochId === last.epochId) {
+        if (
+          endpoint.clipId !== last.clipId ||
+          endpoint.activationId !== last.activationId ||
+          endpoint.motionMs !== last.toMotionMs
+        )
+          throw new RangeError('Endpoint disagrees with its interval epoch');
+      } else if (endpoint.motionMs !== 0 || epochs.has(endpoint.epochId))
+        throw new RangeError(
+          'Endpoint transition must start a fresh epoch at zero',
+        );
+    }
+  } else if (last?.epochId !== activeEpochId)
     throw new RangeError('Active epoch must match clock endpoint');
   if (context) {
     const from = gameTimeMs(context.fromGameMs),
       to = gameTimeMs(context.toGameMs);
+    const id = actorId(text(context.actorId));
     if (
+      from > to ||
       stepTick !== tick(context.stepTick) ||
-      first.actorId !== actorId(text(context.actorId)) ||
-      first.fromGameMs !== from ||
-      last.toGameMs !== to
+      (first &&
+        (first.actorId !== id ||
+          first.fromGameMs !== from ||
+          last?.toGameMs !== to)) ||
+      (endpoint && (endpoint.actorId !== id || endpoint.atGameMs !== to))
     )
       throw new RangeError(
         'Fighting clock does not cover the requested actor/step interval',
@@ -731,15 +779,29 @@ export function captureFightingClock(
     stepTick,
     activeEpochId,
     slices: Object.freeze(slices),
+    ...(endpoint ? { endpoint } : {}),
   });
 }
-/** Lookup is deliberately half-open; callers must not reuse an old active endpoint. */
+/** Half-open lookup grants no endpoint-only coverage/transition authority. */
 export function fightingClockSliceAt(
   input: FightingClock,
   at: GameTimeMs,
 ): FightingClockSlice | null {
-  const clock = captureFightingClock(input);
+  assertPureData(input);
   gameTimeMs(at);
+  denseArray(input.slices);
+  if (input.slices.length === 0) {
+    if (!input.endpoint) throw new RangeError('Missing endpoint-only clock');
+    const endpoint = captureFightingClockPoint(input.endpoint);
+    captureFightingClock(input, {
+      actorId: endpoint.actorId,
+      stepTick: endpoint.stepTick,
+      fromGameMs: endpoint.atGameMs,
+      toGameMs: endpoint.atGameMs,
+    });
+    return null;
+  }
+  const clock = captureFightingClock(input);
   return (
     clock.slices.find(
       (slice) => at >= slice.fromGameMs && at < slice.toGameMs,
@@ -892,6 +954,9 @@ export function captureFightingSpatialStepResult(
   input: SpatialStepResult,
   request: SpatialStepRequest,
 ): FightingSpatialStepResult {
+  assertPureData(input);
+  if (Object.hasOwn(input, 'transaction') || Object.hasOwn(input, 'kind'))
+    throw new RangeError('Transaction capability is not a fighting DTO');
   validateFightingSpatial(input);
   const endpoint = gameTimeMs(request.snapshot.clocks.gameTimeMs);
   const duration = durationMs(request.step.durationMs);
@@ -960,4 +1025,2242 @@ function freezeDto<T>(input: T): T {
     return Object.freeze(copy) as T;
   }
   return input;
+}
+
+/** A1 structural wire. Runtime history/lifecycle and A2 geometry admission remain external. */
+export interface FightingClockPoint {
+  readonly runId: RunId;
+  readonly actorId: ActorId;
+  readonly stepTick: Tick;
+  readonly atGameMs: GameTimeMs;
+  readonly epochId: string;
+  readonly clipId: ClipId;
+  readonly activationId: AttackActivationId | null;
+  readonly motionMs: DurationMs;
+  readonly phase: FightingCombatantState['phase'];
+  readonly posture: FightingPosture;
+}
+export interface FightingTransactionalClockContext
+  extends FightingClockContext {
+  readonly runId: RunId;
+  readonly queryMode: 'interval' | 'settle' | 'bootstrap';
+}
+export type FightingTuple3 = readonly [number, number, number];
+export type FightingQuaternion = readonly [number, number, number, number];
+export interface FightingLocalTransform {
+  readonly name: string;
+  readonly position: FightingTuple3;
+  readonly quaternion: FightingQuaternion;
+  readonly scale: FightingTuple3;
+}
+export interface FightingSupportEntry {
+  readonly side: 'L' | 'R';
+  readonly planted: boolean;
+  readonly local: FightingTuple3;
+  readonly worldRotation: FightingQuaternion;
+}
+/** Fixed cardinalities (53,2) are enforced by capture, not a giant tuple type. */
+export interface FightingRecipeEntry {
+  readonly recipeVersion: 'actual53-ik-surface-v1';
+  readonly clipId: ClipId;
+  /** Historical source sample; NEVER the clock of the current selected pose. */
+  readonly atMs: number;
+  readonly pose: readonly FightingLocalTransform[];
+  readonly support: readonly FightingSupportEntry[];
+}
+export interface FightingAcceptedRoot {
+  readonly x: number;
+  readonly z: number;
+}
+export interface FightingSupportContext {
+  readonly supportId: string;
+  readonly planeY: number;
+  readonly groundClearanceM: number;
+}
+interface FightingPoseContextBase {
+  readonly runId: RunId;
+  readonly actorId: ActorId;
+  readonly stepTick: Tick;
+  readonly epochId: string;
+  /** bootstrap ID or the exact step receiptId; not a clock/epoch. */
+  readonly commitId: string;
+  readonly facingBasis: Vector3;
+  /** Epoch-local XZ in facingBasis. Deliberately no physical/render Y. */
+  readonly acceptedRoot: FightingAcceptedRoot;
+  readonly support: FightingSupportContext;
+  readonly defeatEntry?: FightingRecipeEntry;
+}
+export type FightingPoseContext = FightingPoseContextBase &
+  (
+    | {
+        readonly entryKind: 'initial-ready';
+        readonly incoming?: never;
+      }
+    | {
+        readonly entryKind: 'encounter-reset';
+        readonly incoming?: never;
+      }
+    | {
+        readonly entryKind: 'continuous' | 'epoch-transition';
+        /** Same immutable actual outgoing entry retained throughout this epoch. */
+        readonly incoming: FightingRecipeEntry;
+      }
+  );
+export interface FightingPoseHold {
+  readonly reason:
+    | 'pause'
+    | 'background'
+    | 'inputs-released'
+    | 'session-ended'
+    | 'prestep-intent'
+    | 'error';
+  readonly displayEpochId: string;
+}
+/** The same immutable query reaches CPU shape sampling and visible pose application. */
+export interface FightingRecipeQuery {
+  readonly clipId: ClipId;
+  readonly phase: FightingCombatantState['phase'];
+  readonly posture: FightingPosture;
+  readonly atMs: number;
+  readonly acceptedRoot: FightingAcceptedRoot;
+  readonly incoming?: FightingRecipeEntry;
+  readonly groundClearanceM: number;
+}
+export interface FightingReadyActorDescriptor {
+  readonly actorId: ActorId;
+  readonly position: Vector3;
+  readonly facingBasis: Vector3;
+}
+/** Bound to actual Core-issued IDs after prepare, before AssetsReady publication. */
+export interface FightingReadyDescriptor {
+  readonly version: 1;
+  /** Opaque admitted exact pack/source-registry identity, authenticated by C/F. */
+  readonly bindingSetId: string;
+  readonly clipId: ClipId;
+  readonly supportPlane: {
+    readonly supportId: string;
+    readonly planeY: number;
+  };
+  readonly actors: readonly FightingReadyActorDescriptor[];
+  /** Measured/admitted geometry tolerance. No default chosen by A. */
+  readonly surfaceToleranceM: number;
+}
+export interface FightingBootstrap {
+  /** Explicit current subset; the admitted descriptor may also name future residents. */
+  readonly residentActorIds: readonly ActorId[];
+  readonly runId: RunId;
+  readonly descriptor: FightingReadyDescriptor;
+  readonly endpoints: readonly FightingClockPoint[];
+  /** entryKind initial-ready, unique per run/actor bootstrap commitId. */
+  readonly poseContexts: readonly FightingPoseContext[];
+}
+export interface FightingSpatialTransactionPolicy {
+  readonly mode: 'battle-transaction-v1';
+  readonly maxFrontiers: number;
+  readonly maxSameTimeFrontiers: number;
+}
+export interface FightingSampledSupport extends FightingSupportEntry {
+  readonly desiredWorld: FightingTuple3;
+  readonly errorM: number;
+  readonly world: FightingTuple3;
+}
+/** A2: current structural subset; explicit sole/hurt/multishape extension is C/D follow-on. */
+export interface FightingRecipeGeometrySample extends FightingRecipeEntry {
+  readonly durationMs: number;
+  readonly active: boolean;
+  readonly intendedRoot: Vector3;
+  readonly acceptedRoot: Vector3;
+  readonly support: readonly FightingSampledSupport[];
+  readonly shape: HitVolume | null;
+}
+/** Created CPU-only rig lease. No display node/Three object crosses the contract. */
+export interface FightingRecipeSamplerPort {
+  readonly runId: RunId;
+  readonly actorId: ActorId;
+  sample(query: FightingRecipeQuery): FightingRecipeGeometrySample;
+  dispose(): void;
+}
+/** Source pack ownership stays with F/C; D owns every created sampler lease. */
+export interface FightingRecipeSamplerFactory {
+  readonly runId: RunId;
+  readonly bindingSetId: string;
+  create(actorId: ActorId): FightingRecipeSamplerPort;
+}
+/** Explicit resource-binding packet: its factory is NON-DTO, never recorded. */
+export interface FightingPreparedSpatialBinding {
+  readonly readyDescriptor: FightingReadyDescriptor;
+  readonly transactionPolicy: FightingSpatialTransactionPolicy;
+  readonly recipeSamplerFactory: FightingRecipeSamplerFactory;
+}
+export interface FightingPreparedSpatialCapability {
+  readonly version: 1;
+  readonly mode: 'battle-transaction-v1';
+  /** Once per run, after C/catalog preparation, before AssetsReady/public ready commit. */
+  bindPrepared(binding: FightingPreparedSpatialBinding): void;
+}
+export interface FightingSpatialTransactionHeader {
+  readonly version: 1;
+  readonly transactionId: string;
+  readonly runId: RunId;
+  readonly stepTick: Tick;
+  readonly fromGameMs: GameTimeMs;
+  readonly toGameMs: GameTimeMs;
+}
+/**
+ * Source-query reference, NOT an accepted Core clock. D copies/derives this only
+ * from the named query's supplied clocks; B checks it before promoting evidence.
+ */
+interface FightingPoseSampleReferenceBase {
+  readonly actorId: ActorId;
+  readonly epochId: string;
+  readonly clipId: ClipId;
+  readonly activationId: AttackActivationId | null;
+  readonly atGameMs: GameTimeMs;
+  readonly motionMs: DurationMs;
+}
+export type FightingPoseSampleReference = FightingPoseSampleReferenceBase &
+  (
+    | {
+        readonly kind: 'query';
+        readonly transactionId: string;
+        readonly queryRevision: number;
+        readonly commitId?: never;
+      }
+    | {
+        readonly kind: 'bootstrap' | 'installed';
+        readonly commitId: string;
+        readonly transactionId?: never;
+        readonly queryRevision?: never;
+      }
+  );
+export interface FightingPhysicalPosePrefix {
+  readonly source: FightingPoseSampleReference;
+  readonly facingBasis: Vector3;
+  readonly acceptedRoot: FightingAcceptedRoot;
+  readonly support: FightingSupportContext;
+  readonly sample: FightingRecipeEntry;
+  readonly incoming?: FightingRecipeEntry;
+  readonly defeatEntry?: FightingRecipeEntry;
+  readonly entryKind: FightingPoseContext['entryKind'];
+}
+/** Proposed physical evidence until B accepts the entire frontier/batch. */
+export interface FightingPhysicalActorPrefix {
+  readonly actor: SpatialActor;
+  readonly pose: FightingPhysicalPosePrefix;
+}
+/** B joins its canonical accepted point to D's captured physical/sample evidence. */
+export interface FightingAcceptedActorPrefix
+  extends FightingPhysicalActorPrefix {
+  readonly endpoint: FightingClockPoint;
+}
+/** Installed D evidence, not a speculative proposal or a fabricated query result. */
+export interface FightingInstalledActorPrefix
+  extends FightingAcceptedActorPrefix {
+  readonly poseContext: FightingPoseContext;
+}
+export interface FightingInitialPrefix {
+  readonly runId: RunId;
+  readonly bindingSetId: string;
+  readonly actors: readonly FightingInstalledActorPrefix[];
+}
+/** Sole explicit unswept roster/spawn discontinuity, only in zero-time settlement. */
+export interface FightingEncounterReset {
+  readonly resetId: string;
+  readonly atGameMs: GameTimeMs;
+  readonly readyDescriptor: FightingReadyDescriptor;
+  readonly outgoingActorIds: readonly ActorId[];
+  readonly residentActorIds: readonly ActorId[];
+  readonly endpoints: readonly FightingClockPoint[];
+}
+/** Accepted reset history, repeated in receipt and B validation authority. */
+export interface FightingTransactionResidency {
+  readonly initialActorIds: readonly ActorId[];
+  readonly resets: readonly FightingEncounterReset[];
+}
+/** B-selected classification of the interval epoch; deliberately no clock/time. */
+export interface FightingSelectedPoseClassification {
+  readonly actorId: ActorId;
+  readonly epochId: string;
+  readonly phase: FightingCombatantState['phase'];
+  readonly posture: FightingPosture;
+}
+export interface FightingProjectInput extends FightingSpatialTransactionHeader {
+  readonly encounterReset?: FightingEncounterReset;
+  readonly revision: number;
+  readonly acceptedProjectionId: string | null;
+  readonly queryMode: 'interval' | 'settle';
+  readonly cursorGameMs: GameTimeMs;
+  readonly horizonGameMs: GameTimeMs;
+  readonly acceptedPrefix: readonly FightingAcceptedActorPrefix[];
+  /** One per actor; horizon cannot cross this selected classification boundary. */
+  readonly selectedPoses: readonly FightingSelectedPoseClassification[];
+  /** Current pending tick's accepted-runtime-derived planned suffix clocks. */
+  readonly snapshot: GameSnapshot;
+  /** Newly accepted previous complete batch only; original intents not replayed. */
+  readonly acceptedEvents: readonly DomainEvent[];
+  readonly settledOccurrenceIds: readonly string[];
+  readonly settledPhysicalSeamIds: readonly string[];
+}
+export interface FightingSpatialFrontier {
+  readonly projectionId: string;
+  readonly revision: number;
+  readonly atGameMs: GameTimeMs;
+  readonly kind: 'physical' | 'contacts' | 'boundary';
+  readonly occurrenceIds: readonly string[];
+  readonly physicalSeamIds: readonly string[];
+  readonly result: FightingSpatialStepResult;
+  /**
+   * Explicit wire concretization of §9 I2's required prefix references.
+   * No accepted endpoint field here: D cannot author B's post-reaction runtime.
+   */
+  readonly acceptedPrefix: readonly FightingPhysicalActorPrefix[];
+}
+export interface FightingFinishInput {
+  readonly acceptedProjectionId: string;
+  /** Final B draft with accepted endpoint clocks; contexts are filled by receipt. */
+  readonly output: CoreOutput;
+}
+export interface FightingSpatialCommitReceipt
+  extends FightingSpatialTransactionHeader {
+  readonly receiptId: string;
+  readonly residency?: FightingTransactionResidency;
+  readonly acceptedProjectionId: string;
+  readonly outputRevision: number;
+  readonly snapshot: SpatialSnapshot;
+  readonly endpoints: readonly FightingClockPoint[];
+  readonly poseContexts: readonly FightingPoseContext[];
+}
+export type FightingSpatialTransactionState =
+  | 'open'
+  | 'prepared'
+  | 'installed'
+  | 'aborted';
+/** Explicit NON-DTO resource capability. NEVER clone/serialize it. */
+export interface FightingSpatialTransactionPort
+  extends FightingSpatialTransactionHeader {
+  project(input: FightingProjectInput): FightingSpatialFrontier;
+  finish(input: FightingFinishInput): FightingSpatialCommitReceipt;
+  abort(): void;
+}
+/**
+ * Explicit capability envelope carried unchanged through scene/frameLoop.
+ * Inherited snapshot/candidates are proposal only; not accepted endpoint state.
+ */
+export interface FightingSpatialTransactionResult extends SpatialStepResult {
+  readonly kind: 'fighting-spatial-transaction-v1';
+  readonly initialPrefix: FightingInitialPrefix;
+  readonly transaction: FightingSpatialTransactionPort;
+}
+export interface FightingFrontierValidationContext {
+  readonly query: FightingProjectInput;
+  /** Same independently captured original admitted begin, never a re-begin. */
+  readonly request: SpatialStepRequest;
+  readonly policy: FightingSpatialTransactionPolicy;
+}
+export interface FightingReceiptValidationContext {
+  /** Captured original envelope authority, required to prove a carried reset origin. */
+  readonly initialPrefix?: FightingInitialPrefix;
+  readonly residency?: FightingTransactionResidency;
+  readonly header: FightingSpatialTransactionHeader;
+  readonly acceptedProjectionId: string;
+  readonly output: CoreOutput;
+  readonly acceptedPrefix: readonly FightingAcceptedActorPrefix[];
+}
+/** UTF-16 transport bounds for recorder-rejection fallback only, not gameplay or log limits. */
+export const FIGHTING_UNRECORDABLE_RETURN_NAME_MAX_CODE_UNITS = 128 as const;
+export const FIGHTING_UNRECORDABLE_RETURN_MESSAGE_MAX_CODE_UNITS =
+  4096 as const;
+export interface FightingDiagnostic {
+  readonly name: string;
+  readonly message: string;
+}
+export type FightingCallOutcome<T> =
+  | { readonly kind: 'returned'; readonly value: T }
+  | { readonly kind: 'threw'; readonly diagnostic: FightingDiagnostic }
+  /** Port returned, but recorder rejected its non-data payload. No raw value retained. */
+  | {
+      readonly kind: 'unrecordable-return';
+      readonly diagnostic: FightingDiagnostic;
+    };
+export type FightingSpatialTranscriptInteraction =
+  | {
+      readonly kind: 'project';
+      readonly input: FightingProjectInput;
+      readonly outcome: FightingCallOutcome<FightingSpatialFrontier>;
+    }
+  | {
+      readonly kind: 'finish';
+      readonly input: FightingFinishInput;
+      readonly outcome: FightingCallOutcome<FightingSpatialCommitReceipt>;
+    }
+  | { readonly kind: 'abort'; readonly outcome: FightingCallOutcome<null> };
+export interface FightingSpatialTranscript {
+  readonly initialPrefix: FightingInitialPrefix;
+  readonly header: FightingSpatialTransactionHeader;
+  readonly proposal: SpatialStepResult;
+  readonly interactions: readonly FightingSpatialTranscriptInteraction[];
+  readonly terminal:
+    | { readonly kind: 'success'; readonly receiptId: string }
+    | { readonly kind: 'aborted'; readonly diagnostic?: FightingDiagnostic };
+}
+
+/** Public DTOs are plain own-data only. Reject getters without evaluating them. */
+function ownData(value: unknown): asserts value is Record<string, unknown> {
+  requireRecord(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new RangeError('Fighting DTO must be a plain record');
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      typeof key !== 'string' ||
+      !descriptor ||
+      !Object.hasOwn(descriptor, 'value') ||
+      !descriptor.enumerable
+    )
+      throw new RangeError(
+        'Fighting DTO must contain only enumerable own data',
+      );
+  }
+}
+function denseArray(value: unknown): asserts value is readonly unknown[] {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype)
+    throw new RangeError('Expected plain fighting array');
+  for (let i = 0; i < value.length; i++) {
+    const d = Object.getOwnPropertyDescriptor(value, String(i));
+    if (!d || !Object.hasOwn(d, 'value'))
+      throw new RangeError('Sparse/accessor fighting array');
+  }
+  if (Reflect.ownKeys(value).length !== value.length + 1)
+    throw new RangeError('Unexpected fighting array properties');
+}
+function assertPureData(value: unknown, ancestors = new Set<object>()): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean')
+    return;
+  if (typeof value === 'number' && Number.isFinite(value)) return;
+  if (typeof value !== 'object' || ancestors.has(value))
+    throw new RangeError('Non-data or recursive fighting DTO');
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    denseArray(value);
+    for (const item of value) assertPureData(item, ancestors);
+  } else {
+    ownData(value);
+    for (const item of Object.values(value)) assertPureData(item, ancestors);
+  }
+  ancestors.delete(value);
+}
+function freezeDetached(value: unknown): void {
+  if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) freezeDetached(item);
+    Object.freeze(value);
+  }
+}
+/** Generic snapshot/event subtrees admit plain-data extensions only, never resources. */
+function detachedData<T>(input: T): T {
+  assertPureData(input);
+  const copy = structuredClone(input);
+  freezeDetached(copy);
+  return copy;
+}
+function exactFields(input: unknown, fields: readonly string[]): void {
+  ownData(input);
+  if (Object.keys(input).some((key) => !fields.includes(key)))
+    throw new RangeError('Unexpected fighting authority field');
+}
+function finite(value: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value))
+    throw new RangeError('Expected finite fighting number');
+  return value;
+}
+function tuple3(value: FightingTuple3): FightingTuple3 {
+  denseArray(value);
+  if (value.length !== 3) throw new RangeError('Expected three components');
+  return Object.freeze([finite(value[0]), finite(value[1]), finite(value[2])]);
+}
+function quaternion(value: FightingQuaternion): FightingQuaternion {
+  denseArray(value);
+  if (value.length !== 4)
+    throw new RangeError('Expected four quaternion components');
+  const result: FightingQuaternion = [
+    finite(value[0]),
+    finite(value[1]),
+    finite(value[2]),
+    finite(value[3]),
+  ];
+  if (Math.abs(Math.hypot(...result) - 1) > 1e-5)
+    throw new RangeError('Expected unit quaternion');
+  return Object.freeze(result);
+}
+function facing(value: Vector3): Vector3 {
+  const result = vector(value);
+  if (result.y !== 0 || Math.abs(Math.hypot(result.x, result.z) - 1) > 1e-5)
+    throw new RangeError('Expected horizontal unit facing basis');
+  return result;
+}
+function acceptedRoot(value: FightingAcceptedRoot): FightingAcceptedRoot {
+  exactFields(value, ['x', 'z']);
+  return Object.freeze({ x: finite(value.x), z: finite(value.z) });
+}
+function phase(
+  value: FightingCombatantState['phase'],
+): FightingCombatantState['phase'] {
+  return member(value, [
+    'neutral',
+    'startup',
+    'active',
+    'recovery',
+    'hitstun',
+    'blockstun',
+    'landing',
+    'defeated',
+  ]);
+}
+function posture(value: FightingPosture): FightingPosture {
+  return member(value, ['standing', 'crouching', 'airborne']);
+}
+function uniqueIds(values: readonly string[]): readonly string[] {
+  denseArray(values);
+  const ids = values.map(text);
+  if (new Set(ids).size !== ids.length)
+    throw new RangeError('Duplicate fighting identities');
+  return Object.freeze(ids);
+}
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== 'object' ||
+    typeof b !== 'object'
+  )
+    return false;
+  const keys = Object.keys(a),
+    other = Object.keys(b);
+  if (keys.length !== other.length) return false;
+  const av = Object.getOwnPropertyDescriptors(a),
+    bv = Object.getOwnPropertyDescriptors(b);
+  return keys.every(
+    (key) => Object.hasOwn(bv, key) && sameData(av[key]?.value, bv[key]?.value),
+  );
+}
+function requireEqual(a: unknown, b: unknown, message: string): void {
+  if (!sameData(a, b)) throw new RangeError(message);
+}
+function bijection(ids: readonly string[], expected: readonly string[]): void {
+  uniqueIds(ids);
+  uniqueIds(expected);
+  if (
+    ids.length !== expected.length ||
+    ids.some((id) => !expected.includes(id))
+  )
+    throw new RangeError('Fighting resident actor bijection required');
+}
+export function captureFightingClockPoint(
+  input: FightingClockPoint,
+): FightingClockPoint {
+  assertPureData(input);
+  ownData(input);
+  return Object.freeze({
+    runId: runId(text(input.runId)),
+    actorId: actorId(text(input.actorId)),
+    stepTick: tick(input.stepTick),
+    atGameMs: gameTimeMs(input.atGameMs),
+    epochId: text(input.epochId),
+    clipId: clipId(text(input.clipId)),
+    activationId:
+      input.activationId === null
+        ? null
+        : attackActivationId(text(input.activationId)),
+    motionMs: durationMs(input.motionMs),
+    phase: phase(input.phase),
+    posture: posture(input.posture),
+  });
+}
+export function captureFightingTransactionalClock(
+  input: FightingClock,
+  context: FightingTransactionalClockContext,
+): FightingClock & { readonly endpoint: FightingClockPoint } {
+  assertPureData(context);
+  ownData(context);
+  runId(text(context.runId));
+  member(context.queryMode, ['interval', 'settle', 'bootstrap']);
+  if (
+    (context.queryMode === 'interval') !==
+      context.fromGameMs < context.toGameMs ||
+    (context.queryMode !== 'interval' &&
+      context.fromGameMs !== context.toGameMs) ||
+    (context.queryMode === 'bootstrap' &&
+      (context.fromGameMs !== 0 || context.stepTick !== 0))
+  )
+    throw new RangeError('Query mode and exact clock interval disagree');
+  const clock = captureFightingClock(input, context);
+  if (!clock.endpoint || clock.endpoint.runId !== context.runId)
+    throw new RangeError('Missing or foreign transactional endpoint');
+  return Object.freeze({ ...clock, endpoint: clock.endpoint });
+}
+export function captureFightingRecipeEntry(
+  input: FightingRecipeEntry,
+): FightingRecipeEntry {
+  assertPureData(input);
+  exactFields(input, ['recipeVersion', 'clipId', 'atMs', 'pose', 'support']);
+  if (input.recipeVersion !== 'actual53-ik-surface-v1')
+    throw new RangeError('Unknown fighting recipe version');
+  denseArray(input.pose);
+  denseArray(input.support);
+  if (input.pose.length !== 53 || input.support.length !== 2)
+    throw new RangeError('Expected exactly 53 TRS and two feet');
+  const pose = input.pose.map((value) => {
+    exactFields(value, ['name', 'position', 'quaternion', 'scale']);
+    const scale = tuple3(value.scale);
+    if (scale.some((component) => component <= 0))
+      throw new RangeError('Expected positive scales');
+    return Object.freeze({
+      name: text(value.name),
+      position: tuple3(value.position),
+      quaternion: quaternion(value.quaternion),
+      scale,
+    });
+  });
+  uniqueIds(pose.map((p) => p.name));
+  const support = input.support.map((value) => {
+    exactFields(value, ['side', 'planted', 'local', 'worldRotation']);
+    return Object.freeze({
+      side: member(value.side, ['L', 'R']),
+      planted: boolean(value.planted),
+      local: tuple3(value.local),
+      worldRotation: quaternion(value.worldRotation),
+    });
+  });
+  bijection(
+    support.map((s) => s.side),
+    ['L', 'R'],
+  );
+  return Object.freeze({
+    recipeVersion: input.recipeVersion,
+    clipId: clipId(text(input.clipId)),
+    atMs: nonnegative(input.atMs),
+    pose: Object.freeze(pose),
+    support: Object.freeze(support),
+  });
+}
+export function captureFightingSupportContext(
+  input: FightingSupportContext,
+): FightingSupportContext {
+  assertPureData(input);
+  exactFields(input, ['supportId', 'planeY', 'groundClearanceM']);
+  return Object.freeze({
+    supportId: text(input.supportId),
+    planeY: finite(input.planeY),
+    groundClearanceM: nonnegative(input.groundClearanceM),
+  });
+}
+function captureEntries(
+  input: Pick<
+    FightingPhysicalPosePrefix,
+    'entryKind' | 'incoming' | 'defeatEntry'
+  >,
+) {
+  const entryKind = member(input.entryKind, [
+    'initial-ready',
+    'encounter-reset',
+    'continuous',
+    'epoch-transition',
+  ]);
+  if (
+    (entryKind === 'initial-ready' || entryKind === 'encounter-reset') !==
+    (input.incoming === undefined)
+  )
+    throw new RangeError('Incoming omission is bootstrap/reset-only');
+  const defeat =
+    input.defeatEntry === undefined
+      ? {}
+      : { defeatEntry: captureFightingRecipeEntry(input.defeatEntry) };
+  if (entryKind === 'initial-ready' || entryKind === 'encounter-reset')
+    return { entryKind, ...defeat };
+  if (!input.incoming) throw new RangeError('Actual incoming sample required');
+  return {
+    entryKind,
+    incoming: captureFightingRecipeEntry(input.incoming),
+    ...defeat,
+  };
+}
+export function captureFightingPoseContext(
+  input: FightingPoseContext,
+): FightingPoseContext {
+  assertPureData(input);
+  exactFields(input, [
+    'runId',
+    'actorId',
+    'stepTick',
+    'epochId',
+    'commitId',
+    'entryKind',
+    'facingBasis',
+    'acceptedRoot',
+    'support',
+    'incoming',
+    'defeatEntry',
+  ]);
+  return Object.freeze({
+    runId: runId(text(input.runId)),
+    actorId: actorId(text(input.actorId)),
+    stepTick: tick(input.stepTick),
+    epochId: text(input.epochId),
+    commitId: text(input.commitId),
+    facingBasis: facing(input.facingBasis),
+    acceptedRoot: acceptedRoot(input.acceptedRoot),
+    support: captureFightingSupportContext(input.support),
+    ...captureEntries(input),
+  });
+}
+export function captureFightingPoseHold(
+  input: FightingPoseHold,
+): FightingPoseHold {
+  assertPureData(input);
+  exactFields(input, ['reason', 'displayEpochId']);
+  return Object.freeze({
+    reason: member(input.reason, [
+      'pause',
+      'background',
+      'inputs-released',
+      'session-ended',
+      'prestep-intent',
+      'error',
+    ]),
+    displayEpochId: text(input.displayEpochId),
+  });
+}
+export function captureFightingReadyDescriptor(
+  input: FightingReadyDescriptor,
+): FightingReadyDescriptor {
+  assertPureData(input);
+  ownData(input);
+  if (input.version !== 1)
+    throw new RangeError('Unknown ready descriptor version');
+  ownData(input.supportPlane);
+  denseArray(input.actors);
+  const planeY = finite(input.supportPlane.planeY),
+    tolerance = nonnegative(input.surfaceToleranceM);
+  const actors = input.actors.map((a) => {
+    ownData(a);
+    const position = vector(a.position);
+    if (Math.abs(position.y - planeY) > tolerance)
+      throw new RangeError('Ready spawn must lie on admitted plane');
+    return Object.freeze({
+      actorId: actorId(text(a.actorId)),
+      position,
+      facingBasis: facing(a.facingBasis),
+    });
+  });
+  uniqueIds(actors.map((a) => a.actorId));
+  if (!actors.length) throw new RangeError('Empty ready actor set');
+  return Object.freeze({
+    version: 1,
+    bindingSetId: text(input.bindingSetId),
+    clipId: clipId(text(input.clipId)),
+    supportPlane: Object.freeze({
+      supportId: text(input.supportPlane.supportId),
+      planeY,
+    }),
+    actors: Object.freeze(actors),
+    surfaceToleranceM: tolerance,
+  });
+}
+export function captureFightingBootstrap(
+  input: FightingBootstrap,
+): FightingBootstrap {
+  assertPureData(input);
+  ownData(input);
+  const run = runId(text(input.runId)),
+    descriptor = captureFightingReadyDescriptor(input.descriptor);
+  denseArray(input.endpoints);
+  denseArray(input.poseContexts);
+  const endpoints = input.endpoints.map(captureFightingClockPoint),
+    poseContexts = input.poseContexts.map(captureFightingPoseContext);
+  const ids = captureActorIds(input.residentActorIds);
+  admittedResidents(ids, descriptor);
+  bijection(
+    endpoints.map((p) => p.actorId),
+    ids,
+  );
+  bijection(
+    poseContexts.map((p) => p.actorId),
+    ids,
+  );
+  uniqueIds(poseContexts.map((p) => p.commitId));
+  for (const point of endpoints) {
+    const context = poseContexts.find((p) => p.actorId === point.actorId),
+      spawn = descriptor.actors.find((a) => a.actorId === point.actorId);
+    if (
+      !context ||
+      !spawn ||
+      point.runId !== run ||
+      point.stepTick !== 0 ||
+      point.atGameMs !== 0 ||
+      point.motionMs !== 0 ||
+      point.clipId !== descriptor.clipId ||
+      point.activationId !== null ||
+      point.phase !== 'neutral' ||
+      point.posture !== 'standing' ||
+      context.runId !== run ||
+      context.stepTick !== 0 ||
+      context.epochId !== point.epochId ||
+      context.entryKind !== 'initial-ready' ||
+      context.defeatEntry ||
+      context.acceptedRoot.x !== 0 ||
+      context.acceptedRoot.z !== 0 ||
+      context.support.groundClearanceM !== 0 ||
+      context.support.supportId !== descriptor.supportPlane.supportId ||
+      context.support.planeY !== descriptor.supportPlane.planeY
+    )
+      throw new RangeError('Invalid initial-ready bootstrap authority');
+    requireEqual(
+      context.facingBasis,
+      spawn.facingBasis,
+      'Bootstrap basis differs',
+    );
+  }
+  return Object.freeze({
+    runId: run,
+    descriptor,
+    residentActorIds: ids,
+    endpoints: Object.freeze(endpoints),
+    poseContexts: Object.freeze(poseContexts),
+  });
+}
+export function captureFightingSpatialTransactionPolicy(
+  input: FightingSpatialTransactionPolicy,
+): FightingSpatialTransactionPolicy {
+  assertPureData(input);
+  ownData(input);
+  if (
+    input.mode !== 'battle-transaction-v1' ||
+    tick(input.maxFrontiers) === 0 ||
+    tick(input.maxSameTimeFrontiers) === 0
+  )
+    throw new RangeError('Invalid explicit transaction work policy');
+  return Object.freeze({
+    mode: input.mode,
+    maxFrontiers: input.maxFrontiers,
+    maxSameTimeFrontiers: input.maxSameTimeFrontiers,
+  });
+}
+
+function validateTransactionHeader(
+  input: unknown,
+): asserts input is FightingSpatialTransactionHeader {
+  ownData(input);
+  if (
+    input.version !== 1 ||
+    typeof input.stepTick !== 'number' ||
+    typeof input.fromGameMs !== 'number' ||
+    typeof input.toGameMs !== 'number'
+  )
+    throw new RangeError('Invalid transaction header');
+  text(input.transactionId);
+  text(input.runId);
+  tick(input.stepTick);
+  gameTimeMs(input.fromGameMs);
+  gameTimeMs(input.toGameMs);
+  if (input.fromGameMs >= input.toGameMs)
+    throw new RangeError(
+      'Transaction must retain a positive original interval',
+    );
+}
+function captureHeader(
+  input: FightingSpatialTransactionHeader,
+): FightingSpatialTransactionHeader {
+  validateTransactionHeader(input);
+  return Object.freeze({
+    version: 1,
+    transactionId: text(input.transactionId),
+    runId: runId(text(input.runId)),
+    stepTick: tick(input.stepTick),
+    fromGameMs: gameTimeMs(input.fromGameMs),
+    toGameMs: gameTimeMs(input.toGameMs),
+  });
+}
+function requestMatches(
+  header: FightingSpatialTransactionHeader,
+  request: SpatialStepRequest,
+): void {
+  assertPureData(request);
+  const to = gameTimeMs(request.snapshot.clocks.gameTimeMs),
+    duration = durationMs(request.step.durationMs);
+  // Preserve the installed boundary; floating-point subtraction is not invertible.
+  if (
+    header.runId !== request.snapshot.runId ||
+    header.stepTick !== request.snapshot.clocks.tick ||
+    header.toGameMs !== to ||
+    duration !== header.toGameMs - header.fromGameMs
+  )
+    throw new RangeError('Transaction differs from original admitted begin');
+  residentIds(request.snapshot);
+}
+function residentIds(snapshot: GameSnapshot): readonly ActorId[] {
+  ownData(snapshot);
+  ownData(snapshot.world);
+  ownData(snapshot.clocks);
+  tick(snapshot.revision);
+  tick(snapshot.clocks.tick);
+  gameTimeMs(snapshot.clocks.gameTimeMs);
+  runId(text(snapshot.runId));
+  denseArray(snapshot.actors);
+  denseArray(snapshot.world.vehicles);
+  denseArray(snapshot.world.objects);
+  if (
+    snapshot.contractVersion !== 1 ||
+    snapshot.world.vehicles.length ||
+    snapshot.world.objects.length
+  )
+    throw new RangeError('Strict fighting requires an empty battle world');
+  const all = snapshot.actors.map((a) => {
+    ownData(a);
+    return actorId(text(a.actorId));
+  });
+  uniqueIds(all);
+  const residents = snapshot.residentActorIds ?? all;
+  uniqueIds(residents);
+  if (!residents.length || residents.some((id) => !all.includes(id)))
+    throw new RangeError('Invalid fighting residency');
+  return residents;
+}
+function captureSpatialActor(input: SpatialActor): SpatialActor {
+  ownData(input);
+  if (input.pose !== undefined) ownData(input.pose);
+  return Object.freeze({
+    actorId: actorId(text(input.actorId)),
+    position: vector(input.position),
+    facing: facing(input.facing),
+    velocity: vector(input.velocity),
+    grounded: boolean(input.grounded),
+    locomotion: member(input.locomotion, [
+      'idle',
+      'walk',
+      'run',
+      'jump',
+      'crouch',
+    ]),
+    ...(input.pose !== undefined ? { pose: detachedData(input.pose) } : {}),
+  });
+}
+function captureSpatialSnapshot(
+  input: SpatialSnapshot,
+  header: FightingSpatialTransactionHeader,
+  ids: readonly ActorId[],
+): SpatialSnapshot {
+  ownData(input);
+  denseArray(input.actors);
+  denseArray(input.vehicles);
+  if (
+    input.runId !== header.runId ||
+    tick(input.tick) !== header.stepTick ||
+    input.vehicles.length
+  )
+    throw new RangeError('Foreign or mixed-world physical snapshot');
+  const actors = input.actors.map(captureSpatialActor);
+  bijection(
+    actors.map((a) => a.actorId),
+    ids,
+  );
+  return Object.freeze({
+    runId: header.runId,
+    tick: header.stepTick,
+    actors: Object.freeze(actors),
+    vehicles: Object.freeze([]),
+  });
+}
+function captureSampleReference(
+  input: FightingPoseSampleReference,
+): FightingPoseSampleReference {
+  ownData(input);
+  const shared = {
+    actorId: actorId(text(input.actorId)),
+    epochId: text(input.epochId),
+    clipId: clipId(text(input.clipId)),
+    activationId:
+      input.activationId === null
+        ? null
+        : attackActivationId(text(input.activationId)),
+    atGameMs: gameTimeMs(input.atGameMs),
+    motionMs: durationMs(input.motionMs),
+  };
+  const fields = [
+    'kind',
+    'actorId',
+    'epochId',
+    'clipId',
+    'activationId',
+    'atGameMs',
+    'motionMs',
+  ];
+  if (input.kind === 'query') {
+    exactFields(input, [...fields, 'transactionId', 'queryRevision']);
+    return Object.freeze({
+      ...shared,
+      kind: input.kind,
+      transactionId: text(input.transactionId),
+      queryRevision: tick(input.queryRevision),
+    });
+  }
+  if (input.kind === 'bootstrap' || input.kind === 'installed') {
+    exactFields(input, [...fields, 'commitId']);
+    return Object.freeze({
+      ...shared,
+      kind: input.kind,
+      commitId: text(input.commitId),
+    });
+  }
+  throw new RangeError('Unknown physical sample provenance');
+}
+function capturePhysicalPrefix(
+  input: FightingPhysicalActorPrefix,
+): FightingPhysicalActorPrefix {
+  ownData(input);
+  ownData(input.pose);
+  const actor = captureSpatialActor(input.actor),
+    source = captureSampleReference(input.pose.source);
+  const support = captureFightingSupportContext(input.pose.support),
+    sample = captureFightingRecipeEntry(input.pose.sample);
+  if (
+    source.actorId !== actor.actorId ||
+    source.clipId !== sample.clipId ||
+    source.motionMs !== sample.atMs ||
+    actor.position.y - support.planeY !== support.groundClearanceM
+  )
+    throw new RangeError('Physical/sample/support prefix mismatch');
+  return Object.freeze({
+    actor,
+    pose: Object.freeze({
+      source,
+      support,
+      sample,
+      facingBasis: facing(input.pose.facingBasis),
+      acceptedRoot: acceptedRoot(input.pose.acceptedRoot),
+      ...captureEntries(input.pose),
+    }),
+  });
+}
+function sourceMatchesPoint(
+  source: FightingPoseSampleReference,
+  point: FightingClockPoint,
+): void {
+  if (
+    source.actorId !== point.actorId ||
+    source.epochId !== point.epochId ||
+    source.clipId !== point.clipId ||
+    source.activationId !== point.activationId ||
+    source.atGameMs !== point.atGameMs ||
+    source.motionMs !== point.motionMs
+  )
+    throw new RangeError(
+      'Sample reference is not the accepted canonical point',
+    );
+}
+function captureAcceptedPrefix(
+  input: FightingAcceptedActorPrefix,
+): FightingAcceptedActorPrefix {
+  const physical = capturePhysicalPrefix(input),
+    endpoint = captureFightingClockPoint(input.endpoint);
+  sourceMatchesPoint(physical.pose.source, endpoint);
+  return Object.freeze({ ...physical, endpoint });
+}
+export function captureFightingProjectInput(
+  input: FightingProjectInput,
+): FightingProjectInput {
+  assertPureData(input);
+  ownData(input);
+  const header = captureHeader(input),
+    revision = tick(input.revision);
+  const cursor = gameTimeMs(input.cursorGameMs),
+    horizon = gameTimeMs(input.horizonGameMs);
+  const mode = member(input.queryMode, ['interval', 'settle']);
+  if (
+    cursor < header.fromGameMs ||
+    horizon > header.toGameMs ||
+    cursor > horizon ||
+    (mode === 'interval' ? cursor === horizon : cursor !== horizon) ||
+    (revision === 0
+      ? input.acceptedProjectionId !== null || cursor !== header.fromGameMs
+      : input.acceptedProjectionId === null)
+  )
+    throw new RangeError('Invalid projection revision/acknowledgement/horizon');
+  const acceptedProjectionId =
+    input.acceptedProjectionId === null
+      ? null
+      : text(input.acceptedProjectionId);
+  const ids = residentIds(input.snapshot);
+  if (
+    input.snapshot.runId !== header.runId ||
+    input.snapshot.clocks.tick !== header.stepTick
+  )
+    throw new RangeError('Current suffix must use pending run/tick');
+  denseArray(input.acceptedPrefix);
+  denseArray(input.selectedPoses);
+  denseArray(input.acceptedEvents);
+  if (revision === 0 && input.acceptedEvents.length)
+    throw new RangeError('First query has no previously accepted batch');
+  uniqueIds(input.acceptedEvents.map((event) => text(event.eventId)));
+  let previousSequence = -1;
+  for (const event of input.acceptedEvents) {
+    ownData(event);
+    if (
+      event.runId !== header.runId ||
+      gameTimeMs(event.at) !== cursor ||
+      tick(event.sequence) <= previousSequence ||
+      event.type === 'VehicleLaunchApproved' ||
+      event.type === 'DestructionCounted'
+    )
+      throw new RangeError(
+        'Foreign, replayed or mixed-world accepted event provenance',
+      );
+    previousSequence = event.sequence;
+  }
+  const prefix = input.acceptedPrefix.map(captureAcceptedPrefix);
+  const encounterReset =
+    input.encounterReset === undefined
+      ? undefined
+      : captureFightingEncounterReset(input.encounterReset, header);
+  if (
+    encounterReset &&
+    (mode !== 'settle' ||
+      cursor !== encounterReset.atGameMs ||
+      horizon !== cursor)
+  )
+    throw new RangeError(
+      'Encounter reset is an exact zero-time settlement only',
+    );
+  const selected = input.selectedPoses.map((p) => {
+    exactFields(p, ['actorId', 'epochId', 'phase', 'posture']);
+    return Object.freeze({
+      actorId: actorId(text(p.actorId)),
+      epochId: text(p.epochId),
+      phase: phase(p.phase),
+      posture: posture(p.posture),
+    });
+  });
+  bijection(
+    prefix.map((p) => p.actor.actorId),
+    encounterReset?.outgoingActorIds ?? ids,
+  );
+  if (encounterReset) bijection(encounterReset.residentActorIds, ids);
+  bijection(
+    selected.map((p) => p.actorId),
+    ids,
+  );
+  for (const p of prefix) {
+    if (
+      p.endpoint.runId !== header.runId ||
+      p.endpoint.stepTick > header.stepTick ||
+      p.endpoint.atGameMs !== cursor ||
+      // Revision zero retains authenticated installed evidence from the prior transaction.
+      // Its source revision must not be relabeled into the new attempt.
+      (revision === 0
+        ? p.endpoint.stepTick >= header.stepTick ||
+          (p.pose.source.kind === 'query' &&
+            p.pose.source.transactionId === header.transactionId)
+        : p.endpoint.stepTick !== header.stepTick ||
+          p.pose.source.kind !== 'query' ||
+          p.pose.source.transactionId !== header.transactionId ||
+          p.pose.source.queryRevision !== revision - 1)
+    )
+      throw new RangeError(
+        'Prefix is not prior accepted evidence at this cursor',
+      );
+  }
+  const actors = input.snapshot.actors.map((a) => {
+    if (!ids.includes(a.actorId)) return detachedData(a);
+    if (!a.fightingClock) throw new RangeError('Missing current suffix clock');
+    const clock = captureFightingTransactionalClock(a.fightingClock, {
+      runId: header.runId,
+      actorId: a.actorId,
+      stepTick: header.stepTick,
+      fromGameMs: cursor,
+      toGameMs: horizon,
+      queryMode: mode,
+    });
+    if (encounterReset) {
+      requireEqual(
+        clock.endpoint,
+        encounterReset.endpoints.find((p) => p.actorId === a.actorId),
+        'Reset query clock differs from declared ready point',
+      );
+      const prior = prefix.find((p) => p.actor.actorId === a.actorId);
+      if (prior?.endpoint.epochId === clock.endpoint.epochId)
+        throw new RangeError('Reset must select a fresh ready epoch');
+    }
+    const classification = selected.find((p) => p.actorId === a.actorId);
+    if (
+      !classification ||
+      (mode === 'interval'
+        ? clock.slices.some((s) => s.epochId !== classification.epochId)
+        : classification.epochId !== clock.endpoint.epochId ||
+          classification.phase !== clock.endpoint.phase ||
+          classification.posture !== clock.endpoint.posture)
+    )
+      throw new RangeError(
+        'Selected pose classification crosses the query boundary',
+      );
+    if (a.fighting !== undefined) {
+      const selectedState = captureFightingCombatantState(a.fighting);
+      if (
+        selectedState.phase !== classification.phase ||
+        selectedState.posture !== classification.posture
+      )
+        throw new RangeError(
+          'Selected interval classification differs from Core state at cursor',
+        );
+    }
+    return { ...detachedData(a), fightingClock: clock };
+  });
+  return detachedData({
+    ...header,
+    revision,
+    acceptedProjectionId,
+    queryMode: mode,
+    cursorGameMs: cursor,
+    horizonGameMs: horizon,
+    acceptedPrefix: prefix,
+    ...(encounterReset ? { encounterReset } : {}),
+    selectedPoses: selected,
+    snapshot: { ...input.snapshot, actors },
+    acceptedEvents: input.acceptedEvents,
+    settledOccurrenceIds: uniqueIds(input.settledOccurrenceIds),
+    settledPhysicalSeamIds: uniqueIds(input.settledPhysicalSeamIds),
+  });
+}
+function validateImpact(input: ImpactReference, ids: readonly ActorId[]): void {
+  ownData(input);
+  actorId(text(input.actorId));
+  attackActivationId(text(input.activationId));
+  impactId(text(input.impactId));
+  if (!ids.includes(input.actorId))
+    throw new RangeError('Foreign fighting impact actor');
+}
+function validateBattleCandidate(
+  candidate: SpatialCandidate,
+  header: FightingSpatialTransactionHeader,
+  ids: readonly ActorId[],
+): void {
+  ownData(candidate);
+  ownData(candidate.interval);
+  contactId(text(candidate.contactId));
+  vector(candidate.point);
+  const at = gameTimeMs(candidate.at),
+    from = gameTimeMs(candidate.interval.from),
+    to = gameTimeMs(candidate.interval.to);
+  member(candidate.evidence, ['swept-shape', 'overlap']);
+  if (
+    candidate.runId !== header.runId ||
+    from > at ||
+    at > to ||
+    from < header.fromGameMs ||
+    to > header.toGameMs
+  )
+    throw new RangeError('Foreign fighting contact interval');
+  if (candidate.kind === 'body-hit') {
+    validateImpact(candidate.source, ids);
+    actorId(text(candidate.targetActorId));
+    if (
+      !ids.includes(candidate.targetActorId) ||
+      candidate.source.actorId === candidate.targetActorId
+    )
+      throw new RangeError('Foreign/self body contact');
+  } else if (candidate.kind === 'clash') {
+    validateImpact(candidate.first, ids);
+    validateImpact(candidate.second, ids);
+    if (candidate.first.actorId === candidate.second.actorId)
+      throw new RangeError('Self clash');
+  } else throw new RangeError('Unsupported mixed-world fighting candidate');
+}
+function sourceFromQuery(
+  query: FightingProjectInput,
+  id: ActorId,
+  at: GameTimeMs,
+): FightingPoseSampleReference {
+  const clock = query.snapshot.actors.find(
+    (a) => a.actorId === id,
+  )?.fightingClock;
+  if (!clock?.endpoint) throw new RangeError('Missing source clock');
+  if (at === query.horizonGameMs)
+    return Object.freeze({
+      kind: 'query',
+      transactionId: query.transactionId,
+      queryRevision: query.revision,
+      actorId: id,
+      epochId: clock.endpoint.epochId,
+      clipId: clock.endpoint.clipId,
+      activationId: clock.endpoint.activationId,
+      atGameMs: at,
+      motionMs: clock.endpoint.motionMs,
+    });
+  const slice = clock.slices.find((s) => at >= s.fromGameMs && at < s.toGameMs);
+  if (!slice) throw new RangeError('Source reference outside supplied clock');
+  const motion =
+    slice.fromMotionMs +
+    (slice.toMotionMs - slice.fromMotionMs) *
+      ((at - slice.fromGameMs) / (slice.toGameMs - slice.fromGameMs));
+  return Object.freeze({
+    kind: 'query',
+    transactionId: query.transactionId,
+    queryRevision: query.revision,
+    actorId: id,
+    epochId: slice.epochId,
+    clipId: slice.clipId,
+    activationId: slice.activationId,
+    atGameMs: at,
+    motionMs: durationMs(motion),
+  });
+}
+export function captureFightingSpatialFrontier(
+  input: FightingSpatialFrontier,
+  context: FightingFrontierValidationContext,
+): FightingSpatialFrontier {
+  assertPureData(input);
+  assertPureData(context);
+  ownData(input);
+  const q = captureFightingProjectInput(context.query);
+  captureFightingSpatialTransactionPolicy(context.policy);
+  requestMatches(q, context.request);
+  const at = gameTimeMs(input.atGameMs),
+    kind = member(input.kind, ['physical', 'contacts', 'boundary']);
+  const projectionId = text(input.projectionId);
+  if (
+    tick(input.revision) !== q.revision ||
+    projectionId === q.acceptedProjectionId ||
+    at < q.cursorGameMs ||
+    at > q.horizonGameMs ||
+    (kind === 'boundary' && at !== q.horizonGameMs)
+  )
+    throw new RangeError('Stale or out-of-horizon frontier');
+  const occurrences = uniqueIds(input.occurrenceIds),
+    seams = uniqueIds(input.physicalSeamIds);
+  if (
+    occurrences.some((id) => q.settledOccurrenceIds.includes(id)) ||
+    seams.some((id) => q.settledPhysicalSeamIds.includes(id))
+  )
+    throw new RangeError('Already settled frontier occurrence');
+  validateFightingSpatial(input.result);
+  const ids = residentIds(q.snapshot),
+    snapshot = captureSpatialSnapshot(input.result.snapshot, q, ids);
+  denseArray(input.acceptedPrefix);
+  const prefix = input.acceptedPrefix.map(capturePhysicalPrefix);
+  bijection(
+    prefix.map((p) => p.actor.actorId),
+    ids,
+  );
+  const takeoffs = input.result.fighting.takeoffs.map(
+      captureFightingTakeoffWitness,
+    ),
+    landings = input.result.fighting.landings.map(
+      captureFightingLandingWitness,
+    );
+  const contacts = input.result.fighting.contacts.map(
+    captureFightingContactWitness,
+  );
+  uniqueIds(input.result.candidates.map((c) => c.contactId));
+  for (const c of input.result.candidates) {
+    validateBattleCandidate(c, q, ids);
+    if (
+      c.at !== at ||
+      at === q.toGameMs ||
+      c.interval.from < q.cursorGameMs ||
+      c.interval.to > q.horizonGameMs
+    )
+      throw new RangeError('Contact is not owned by this exact-time query');
+  }
+  for (const w of [...takeoffs, ...landings, ...contacts])
+    if (w.atGameMs !== at) throw new RangeError('Witness not at frontier');
+  for (const contact of contacts) {
+    const source = snapshot.actors.find(
+      (a) => a.actorId === contact.sourceActorId,
+    );
+    const target = snapshot.actors.find(
+      (a) => a.actorId === contact.targetActorId,
+    );
+    if (!source || !target)
+      throw new RangeError('Missing contact physical actors');
+    requireEqual(
+      contact.sourcePosition,
+      source.position,
+      'Contact source position differs from physical cut',
+    );
+    requireEqual(
+      contact.targetPosition,
+      target.position,
+      'Contact target position differs from physical cut',
+    );
+    requireEqual(
+      contact.sourceFacing,
+      source.facing,
+      'Contact source facing differs from physical cut',
+    );
+    requireEqual(
+      contact.targetFacing,
+      target.facing,
+      'Contact target facing differs from physical cut',
+    );
+  }
+  if (
+    (kind === 'physical' &&
+      (!seams.length ||
+        (!takeoffs.length && !landings.length) ||
+        input.result.candidates.length ||
+        occurrences.length)) ||
+    (kind === 'contacts' &&
+      (!occurrences.length ||
+        !input.result.candidates.length ||
+        takeoffs.length ||
+        landings.length ||
+        seams.length)) ||
+    (kind === 'boundary' &&
+      (seams.length ||
+        occurrences.length ||
+        takeoffs.length ||
+        landings.length ||
+        input.result.candidates.length)) ||
+    (kind === 'physical' &&
+      seams.length !== takeoffs.length + landings.length) ||
+    (kind === 'contacts' &&
+      occurrences.length !== input.result.candidates.length)
+  )
+    throw new RangeError('Incomplete or mixed frontier batch');
+  for (const p of prefix) {
+    requireEqual(
+      p.actor,
+      snapshot.actors.find((a) => a.actorId === p.actor.actorId),
+      'Frontier physical prefix substituted',
+    );
+    requireEqual(
+      p.pose.source,
+      sourceFromQuery(q, p.actor.actorId, at),
+      'Frontier source not supplied by current query',
+    );
+    if (q.encounterReset) {
+      if (kind !== 'boundary' || at !== q.encounterReset.atGameMs)
+        throw new RangeError(
+          'Reset frontier cannot integrate or return contact/physical seams',
+        );
+      validateResetPhysical(p, q.encounterReset);
+      continue;
+    }
+    const prior = q.acceptedPrefix.find(
+      (a) => a.actor.actorId === p.actor.actorId,
+    );
+    if (!prior) throw new RangeError('Missing physical prefix');
+    if (p.pose.entryKind === 'encounter-reset')
+      requireSameResetOrigin(p.pose, prior.pose, prior.endpoint);
+    let grounded = prior.actor.grounded;
+    for (const w of takeoffs)
+      if (w.actorId === p.actor.actorId) {
+        grounded = false;
+        requireEqual(w.position, p.actor.position, 'Takeoff position mismatch');
+      }
+    for (const w of landings)
+      if (w.actorId === p.actor.actorId) {
+        const source = sourceFromQuery(q, p.actor.actorId, at);
+        if (
+          w.airborneActivationId !== source.activationId ||
+          w.supportId !== p.pose.support.supportId ||
+          p.pose.support.groundClearanceM !== 0
+        )
+          throw new RangeError(
+            'Landing not supported by current suffix/support',
+          );
+        grounded = true;
+        requireEqual(w.position, p.actor.position, 'Landing position mismatch');
+      }
+    if (p.actor.grounded !== grounded)
+      throw new RangeError('Grounded state lacks accepted seam history');
+    if (
+      p.pose.support.supportId !== prior.pose.support.supportId ||
+      p.pose.support.planeY !== prior.pose.support.planeY
+    )
+      throw new RangeError('Changing support planes is unqualified');
+    if (
+      q.queryMode === 'settle' &&
+      (!sameData(p.actor.position, prior.actor.position) ||
+        !sameData(p.actor.velocity, prior.actor.velocity))
+    )
+      throw new RangeError('Settlement cannot integrate physical motion');
+  }
+  return detachedData({
+    projectionId,
+    revision: q.revision,
+    atGameMs: at,
+    kind,
+    occurrenceIds: occurrences,
+    physicalSeamIds: seams,
+    acceptedPrefix: prefix,
+    result: {
+      snapshot,
+      candidates: input.result.candidates,
+      fighting: { stepTick: q.stepTick, takeoffs, landings, contacts },
+    },
+  });
+}
+
+export function captureFightingSpatialCommitReceipt(
+  input: FightingSpatialCommitReceipt,
+  context: FightingReceiptValidationContext,
+): FightingSpatialCommitReceipt {
+  assertPureData(input);
+  assertPureData(context);
+  ownData(input);
+  const header = captureHeader(input);
+  requireEqual(
+    header,
+    captureHeader(context.header),
+    'Receipt belongs to another attempt',
+  );
+  const receiptId = text(input.receiptId),
+    acceptedProjectionId = text(input.acceptedProjectionId),
+    outputRevision = tick(input.outputRevision);
+  const output = context.output.snapshot,
+    ids = residentIds(output);
+  const publicTime = gameTimeMs(output.clocks.gameTimeMs);
+  if (publicTime < header.fromGameMs || publicTime > header.toGameMs)
+    throw new RangeError('Final public time outside original interval');
+  if (
+    acceptedProjectionId !== context.acceptedProjectionId ||
+    outputRevision !== output.revision ||
+    output.runId !== header.runId ||
+    output.clocks.tick !== header.stepTick
+  )
+    throw new RangeError('Receipt is not for this exact final output');
+  requireEqual(
+    input.residency,
+    context.residency,
+    'Receipt residency differs from accepted B history',
+  );
+  const residency =
+    input.residency === undefined
+      ? undefined
+      : captureResidency(input.residency, header, ids);
+  const initialPrefix =
+    context.initialPrefix === undefined
+      ? undefined
+      : captureFightingInitialPrefix(
+          context.initialPrefix,
+          header,
+          residency?.residency.initialActorIds ?? ids,
+        );
+  const snapshot = captureSpatialSnapshot(input.snapshot, header, ids);
+  denseArray(input.endpoints);
+  denseArray(input.poseContexts);
+  denseArray(context.acceptedPrefix);
+  const endpoints = input.endpoints.map(captureFightingClockPoint),
+    contexts = input.poseContexts.map(captureFightingPoseContext);
+  const prefix = context.acceptedPrefix.map(captureAcceptedPrefix);
+  bijection(
+    endpoints.map((p) => p.actorId),
+    ids,
+  );
+  bijection(
+    contexts.map((p) => p.actorId),
+    ids,
+  );
+  bijection(
+    prefix.map((p) => p.actor.actorId),
+    ids,
+  );
+  for (const point of endpoints) {
+    const actor = output.actors.find((a) => a.actorId === point.actorId),
+      pose = contexts.find((p) => p.actorId === point.actorId);
+    const accepted = prefix.find((p) => p.actor.actorId === point.actorId),
+      physical = snapshot.actors.find((a) => a.actorId === point.actorId);
+    if (!actor?.fightingClock || !pose || !accepted || !physical)
+      throw new RangeError('Missing final accepted actor authority');
+    const enteredAt =
+      residency?.enteredAt.get(point.actorId) ?? header.fromGameMs;
+    const admission = residency?.admission.get(point.actorId);
+    if (enteredAt === header.toGameMs && !admission)
+      throw new RangeError('Endpoint-only actor lacks reset admission');
+    const clock = captureFightingTransactionalClock(actor.fightingClock, {
+      runId: header.runId,
+      actorId: point.actorId,
+      stepTick: header.stepTick,
+      fromGameMs: enteredAt,
+      toGameMs: header.toGameMs,
+      queryMode: enteredAt === header.toGameMs ? 'settle' : 'interval',
+    });
+    if (admission && enteredAt === header.toGameMs)
+      requireEqual(
+        point,
+        admission,
+        'Endpoint-only resident differs from its exact reset point',
+      );
+    if (admission && clock.slices.length && clock.slices[0]?.fromMotionMs !== 0)
+      throw new RangeError(
+        'New resident cannot acquire pre-admission motion history',
+      );
+    if (
+      accepted.pose.source.kind !== 'query' ||
+      accepted.pose.source.transactionId !== header.transactionId
+    )
+      throw new RangeError(
+        'Final prefix must come from this transaction query',
+      );
+    if (publicTime < header.toGameMs) {
+      const tail = clock.slices.filter((s) => s.toGameMs > publicTime);
+      if (
+        !tail.length ||
+        tail.some(
+          (s) =>
+            !s.frozen ||
+            s.epochId !== point.epochId ||
+            s.toMotionMs !== point.motionMs,
+        )
+      )
+        throw new RangeError(
+          'Terminal receipt requires an explicit frozen tail through original E',
+        );
+    }
+    requireEqual(
+      point,
+      clock.endpoint,
+      'Receipt endpoint differs from final accepted clock',
+    );
+    requireEqual(
+      point,
+      accepted.endpoint,
+      'Receipt endpoint differs from last settled prefix',
+    );
+    requireEqual(
+      physical,
+      accepted.actor,
+      'Receipt substituted a speculative physical state',
+    );
+    if (
+      pose.runId !== header.runId ||
+      pose.stepTick !== header.stepTick ||
+      pose.epochId !== point.epochId ||
+      pose.commitId !== receiptId ||
+      pose.entryKind === 'initial-ready' ||
+      pose.entryKind !== accepted.pose.entryKind
+    )
+      throw new RangeError('Receipt pose context identity mismatch');
+    if (pose.entryKind === 'encounter-reset') {
+      const reset = residency?.residency.resets
+        .filter((r) => r.residentActorIds.includes(point.actorId))
+        .at(-1);
+      if (reset) {
+        const selected = reset.endpoints.find(
+          (p) => p.actorId === point.actorId,
+        );
+        const spawn = reset.readyDescriptor.actors.find(
+          (a) => a.actorId === point.actorId,
+        );
+        if (!selected || !spawn)
+          throw new RangeError('Missing accepted reset origin');
+        requireSameResetOrigin(
+          accepted.pose,
+          {
+            entryKind: 'encounter-reset',
+            facingBasis: spawn.facingBasis,
+            support: reset.readyDescriptor.supportPlane,
+          },
+          selected,
+        );
+      } else {
+        const installed = initialPrefix?.actors.find(
+          (p) => p.actor.actorId === point.actorId,
+        );
+        if (installed?.pose.source.kind !== 'installed')
+          throw new RangeError(
+            'Reset-origin receipt requires accepted reset history or installed initial authority',
+          );
+        requireSameResetOrigin(
+          accepted.pose,
+          installed.pose,
+          installed.endpoint,
+        );
+      }
+    }
+    requireEqual(
+      pose.facingBasis,
+      accepted.pose.facingBasis,
+      'Receipt basis changed',
+    );
+    requireEqual(
+      pose.acceptedRoot,
+      accepted.pose.acceptedRoot,
+      'Receipt root changed',
+    );
+    requireEqual(
+      pose.support,
+      accepted.pose.support,
+      'Receipt support changed',
+    );
+    requireEqual(
+      pose.incoming,
+      accepted.pose.incoming,
+      'Receipt incoming changed',
+    );
+    requireEqual(
+      pose.defeatEntry,
+      accepted.pose.defeatEntry,
+      'Receipt defeat entry changed',
+    );
+    if (actor.fightingPoseHold !== undefined) {
+      const hold = captureFightingPoseHold(actor.fightingPoseHold);
+      if (hold.displayEpochId !== point.epochId)
+        throw new RangeError('Held display has a different accepted epoch');
+    } else if (
+      actor.fighting !== undefined &&
+      (actor.fighting.phase !== point.phase ||
+        actor.fighting.posture !== point.posture)
+    )
+      throw new RangeError(
+        'Logical selection differs from accepted display without a hold',
+      );
+  }
+  return Object.freeze({
+    ...header,
+    receiptId,
+    acceptedProjectionId,
+    outputRevision,
+    ...(residency ? { residency: residency.residency } : {}),
+    snapshot,
+    endpoints: Object.freeze(endpoints),
+    poseContexts: Object.freeze(contexts),
+  });
+}
+function validateTransactionPort(
+  input: unknown,
+): asserts input is FightingSpatialTransactionPort {
+  validateTransactionHeader(input);
+  if (
+    !('project' in input) ||
+    typeof input.project !== 'function' ||
+    !('finish' in input) ||
+    typeof input.finish !== 'function' ||
+    !('abort' in input) ||
+    typeof input.abort !== 'function'
+  )
+    throw new RangeError('Incomplete explicit transaction capability');
+}
+export function isFightingPreparedSpatialCapability(
+  input: unknown,
+): input is FightingPreparedSpatialCapability {
+  try {
+    ownData(input);
+    return (
+      input.version === 1 &&
+      input.mode === 'battle-transaction-v1' &&
+      typeof input.bindPrepared === 'function'
+    );
+  } catch {
+    return false;
+  }
+}
+export function isFightingSpatialTransactionResult(
+  input: SpatialStepResult,
+): input is FightingSpatialTransactionResult {
+  try {
+    ownData(input);
+    if (input.kind !== 'fighting-spatial-transaction-v1') return false;
+    validateTransactionPort(input.transaction);
+    for (const [key, value] of Object.entries(input))
+      if (key !== 'transaction') assertPureData(value);
+    ownData(input.snapshot);
+    denseArray(input.snapshot.actors);
+    denseArray(input.candidates);
+    const ids = input.snapshot.actors.map((a) => actorId(text(a.actorId)));
+    captureSpatialSnapshot(input.snapshot, input.transaction, ids);
+    if (!hasInitialPrefixShape(input.initialPrefix)) return false;
+    captureFightingInitialPrefix(input.initialPrefix, input.transaction, ids);
+    uniqueIds(input.candidates.map((c) => c.contactId));
+    for (const candidate of input.candidates)
+      validateBattleCandidate(candidate, input.transaction, ids);
+    return true;
+  } catch {
+    return false;
+  }
+}
+export function captureFightingSpatialTransactionResult(
+  input: SpatialStepResult,
+  request: SpatialStepRequest,
+): FightingSpatialTransactionResult {
+  if (!isFightingSpatialTransactionResult(input))
+    throw new RangeError('Missing explicit fighting transaction envelope');
+  const original = input.transaction,
+    header = captureHeader(original);
+  requestMatches(header, request);
+  const ids = residentIds(request.snapshot),
+    snapshot = captureSpatialSnapshot(input.snapshot, header, ids);
+  denseArray(input.candidates);
+  for (const candidate of input.candidates)
+    validateBattleCandidate(candidate, header, ids);
+  uniqueIds(input.candidates.map((c) => c.contactId));
+  const project = original.project,
+    finish = original.finish,
+    abort = original.abort;
+  // Preserve the resource's receiver while snapshotting methods against alias substitution.
+  const transaction: FightingSpatialTransactionPort = Object.freeze({
+    ...header,
+    project: (query: FightingProjectInput) => project.call(original, query),
+    finish: (query: FightingFinishInput) => finish.call(original, query),
+    abort: () => abort.call(original),
+  });
+  return Object.freeze({
+    kind: 'fighting-spatial-transaction-v1',
+    initialPrefix: captureFightingInitialPrefix(
+      input.initialPrefix,
+      header,
+      ids,
+    ),
+    snapshot,
+    candidates: detachedData(input.candidates),
+    transaction,
+  });
+}
+function captureDiagnostic(input: FightingDiagnostic): FightingDiagnostic {
+  exactFields(input, ['name', 'message']);
+  if (typeof input.message !== 'string')
+    throw new RangeError('Diagnostic message must be text');
+  return Object.freeze({ name: text(input.name), message: input.message });
+}
+/**
+ * The tape preserves returned-but-invalid DTOs so replay can reproduce rejection.
+ * It validates data/envelopes, not the success of the recorded production operation.
+ * B checks query equality, attempt history and missing/leftover calls during replay.
+ */
+export function captureFightingSpatialTranscript(
+  input: FightingSpatialTranscript,
+): FightingSpatialTranscript {
+  assertPureData(input);
+  exactFields(input, [
+    'header',
+    'initialPrefix',
+    'proposal',
+    'interactions',
+    'terminal',
+  ]);
+  const header = captureHeader(input.header);
+  exactFields(input.proposal, ['snapshot', 'candidates']);
+  const initialPrefix = captureFightingInitialPrefix(
+    input.initialPrefix,
+    header,
+    input.proposal.snapshot.actors.map((actor) => actor.actorId),
+  );
+  denseArray(input.interactions);
+  ownData(input.terminal);
+  let terminalOperation = false;
+  for (const interaction of input.interactions) {
+    ownData(interaction);
+    ownData(interaction.outcome);
+    if (interaction.kind === 'project') {
+      if (terminalOperation)
+        throw new RangeError('Project after terminal operation');
+      exactFields(interaction, ['kind', 'input', 'outcome']);
+      requireEqual(
+        captureHeader(interaction.input),
+        header,
+        'Transcript project has foreign attempt',
+      );
+    } else if (interaction.kind === 'finish') {
+      if (terminalOperation) throw new RangeError('Repeated finish');
+      terminalOperation = true;
+      exactFields(interaction, ['kind', 'input', 'outcome']);
+      ownData(interaction.input);
+      text(interaction.input.acceptedProjectionId);
+    } else if (interaction.kind === 'abort') {
+      terminalOperation = true;
+      exactFields(interaction, ['kind', 'outcome']);
+    } else throw new RangeError('Unknown transcript operation');
+    if (
+      interaction.outcome.kind === 'threw' ||
+      interaction.outcome.kind === 'unrecordable-return'
+    ) {
+      exactFields(interaction.outcome, ['kind', 'diagnostic']);
+      if (interaction.outcome.kind === 'unrecordable-return')
+        captureUnrecordableDiagnostic(interaction.outcome.diagnostic);
+      else captureDiagnostic(interaction.outcome.diagnostic);
+    } else if (interaction.outcome.kind === 'returned') {
+      exactFields(interaction.outcome, ['kind', 'value']);
+      if (interaction.kind === 'abort' && interaction.outcome.value !== null)
+        throw new RangeError('Abort transcript must return null');
+    } else throw new RangeError('Unknown transcript outcome');
+  }
+  if (input.terminal.kind === 'success') {
+    exactFields(input.terminal, ['kind', 'receiptId']);
+    text(input.terminal.receiptId);
+    const last = input.interactions.at(-1);
+    if (
+      last?.kind !== 'finish' ||
+      last.outcome.kind !== 'returned' ||
+      last.outcome.value.receiptId !== input.terminal.receiptId
+    )
+      throw new RangeError(
+        'Successful tape must end with its returned receipt',
+      );
+  } else if (input.terminal.kind === 'aborted') {
+    exactFields(input.terminal, ['kind', 'diagnostic']);
+    if (input.terminal.diagnostic !== undefined)
+      captureDiagnostic(input.terminal.diagnostic);
+  } else throw new RangeError('Unknown transcript terminal');
+  return detachedData({
+    header,
+    initialPrefix,
+    proposal: input.proposal,
+    interactions: input.interactions,
+    terminal: input.terminal,
+  });
+}
+
+function captureActorIds(input: readonly ActorId[]): readonly ActorId[] {
+  uniqueIds(input);
+  const ids = input.map((id) => actorId(text(id)));
+  if (!ids.length) throw new RangeError('Empty resident roster');
+  return Object.freeze(ids);
+}
+function admittedResidents(
+  ids: readonly ActorId[],
+  descriptor: FightingReadyDescriptor,
+): void {
+  if (
+    ids.some((id) => !descriptor.actors.some((actor) => actor.actorId === id))
+  )
+    throw new RangeError(
+      'Resident not present in authenticated ready registry',
+    );
+}
+/** Shape narrowing only; the capture below performs all semantic validation. */
+function hasInitialPrefixShape(input: unknown): input is FightingInitialPrefix {
+  try {
+    ownData(input);
+    return (
+      typeof input.runId === 'string' &&
+      typeof input.bindingSetId === 'string' &&
+      Array.isArray(input.actors)
+    );
+  } catch {
+    return false;
+  }
+}
+export function captureFightingInitialPrefix(
+  input: FightingInitialPrefix,
+  header: FightingSpatialTransactionHeader,
+  residentActorIds: readonly ActorId[],
+): FightingInitialPrefix {
+  assertPureData(input);
+  ownData(input);
+  const identity = captureHeader(header),
+    run = runId(text(input.runId)),
+    bindingSetId = text(input.bindingSetId);
+  if (run !== identity.runId)
+    throw new RangeError('Foreign initial physical prefix');
+  const ids = captureActorIds(residentActorIds);
+  denseArray(input.actors);
+  const actors = input.actors.map((p) => {
+    const accepted = captureAcceptedPrefix(p),
+      poseContext = captureFightingPoseContext(p.poseContext);
+    const point = accepted.endpoint,
+      source = accepted.pose.source;
+    if (
+      source.kind === 'query' ||
+      source.commitId !== poseContext.commitId ||
+      point.runId !== run ||
+      point.stepTick >= identity.stepTick ||
+      point.atGameMs !== identity.fromGameMs ||
+      poseContext.runId !== run ||
+      poseContext.actorId !== point.actorId ||
+      poseContext.epochId !== point.epochId ||
+      poseContext.stepTick !== point.stepTick ||
+      poseContext.entryKind !== accepted.pose.entryKind
+    )
+      throw new RangeError(
+        'Initial sample does not match installed point/context/commit',
+      );
+    requireEqual(
+      poseContext.facingBasis,
+      accepted.pose.facingBasis,
+      'Initial basis mismatch',
+    );
+    requireEqual(
+      poseContext.acceptedRoot,
+      accepted.pose.acceptedRoot,
+      'Initial root mismatch',
+    );
+    requireEqual(
+      poseContext.support,
+      accepted.pose.support,
+      'Initial support mismatch',
+    );
+    requireEqual(
+      poseContext.incoming,
+      accepted.pose.incoming,
+      'Initial incoming mismatch',
+    );
+    requireEqual(
+      poseContext.defeatEntry,
+      accepted.pose.defeatEntry,
+      'Initial defeat mismatch',
+    );
+    if (source.kind === 'bootstrap') {
+      if (
+        point.stepTick !== 0 ||
+        point.atGameMs !== 0 ||
+        point.motionMs !== 0 ||
+        point.phase !== 'neutral' ||
+        point.posture !== 'standing' ||
+        point.activationId !== null ||
+        poseContext.entryKind !== 'initial-ready' ||
+        poseContext.defeatEntry !== undefined ||
+        poseContext.acceptedRoot.x !== 0 ||
+        poseContext.acceptedRoot.z !== 0 ||
+        poseContext.support.groundClearanceM !== 0 ||
+        !accepted.actor.grounded ||
+        accepted.actor.locomotion !== 'idle'
+      )
+        throw new RangeError('Invalid bootstrap sample provenance');
+      requireEqual(
+        accepted.actor.velocity,
+        { x: 0, y: 0, z: 0 },
+        'Bootstrap velocity must be zero',
+      );
+      requireEqual(
+        accepted.actor.facing,
+        poseContext.facingBasis,
+        'Bootstrap physical facing mismatch',
+      );
+    } else if (poseContext.entryKind === 'initial-ready')
+      throw new RangeError('Installed receipt cannot impersonate bootstrap');
+    return Object.freeze({ ...accepted, poseContext });
+  });
+  bijection(
+    actors.map((p) => p.actor.actorId),
+    ids,
+  );
+  const first = actors[0];
+  if (
+    !first ||
+    actors.some((p) => p.pose.source.kind !== first.pose.source.kind)
+  )
+    throw new RangeError('Mixed initial provenance origins');
+  if (first.pose.source.kind === 'bootstrap')
+    uniqueIds(actors.map((p) => p.poseContext.commitId));
+  else if (
+    actors.some((p) => p.poseContext.commitId !== first.poseContext.commitId)
+  )
+    throw new RangeError('Initial actors have different installed receipts');
+  return Object.freeze({
+    runId: run,
+    bindingSetId,
+    actors: Object.freeze(actors),
+  });
+}
+export function captureFightingEncounterReset(
+  input: FightingEncounterReset,
+  header: FightingSpatialTransactionHeader,
+): FightingEncounterReset {
+  assertPureData(input);
+  exactFields(input, [
+    'resetId',
+    'atGameMs',
+    'readyDescriptor',
+    'outgoingActorIds',
+    'residentActorIds',
+    'endpoints',
+  ]);
+  const identity = captureHeader(header),
+    resetId = text(input.resetId),
+    at = gameTimeMs(input.atGameMs);
+  const descriptor = captureFightingReadyDescriptor(input.readyDescriptor);
+  const outgoing = captureActorIds(input.outgoingActorIds),
+    ids = captureActorIds(input.residentActorIds);
+  admittedResidents(ids, descriptor);
+  if (at < identity.fromGameMs || at > identity.toGameMs)
+    throw new RangeError('Reset outside original transaction');
+  denseArray(input.endpoints);
+  const endpoints = input.endpoints.map(captureFightingClockPoint);
+  bijection(
+    endpoints.map((p) => p.actorId),
+    ids,
+  );
+  for (const point of endpoints)
+    if (
+      point.runId !== identity.runId ||
+      point.stepTick !== identity.stepTick ||
+      point.atGameMs !== at ||
+      point.clipId !== descriptor.clipId ||
+      point.motionMs !== 0 ||
+      point.activationId !== null ||
+      point.phase !== 'neutral' ||
+      point.posture !== 'standing'
+    )
+      throw new RangeError(
+        'Reset endpoints must be the canonical ready selection',
+      );
+  return Object.freeze({
+    resetId,
+    atGameMs: at,
+    readyDescriptor: descriptor,
+    outgoingActorIds: outgoing,
+    residentActorIds: ids,
+    endpoints: Object.freeze(endpoints),
+  });
+}
+function captureResidency(
+  input: FightingTransactionResidency,
+  header: FightingSpatialTransactionHeader,
+  finalIds: readonly ActorId[],
+): {
+  readonly residency: FightingTransactionResidency;
+  readonly enteredAt: ReadonlyMap<ActorId, GameTimeMs>;
+  readonly admission: ReadonlyMap<ActorId, FightingClockPoint>;
+} {
+  assertPureData(input);
+  exactFields(input, ['initialActorIds', 'resets']);
+  const initialActorIds = captureActorIds(input.initialActorIds);
+  denseArray(input.resets);
+  if (!input.resets.length)
+    throw new RangeError(
+      'Residency exception requires explicit accepted reset history',
+    );
+  const resets = input.resets.map((reset) =>
+    captureFightingEncounterReset(reset, header),
+  );
+  uniqueIds(resets.map((reset) => reset.resetId));
+  const enteredAt = new Map(
+    initialActorIds.map((id) => [id, header.fromGameMs]),
+  );
+  const admission = new Map<ActorId, FightingClockPoint>(),
+    retired = new Set<ActorId>();
+  let residents = initialActorIds,
+    previous = header.fromGameMs;
+  const descriptor = resets[0]?.readyDescriptor;
+  for (const reset of resets) {
+    if (reset.atGameMs < previous)
+      throw new RangeError('Reset history is out of order');
+    requireEqual(
+      reset.readyDescriptor,
+      descriptor,
+      'Reset history changed its admitted ready registry',
+    );
+    bijection(reset.outgoingActorIds, residents);
+    for (const id of residents)
+      if (!reset.residentActorIds.includes(id)) retired.add(id);
+    for (const id of reset.residentActorIds) {
+      if (retired.has(id))
+        throw new RangeError('Reset resurrected a retired actor identity');
+      if (!residents.includes(id)) {
+        enteredAt.set(id, reset.atGameMs);
+        const point = reset.endpoints.find((p) => p.actorId === id);
+        if (!point) throw new RangeError('Missing reset admission point');
+        admission.set(id, point);
+      }
+    }
+    residents = reset.residentActorIds;
+    previous = reset.atGameMs;
+  }
+  bijection(residents, finalIds);
+  return {
+    residency: Object.freeze({
+      initialActorIds,
+      resets: Object.freeze(resets),
+    }),
+    enteredAt,
+    admission,
+  };
+}
+function validateResetPhysical(
+  prefix: FightingPhysicalActorPrefix,
+  reset: FightingEncounterReset,
+): void {
+  const spawn = reset.readyDescriptor.actors.find(
+    (a) => a.actorId === prefix.actor.actorId,
+  );
+  if (!spawn) throw new RangeError('Reset actor has no admitted spawn');
+  requireEqual(
+    prefix.actor.position,
+    spawn.position,
+    'Reset physical position must be its declared unswept spawn',
+  );
+  requireEqual(
+    prefix.actor.facing,
+    spawn.facingBasis,
+    'Reset physical facing differs',
+  );
+  requireEqual(
+    prefix.actor.velocity,
+    { x: 0, y: 0, z: 0 },
+    'Reset velocity must be zero',
+  );
+  requireEqual(
+    prefix.pose.facingBasis,
+    spawn.facingBasis,
+    'Reset pose facing differs',
+  );
+  requireEqual(
+    prefix.pose.acceptedRoot,
+    { x: 0, z: 0 },
+    'Reset epoch root must be zero',
+  );
+  requireEqual(
+    prefix.pose.support,
+    { ...reset.readyDescriptor.supportPlane, groundClearanceM: 0 },
+    'Reset support must be the declared plane',
+  );
+  if (
+    !prefix.actor.grounded ||
+    prefix.actor.locomotion !== 'idle' ||
+    prefix.pose.entryKind !== 'encounter-reset' ||
+    prefix.pose.incoming !== undefined ||
+    prefix.pose.defeatEntry !== undefined
+  )
+    throw new RangeError(
+      'Reset must return ready provenance without incoming ancestry',
+    );
+}
+
+/** Origin identity is immutable; current motion time/root/clearance and commit ID are not the origin. */
+function requireSameResetOrigin(
+  current: FightingPhysicalPosePrefix,
+  origin: {
+    readonly entryKind: FightingPoseContext['entryKind'];
+    readonly facingBasis: Vector3;
+    readonly support: Pick<FightingSupportContext, 'supportId' | 'planeY'>;
+  },
+  identity: Pick<
+    FightingClockPoint,
+    'actorId' | 'epochId' | 'clipId' | 'activationId'
+  >,
+): void {
+  if (
+    origin.entryKind !== 'encounter-reset' ||
+    current.source.actorId !== identity.actorId ||
+    current.source.epochId !== identity.epochId ||
+    current.source.clipId !== identity.clipId ||
+    current.source.activationId !== identity.activationId
+  )
+    throw new RangeError(
+      'New reset provenance requires an explicit accepted reset',
+    );
+  requireEqual(
+    current.facingBasis,
+    origin.facingBasis,
+    'Reset epoch changed its immutable facing origin',
+  );
+  if (
+    current.support.supportId !== origin.support.supportId ||
+    current.support.planeY !== origin.support.planeY
+  )
+    throw new RangeError('Reset epoch changed its immutable support origin');
+}
+function captureUnrecordableDiagnostic(
+  input: FightingDiagnostic,
+): FightingDiagnostic {
+  const diagnostic = captureDiagnostic(input);
+  if (
+    diagnostic.name.length > FIGHTING_UNRECORDABLE_RETURN_NAME_MAX_CODE_UNITS ||
+    diagnostic.message.length >
+      FIGHTING_UNRECORDABLE_RETURN_MESSAGE_MAX_CODE_UNITS
+  )
+    throw new RangeError(
+      'Unrecordable-return diagnostic exceeds UTF-16 transport bounds',
+    );
+  return diagnostic;
 }

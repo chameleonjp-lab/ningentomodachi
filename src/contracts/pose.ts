@@ -1,3 +1,4 @@
+import type { FightingPreparedSpatialCapability } from './fighting';
 import {
   type DurationMs,
   durationMs,
@@ -91,6 +92,8 @@ export interface PoseDisplayCapability {
   readonly startup?: StartupTimelinePolicy;
 }
 export interface PoseSpatialCapability extends PoseDisplayCapability {
+  /** Explicit NON-DTO prepared resource binder; not implicit animation admission. */
+  readonly fighting?: FightingPreparedSpatialCapability;
   /** Once per run, after catalog.prepare and before AssetsReady. Preserve pending
    * residency epochs; reject differing rebinding. Provider ownership stays in catalog. */
   bindPreparedCatalog(catalog: PoseCatalogBindings): void;
