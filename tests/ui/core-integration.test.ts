@@ -124,7 +124,7 @@ test('held movement and competing action intents follow Core arbitration; pause 
   await start(f);
   pointer(f.control('move'), 'pointerdown', 1);
   f.rotateBasis();
-  pointer(f.control('move'), 'pointermove', 1, 144, 436);
+  pointer(f.control('move'), 'pointermove', 1, 144, 500);
   f.game.advance(10);
   f.tap('jump', 2);
   f.tap('punch', 3);
@@ -132,7 +132,11 @@ test('held movement and competing action intents follow Core arbitration; pause 
   expect(f.sessions).toHaveLength(1);
   expect(
     f.intents.some(
-      (i) => i.type === 'MoveRequested' && i.basisRevision === 1 && i.z > 0,
+      (i) =>
+        i.type === 'MoveRequested' &&
+        i.basisRevision === 1 &&
+        i.x > 0 &&
+        i.z === 0,
     ),
   ).toBe(true);
   expect(f.events.filter((e) => e.type === 'AttackAccepted')).toHaveLength(1);

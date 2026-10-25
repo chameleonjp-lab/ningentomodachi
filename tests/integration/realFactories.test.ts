@@ -355,7 +355,7 @@ test.each([false, true])(
       const white = f.rigs.get('white');
       if (!swipe || !punch || !white) throw new Error('Missing controls/rig');
       pointer(swipe, 'pointerdown', 1, 100, 200);
-      pointer(document, 'pointermove', 1, 100, 136);
+      pointer(document, 'pointermove', 1, 164, 200);
       if (preHeld) game.advance(20);
       const atAttack = white.getWorldPosition(new Vector3());
       punch.click();

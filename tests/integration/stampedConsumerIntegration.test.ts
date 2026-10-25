@@ -5352,6 +5352,7 @@ test('admitted actual source scene join uses 102 all-in units across ten noncomb
                   walk: 'Walk',
                   run: 'Run',
                   jump: 'Jump',
+                  crouch: 'CrouchMove',
                 });
                 expect(pack.recoveryCapability).toEqual(
                   RECOVERY_FRAME_CAPABILITY,
@@ -6460,6 +6461,7 @@ test('admitted actual source scene progression uses 338 units across 69 frames a
                   walk: 'Walk',
                   run: 'Run',
                   jump: 'Jump',
+                  crouch: 'CrouchMove',
                 });
                 expect(pack.recoveryCapability).toEqual(
                   RECOVERY_FRAME_CAPABILITY,
