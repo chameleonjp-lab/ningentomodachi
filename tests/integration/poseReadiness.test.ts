@@ -250,3 +250,17 @@ test('startup readiness rejects deterministic-only display before binding or rea
   );
   h.game.dispose();
 });
+
+test('invalid optional crouch binding rejects before readiness or pose binding', async () => {
+  const h = harness();
+  (h.bindings.locomotion as { crouch?: ReturnType<typeof clipId> }).crouch =
+    clipId('missing-crouch');
+  const loading = h.game.start();
+  h.release();
+  await expect(loading).rejects.toThrow(/crouch/i);
+  expect(h.order).not.toContain('bind');
+  expect(h.fixture.outputs.some((o) => o.snapshot.phase === 'ready')).toBe(
+    false,
+  );
+  h.game.dispose();
+});

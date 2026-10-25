@@ -80,7 +80,8 @@ function isGameplay(command: GameCommand): command is GameplayCommand {
   return (
     command.type === 'AttackRequested' ||
     command.type === 'JumpRequested' ||
-    command.type === 'MoveRequested'
+    command.type === 'MoveRequested' ||
+    command.type === 'CrouchRequested'
   );
 }
 export function createGame<Node>(
@@ -264,7 +265,11 @@ export function createGame<Node>(
               : 0),
       );
     const commands = queued.filter((command) => {
-      if (command.type !== 'MoveRequested') return true;
+      if (
+        command.type !== 'MoveRequested' &&
+        command.type !== 'CrouchRequested'
+      )
+        return true;
       const basis = run.sessions.get(command.movementSessionId);
       return basis?.revision === command.basisRevision;
     });
@@ -297,6 +302,7 @@ export function createGame<Node>(
       'MovementSessionEnded',
       'InputsReleased',
       'MoveRequested',
+      'CrouchRequested',
       'JumpRequested',
       'AttackRequested',
     ];
@@ -345,6 +351,13 @@ export function createGame<Node>(
         (!Number.isFinite(command.x) ||
           !Number.isFinite(command.z) ||
           Math.hypot(command.x, command.z) > 1 + 1e-7)
+      )
+        return;
+      if (
+        command.type === 'CrouchRequested' &&
+        (typeof command.active !== 'boolean' ||
+          run.sessions.get(command.movementSessionId)?.revision !==
+            command.basisRevision)
       )
         return;
       run.seen.add(command.input.commandId);
@@ -562,7 +575,8 @@ export function createGame<Node>(
             for (let i = run.queue.length - 1; i >= 0; i--) {
               const command = run.queue[i];
               if (
-                command?.type === 'MoveRequested' &&
+                (command?.type === 'MoveRequested' ||
+                  command?.type === 'CrouchRequested') &&
                 command.movementSessionId === sessionId
               )
                 run.queue.splice(i, 1);
@@ -686,6 +700,11 @@ export function createGame<Node>(
           for (const mode of ['idle', 'walk', 'run', 'jump'] as const)
             if (!bindings.has(descriptor.locomotion?.[mode]))
               throw new Error('Missing pose locomotion binding');
+          if (
+            'crouch' in descriptor.locomotion &&
+            !bindings.has(descriptor.locomotion.crouch as ClipId)
+          )
+            throw new Error('Missing pose crouch locomotion binding');
           for (const motion of catalog.list())
             if (bindings.get(motion.clipId)?.durationMs !== motion.durationMs)
               throw new Error('Missing or mismatched pose attack binding');

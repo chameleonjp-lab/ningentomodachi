@@ -22,6 +22,212 @@ function pointer(
   target.dispatchEvent(event);
   return event;
 }
+
+test.each(['move-first', 'attack-first'])(
+  'two fingers keep ownership across control borders in %s order',
+  (order) => {
+    const f = lifecycleFixture();
+    try {
+      if (order === 'attack-first') pointer(f.punch, 'pointerdown', 2);
+      pointer(f.move, 'pointerdown', 1, 100, 100);
+      pointer(f.punch, 'pointermove', 1, 100, 132);
+      if (order === 'move-first') pointer(f.punch, 'pointerdown', 2);
+      pointer(f.move, 'pointermove', 2, 100, 0);
+      f.punch.dispatchEvent(
+        new MouseEvent('click', { detail: 1, bubbles: true }),
+      );
+      expect(
+        f.commands.filter((c) => c.type === 'AttackRequested'),
+      ).toHaveLength(1);
+      expect(f.commands.filter((c) => c.type === 'JumpRequested')).toEqual([]);
+      expect(
+        f.commands.filter((c) => c.type === 'CrouchRequested'),
+      ).toHaveLength(1);
+      pointer(document.body, 'pointerup', 2);
+      expect(f.ended).toEqual([]);
+      pointer(f.kick, 'pointermove', 1, 100, 100);
+      expect(f.commands.at(-1)).toMatchObject({
+        type: 'CrouchRequested',
+        active: false,
+      });
+      pointer(document.body, 'pointerup', 1);
+      expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'released' }]);
+    } finally {
+      f.cleanup();
+    }
+  },
+);
+
+test('a repeated down on another control cannot steal the original finger capture', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.move, 'pointerdown', 1, 100, 100);
+    pointer(f.punch, 'pointerdown', 1);
+    expect(f.captures.get(1)).toBe(f.move);
+    pointer(f.punch, 'lostpointercapture', 1);
+    pointer(document.body, 'pointermove', 1, 100, 68);
+    expect(f.commands.filter((c) => c.type === 'JumpRequested')).toHaveLength(
+      1,
+    );
+    expect(f.commands.filter((c) => c.type === 'AttackRequested')).toEqual([]);
+    pointer(document.body, 'pointerup', 1);
+    expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'released' }]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('lost attack capture preserves crouch while lost movement capture ends only its session', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    pointer(document.body, 'pointermove', 1, 0, 32);
+    pointer(f.punch, 'pointerdown', 2);
+    f.captures.delete(2);
+    pointer(f.punch, 'lostpointercapture', 2);
+    expect(f.ended).toEqual([]);
+    pointer(document.body, 'pointermove', 1, 0, 40);
+    expect(f.commands.filter((c) => c.type === 'CrouchRequested')).toHaveLength(
+      1,
+    );
+    f.captures.delete(1);
+    pointer(f.move, 'lostpointercapture', 1);
+    pointer(f.move, 'lostpointercapture', 1);
+    expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'cancelled' }]);
+    expect(f.releases).toEqual([]);
+    expect(f.commands.filter((c) => c.type === 'CrouchRequested')).toHaveLength(
+      1,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('lifting movement leaves the attack finger owned and unable to trigger swipes', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.punch, 'pointerdown', 2);
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    pointer(document.body, 'pointermove', 1, 0, 32);
+    pointer(document.body, 'pointerup', 1);
+    const count = f.commands.length;
+    expect(f.captures.get(2)).toBe(f.punch);
+    pointer(f.move, 'pointermove', 2, 0, -64);
+    expect(f.commands).toHaveLength(count);
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    pointer(document.body, 'pointerup', 2);
+    expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'released' }]);
+    pointer(f.punch, 'pointermove', 1, 0, -32);
+    expect(f.commands.filter((c) => c.type === 'JumpRequested')).toHaveLength(
+      1,
+    );
+    expect(f.commands.filter((c) => c.type === 'AttackRequested')).toHaveLength(
+      1,
+    );
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('nested DOM return to deadzone supersedes the outer down swipe without losing capture', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    let returned = false;
+    f.input.subscribe((command) => {
+      if (command.type === 'MoveRequested' && !returned) {
+        returned = true;
+        pointer(f.move, 'pointermove', 1, 0, 0);
+      }
+    });
+    pointer(f.move, 'pointermove', 1, 0, 32);
+    pointer(f.move, 'pointermove', 1, 0, 0);
+    expect(
+      f.commands
+        .filter((c) => c.type === 'CrouchRequested')
+        .map((c) => c.active),
+    ).toEqual([false]);
+    expect(f.captures.get(1)).toBe(f.move);
+    pointer(document.body, 'pointerup', 1);
+    expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'released' }]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('nested DOM down crossing supersedes an outer deadzone release', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    pointer(f.move, 'pointermove', 1, 0, 32);
+    let recrossed = false;
+    f.input.subscribe((command) => {
+      if (command.type === 'MoveRequested' && !recrossed) {
+        recrossed = true;
+        pointer(f.move, 'pointermove', 1, 0, 32);
+      }
+    });
+    pointer(f.move, 'pointermove', 1, 0, 0);
+    expect(
+      f.commands
+        .filter((c) => c.type === 'CrouchRequested')
+        .map((c) => c.active),
+    ).toEqual([true, true]);
+    pointer(document.body, 'pointerup', 1);
+    expect(f.ended).toEqual([{ id: `${run}:gesture:1`, reason: 'released' }]);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('pointercancel clears both fingers without echoing a crouch release command', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.move, 'pointerdown', 1, 0, 0);
+    pointer(document.body, 'pointermove', 1, 0, 32);
+    pointer(f.punch, 'pointerdown', 2);
+    const count = f.commands.length;
+    pointer(f.punch, 'pointercancel', 2);
+    expect(f.releases).toEqual(['pointer-cancel']);
+    expect(f.released).toEqual([1, 2]);
+    expect(f.ended).toEqual([]);
+    pointer(document.body, 'pointermove', 1, 0, -32);
+    expect(f.commands).toHaveLength(count);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('keyboard and assistive detail-zero activation still fire once per activation', () => {
+  const f = lifecycleFixture();
+  try {
+    pointer(f.jump, 'pointerdown', 2);
+    pointer(document.body, 'pointerup', 2);
+    f.jump.dispatchEvent(new MouseEvent('click', { detail: 1, bubbles: true }));
+    expect(f.commands.filter((c) => c.type === 'JumpRequested')).toHaveLength(
+      1,
+    );
+    const repeated = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    f.jump.dispatchEvent(repeated);
+    expect(repeated.defaultPrevented).toBe(true);
+    f.jump.click();
+    f.punch.click();
+    f.kick.click();
+    expect(f.commands.map((c) => c.type)).toEqual([
+      'JumpRequested',
+      'JumpRequested',
+      'AttackRequested',
+      'AttackRequested',
+    ]);
+  } finally {
+    f.cleanup();
+  }
+});
 test('real DOM listeners preserve multi-touch, suppress only gameplay defaults, skip synthetic click duplicates and clean up', () => {
   const root = document.createElement('section');
   document.body.append(root);
@@ -228,6 +434,11 @@ for (const interruption of ['blur', 'pagehide', 'hidden'] as const) {
     try {
       pointer(f.move, 'pointerdown', 1);
       pointer(f.jump, 'pointerdown', 2);
+      pointer(document.body, 'pointermove', 1, 20, 62);
+      expect(f.commands.at(-1)).toMatchObject({
+        type: 'CrouchRequested',
+        active: true,
+      });
       if (interruption === 'hidden') {
         Object.defineProperty(document, 'hidden', {
           configurable: true,
@@ -246,6 +457,8 @@ for (const interruption of ['blur', 'pagehide', 'hidden'] as const) {
       expect(f.commands.map((command) => command.type)).toEqual([
         'MoveRequested',
         'JumpRequested',
+        'MoveRequested',
+        'CrouchRequested',
       ]);
       pointer(f.move, 'pointerdown', 1);
       pointer(document.body, 'pointermove', 1, 84, 30);
@@ -254,7 +467,7 @@ for (const interruption of ['blur', 'pagehide', 'hidden'] as const) {
         x: 1,
         z: 0,
       });
-      expect(f.commands[2]).toMatchObject({
+      expect(f.commands[4]).toMatchObject({
         movementSessionId: `${run}:gesture:2`,
       });
     } finally {

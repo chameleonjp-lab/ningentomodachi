@@ -8,6 +8,7 @@ import {
   MOTION_SPACE,
 } from '../../src/contracts';
 import type { ActorTrajectory } from '../../src/world/contact-candidates';
+import { requireValue } from '../../src/core/invariant';
 import { actor, run } from './fixtures';
 
 function trajectories(): ActorTrajectory[] {
@@ -309,4 +310,106 @@ test('motor and launched car results are independent of the melee hurt query', a
   }));
   vi.resetModules();
   expect(await evaluate()).toStrictEqual(baseline);
+});
+
+test('crouch capsule lowers only the combat top to 1.20 metres', async () => {
+  const { combatHurt } = await import('../../src/world/combat-hurt');
+  expect(combatHurt({ x: 2, y: 3, z: 4 }, true)).toEqual({
+    kind: 'capsule',
+    start: { x: 2, y: 3.35, z: 4 },
+    end: { x: 2, y: 3.85, z: 4 },
+    radiusM: 0.35,
+  });
+});
+function strikeAt(
+  height: number,
+  crouching: boolean,
+  grounded = true,
+  attacking = false,
+): ActorTrajectory[] {
+  return trajectories().map((t, i) => ({
+    ...t,
+    state: {
+      ...t.state,
+      crouching: i === 1 && crouching,
+      attack:
+        i === 1 && attacking
+          ? {
+              ...requireValue(requireValue(trajectories()[0]).state.attack),
+              activationId: attackActivationId('target-attack'),
+              impactBindings: [
+                { impactIndex: 0, impactId: impactId('target-impact') },
+              ],
+            }
+          : t.state.attack,
+    },
+    actor: {
+      ...t.actor,
+      grounded: i === 1 ? grounded : t.actor.grounded,
+      locomotion:
+        i === 1 && crouching && grounded ? 'crouch' : t.actor.locomotion,
+    },
+    sample: t.sample && {
+      ...t.sample,
+      hitVolumeSegments: t.sample.hitVolumeSegments.map((h) => ({
+        ...h,
+        from: {
+          kind: 'sphere' as const,
+          center: { x: 0, y: height, z: 0 },
+          radiusM: 0.1,
+        },
+        to: {
+          kind: 'sphere' as const,
+          center: { x: 0, y: height, z: 3 },
+          radiusM: 0.1,
+        },
+      })),
+    },
+  }));
+}
+test('same high strike hits standing but misses crouch while low strike still hits crouch', async () => {
+  const { combatContacts } = await import('../../src/world/contact-candidates');
+  const hit = (
+    height: number,
+    crouching: boolean,
+    grounded = true,
+    attacking = false,
+  ) =>
+    combatContacts(run, strikeAt(height, crouching, grounded, attacking)).some(
+      (c) => c.kind === 'body-hit',
+    );
+  expect(hit(1.65, false)).toBe(true);
+  expect(hit(1.65, true)).toBe(false);
+  expect(hit(0.65, true)).toBe(true);
+  expect(hit(1.65, true, false)).toBe(true);
+  expect(hit(1.65, true, true, true)).toBe(true);
+});
+test('crouch switch boundaries do not interpolate a fictional standing-to-low hurt capsule', async () => {
+  const { combatContacts } = await import('../../src/world/contact-candidates');
+  const crouch = strikeAt(1.4, true),
+    standing = strikeAt(1.4, false);
+  // Both intervals carry an already finalized stance. No old capsule endpoint
+  // is blended into the next interval, even at the exact shared boundary.
+  const crop = (actors: ActorTrajectory[], from: number, to: number) =>
+    actors.map((t) => ({
+      ...t,
+      path: [
+        { at: from, position: requireValue(t.path[0]).position },
+        { at: to, position: requireValue(t.path.at(-1)).position },
+      ],
+      sample: t.sample && {
+        ...t.sample,
+        fromMs: durationMs(from),
+        toMs: durationMs(to),
+        hitVolumeSegments: t.sample.hitVolumeSegments.map((h) => ({
+          ...h,
+          fromMs: durationMs(from),
+          toMs: durationMs(to),
+        })),
+      },
+    }));
+  const first = combatContacts(run, crop(standing, 0, 10));
+  const second = combatContacts(run, crop(crouch, 10, 20));
+  expect(first.some((c) => c.kind === 'body-hit')).toBe(true);
+  expect(second.some((c) => c.kind === 'body-hit')).toBe(false);
 });

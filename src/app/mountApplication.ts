@@ -30,7 +30,7 @@ export function mountApplication(
   surface.setAttribute('aria-label', 'ニンゲントモダチ');
   const style = root.ownerDocument.createElement('style');
   style.textContent =
-    '[data-game-surface]{position:relative;width:100%;height:100vh;height:100dvh;overflow:hidden;background:#101a30}[data-game-surface]>canvas{position:absolute;inset:0;display:block;z-index:0}[data-game-surface]>.nt-interface{z-index:1}.nt-asset-gate{position:absolute;z-index:2;top:8px;left:8px;right:8px;margin:0;padding:8px;color:#fff;background:#101a30;font:14px/1.4 system-ui;pointer-events:none}';
+    '[data-game-surface]{position:relative;width:100%;height:100vh;height:100dvh;overflow:hidden;background:#101a30}[data-game-surface]>canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}[data-game-surface]>.nt-interface{z-index:1}.nt-asset-gate{position:absolute;z-index:2;top:8px;left:8px;right:8px;margin:0;padding:8px;color:#fff;background:#101a30;font:14px/1.4 system-ui;pointer-events:none}';
   surface.append(style);
   if (!options.configuration) {
     const notice = root.ownerDocument.createElement('p');

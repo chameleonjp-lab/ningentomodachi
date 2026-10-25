@@ -20,7 +20,7 @@ export interface SpatialActor {
   readonly facing: Vector3;
   readonly velocity: Vector3;
   readonly grounded: boolean;
-  readonly locomotion: 'idle' | 'walk' | 'run' | 'jump';
+  readonly locomotion: 'idle' | 'walk' | 'run' | 'jump' | 'crouch';
   /** Future qualified v1 mode requires this after readiness. Loading/legacy may omit.
    * Declaration only: current runtime remains legacy and produces no pose stamps. */
   readonly pose?: ActorPoseStamp;

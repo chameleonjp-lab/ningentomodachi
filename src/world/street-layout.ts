@@ -6,7 +6,14 @@ import {
   type WorldObjectId,
   worldObjectId,
 } from '../contracts';
+export interface BattleStage {
+  readonly mode: 'four-battle';
+  readonly viewDepth: Vector3;
+  readonly framingHeightM: number;
+  readonly backdropMinX: number;
+}
 export interface StreetLayout {
+  readonly battleStage?: BattleStage;
   readonly actorSpawns: Readonly<Record<ActorColor, Vector3>>;
   readonly vehicles: readonly {
     readonly vehicleId: VehicleId;
@@ -46,5 +53,28 @@ export function createParisStreetLayout(): StreetLayout {
     vehicles,
     objects,
     bounds: { min: { x: -6.5, y: 0, z: -6 }, max: { x: 6.5, y: 12, z: 68 } },
+  };
+}
+
+/** Combat geometry is separate from the retained legacy street layout. */
+export function createParisBattleLayout(): StreetLayout {
+  const angle = (12 * Math.PI) / 180;
+  return {
+    actorSpawns: {
+      white: { x: 0, y: 0, z: -1.4 },
+      blue: { x: 0, y: 0, z: 1.4 },
+      green: { x: 0, y: 0, z: 1.4 },
+      yellow: { x: 0, y: 0, z: 1.4 },
+      black: { x: 0, y: 0, z: 1.4 },
+    },
+    vehicles: [],
+    objects: [],
+    bounds: { min: { x: -2, y: 0, z: -5 }, max: { x: 2, y: 12, z: 5 } },
+    battleStage: {
+      mode: 'four-battle',
+      viewDepth: { x: Math.cos(angle), y: 0, z: -Math.sin(angle) },
+      framingHeightM: 2.1,
+      backdropMinX: 7,
+    },
   };
 }

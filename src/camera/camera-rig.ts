@@ -159,15 +159,22 @@ function cornerConstraints(
   }
   return { required, contained };
 }
-function bodyCorners(actor: SpatialActor): Vector3[] {
+function bodyCorners(
+  actor: SpatialActor,
+  height = 1.85,
+  halfWidth = 0.35,
+): Vector3[] {
   const result: Vector3[] = [];
-  for (const x of [-0.35, 0.35])
-    for (const y of [0, 1.85])
-      for (const z of [-0.35, 0.35])
+  for (const x of [-halfWidth, halfWidth])
+    for (const y of [0, height])
+      for (const z of [-halfWidth, halfWidth])
         result.push(add(actor.position, v(x, y, z)));
   return result;
 }
 export function createCameraRig(layout: StreetLayout) {
+  const stage = layout.battleStage;
+  const corners = (actor: SpatialActor) =>
+    bodyCorners(actor, stage?.framingHeightM ?? 1.85, stage ? 0.5 : 0.35);
   let current: CameraFrame | undefined,
     combatPreference: number | undefined,
     duelAxis = v(0, 0, 1);
@@ -188,7 +195,7 @@ export function createCameraRig(layout: StreetLayout) {
       const alpha = current
         ? 1 - Math.exp(-Math.min(elapsedMs, 1000) / 180)
         : 1;
-      const desiredPreference = b ? 1 : 0;
+      const desiredPreference = stage || b ? 1 : 0;
       // Blend preference, not the safety-adjusted eye. Initialization is exact;
       // transitions approach the endpoints exponentially without a finite snap.
       // Zero elapsed preserves both preferred pitch and minimum range, while
@@ -206,7 +213,7 @@ export function createCameraRig(layout: StreetLayout) {
                 (COMBAT_PITCH - EXPLORATION_PITCH) * preference,
             );
       let right = v(1, 0, 0),
-        target = add(a.position, v(0, 1, 0));
+        target = add(a.position, v(0, stage ? stage.framingHeightM / 2 : 1, 0));
       if (b) {
         const delta = sub(b.position, a.position);
         if (Math.hypot(delta.x, delta.z) > 0.1) {
@@ -215,10 +222,17 @@ export function createCameraRig(layout: StreetLayout) {
           duelAxis = axis;
         }
         right = duelAxis;
-        target = add(mul(add(a.position, b.position), 0.5), v(0, 1, 0));
+        target = add(
+          mul(add(a.position, b.position), 0.5),
+          v(0, stage ? stage.framingHeightM / 2 : 1, 0),
+        );
       }
       const depth = v(-right.z, 0, right.x);
-      const desiredDepth = b ? depth : v(0, 0, 1);
+      const desiredDepth = stage
+        ? unit(v(stage.viewDepth.x, 0, stage.viewDepth.z))
+        : b
+          ? depth
+          : v(0, 0, 1);
       const aspect = Math.max(
         0.2,
         viewport.widthCssPx / Math.max(1, viewport.heightCssPx),
@@ -290,7 +304,7 @@ export function createCameraRig(layout: StreetLayout) {
       // corrections. Angular interpolation has no zero-length midpoint, even
       // when transitioning between opposing views.
       let yaw = Math.atan2(desiredDepth.x, desiredDepth.z);
-      if (current) {
+      if (current && !stage) {
         const priorYaw = Math.atan2(current.depth.x, current.depth.z);
         const delta = Math.atan2(
           Math.sin(yaw - priorYaw),
@@ -309,23 +323,30 @@ export function createCameraRig(layout: StreetLayout) {
       const fallbackDistance = Math.min(MAX_DISTANCE, distance * 1.06);
       const points = framingPoints.length
         ? framingPoints
-        : [...bodyCorners(a), ...(b ? bodyCorners(b) : [])];
+        : [...corners(a), ...(b ? corners(b) : [])];
       // Each trial is immutable within this update. Reuse exact solved eyes,
       // especially the accepted range when damping requests that same range.
       const solvedRanges = new Map<
         number,
         ReturnType<typeof unobstructedEye>
       >();
+      // The combat stage is open on the chosen camera side. Walking bounds are
+      // never an eye budget, and a blocked stage stays low/marked constrained
+      // rather than silently buying an overhead view as the legacy street can.
+      const budget = (d: number) =>
+        stage
+          ? d * horizontalRatio
+          : horizontalBudget(focus, actualDepth, layout, d, horizontalRatio);
       const solve = (d: number) => {
         const prior = solvedRanges.get(d);
         if (prior) return prior;
-        const result = unobstructedEye(
-          focus,
-          actualDepth,
-          d,
-          horizontalBudget(focus, actualDepth, layout, d, horizontalRatio),
-          opaqueBoxes,
+        const eye = add(
+          sub(focus, mul(actualDepth, budget(d))),
+          v(0, d * Math.sin(COMBAT_PITCH), 0),
         );
+        const result = stage
+          ? { eye, constrained: !eyeIsClear(focus, eye, opaqueBoxes) }
+          : unobstructedEye(focus, actualDepth, d, budget(d), opaqueBoxes);
         solvedRanges.set(d, result);
         return result;
       };
@@ -415,13 +436,7 @@ export function createCameraRig(layout: StreetLayout) {
           // search. Extending its ray still needs a fresh complete sweep: a
           // farther obstacle may block it, in which case use the verified fit.
           const horizontal = Math.min(
-            horizontalBudget(
-              focus,
-              actualDepth,
-              layout,
-              damped,
-              horizontalRatio,
-            ),
+            budget(damped),
             (Math.hypot(verified.eye.x - focus.x, verified.eye.z - focus.z) *
               damped) /
               verified.distance,
@@ -449,7 +464,7 @@ export function createCameraRig(layout: StreetLayout) {
       const frame: CameraFrame = {
         position: eye,
         target: focus,
-        right: v(-actualDepth.z, 0, actualDepth.x),
+        right: unit(v(-(focus.z - eye.z), 0, focus.x - eye.x)),
         depth: actualDepth,
         fovDegrees: 50,
         constrained,
@@ -458,7 +473,7 @@ export function createCameraRig(layout: StreetLayout) {
         presentation?.bounds ??
         [a, ...(b ? [b] : [])].map((actor) => ({
           actorId: actor.actorId,
-          corners: framingPoints.length ? framingPoints : bodyCorners(actor),
+          corners: framingPoints.length ? framingPoints : corners(actor),
           kind: framingPoints.length
             ? ('pose-bounds' as const)
             : ('actor-proxy' as const),
@@ -472,7 +487,15 @@ export function createCameraRig(layout: StreetLayout) {
         minDistance,
         project: (point, candidate) => projectPoint(point, candidate, viewport),
         propose: (range) => {
-          const candidate = solve(range);
+          // With no pitch fallback, narrow stages can need more than the shared
+          // 2x UI-fit budget. Spread the same bounded, fully checked candidates
+          // to 4x; never weaken the actual CSS exclusion/corner certification.
+          const baselineRange = length(sub(frame.position, frame.target));
+          const proposedRange =
+            stage && range > baselineRange
+              ? Math.min(MAX_DISTANCE, (range * range) / baselineRange)
+              : range;
+          const candidate = solve(proposedRange);
           return {
             ...frame,
             position: candidate.eye,

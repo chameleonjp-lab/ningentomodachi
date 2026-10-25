@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { Group } from 'three';
 import { expect, test, vi } from 'vitest';
 import { prepareGameAssetBundle } from '../../src/app/prepareGameAssetBundle';
 import type { ClipRootPolicy } from '../../src/assets/rootPolicy';
+import { buildPoseBindings } from '../../src/assets/poseBindings';
 import type { ThreeAssetPack } from '../../src/assets/threeAssetPack';
 import { clipId, durationMs } from '../../src/contracts';
 
@@ -240,4 +242,138 @@ test('does not invent missing optional capabilities', async () => {
   ])
     expect(Object.hasOwn(result.animator, key)).toBe(false);
   result.animator.dispose();
+});
+
+async function crouchBundleInputs() {
+  const h = inputs();
+  const poseBindings = await buildPoseBindings(
+    ['Idle', 'Walk', 'Run', 'Jump', 'CrouchMove', 'TestAttack'].map(
+      (name, index) => ({
+        clipId: clipId(name),
+        durationMs: durationMs(100),
+        sourceSha256: 'c'.repeat(64),
+        sourceClipIndex: index,
+      }),
+    ),
+  );
+  const pack = { ...h.pack, poseBindings };
+  // Preserve the real fixture's bound-method ownership checks.
+  const input = {
+    ...h.input,
+    locomotionClips: {
+      ...h.input.locomotionClips,
+      crouch: clipId('CrouchMove'),
+    },
+    loadVisuals: vi.fn(async () => pack),
+  };
+  pack.create = h.pack.create.bind(h.pack);
+  pack.clipDuration = h.pack.clipDuration.bind(h.pack);
+  return { ...h, input, pack, poseBindings };
+}
+
+test('optional crouch bundle mapping is captured before loading and retained with its binding', async () => {
+  const h = await crouchBundleInputs();
+  const pending = prepareGameAssetBundle(h.input);
+  h.input.locomotionClips.crouch = clipId('Changed');
+  const result = await pending;
+  expect(result.animator.locomotionClips.crouch).toBe('CrouchMove');
+  expect(Object.isFrozen(result.animator.locomotionClips)).toBe(true);
+  expect(result.animator.poseBindings).toBe(h.poseBindings);
+  expect(result.animator.poseBindings?.locomotion.crouch).toBe('CrouchMove');
+  result.animator.dispose();
+});
+
+test.each([
+  'missing-clip',
+  'missing-bindings',
+  'missing-map',
+  'wrong-map',
+  'wrong-duration',
+  'malformed-map',
+] as const)(
+  'optional crouch bundle rejects %s instead of discarding or substituting it',
+  async (kind) => {
+    const h = await crouchBundleInputs();
+    if (kind === 'missing-clip')
+      h.pack.clipDuration = (id) =>
+        id === 'CrouchMove'
+          ? undefined
+          : durationMs(id.startsWith('Defeat') ? 500 : 100);
+    if (kind === 'missing-bindings')
+      Object.assign(h.pack, { poseBindings: undefined });
+    if (kind === 'missing-map')
+      Object.assign(h.pack, {
+        poseBindings: {
+          ...h.poseBindings,
+          locomotion: {
+            idle: clipId('Idle'),
+            walk: clipId('Walk'),
+            run: clipId('Run'),
+            jump: clipId('Jump'),
+          },
+        },
+      });
+    if (kind === 'wrong-map')
+      Object.assign(h.pack, {
+        poseBindings: {
+          ...h.poseBindings,
+          locomotion: { ...h.poseBindings.locomotion, crouch: clipId('Idle') },
+        },
+      });
+    if (kind === 'wrong-duration')
+      Object.assign(h.pack, {
+        poseBindings: {
+          ...h.poseBindings,
+          clips: h.poseBindings.clips.map((c) =>
+            c.clipId === 'CrouchMove'
+              ? { ...c, durationMs: durationMs(101) }
+              : c,
+          ),
+        },
+      });
+    if (kind === 'malformed-map')
+      Object.assign(h.input.locomotionClips, { crouch: undefined });
+    await expect(prepareGameAssetBundle(h.input)).rejects.toThrow();
+    expect(h.dispose).toHaveBeenCalledTimes(kind === 'malformed-map' ? 0 : 1);
+  },
+);
+
+test('available but unselected crouch preserves a four-mode prepared capability and source provenance', async () => {
+  const h = await crouchBundleInputs();
+  const { idle, walk, run, jump } = h.input.locomotionClips;
+  const result = await prepareGameAssetBundle({
+    ...h.input,
+    locomotionClips: { idle, walk, run, jump },
+  });
+  try {
+    const effective = result.animator.poseBindings;
+    expect(effective?.locomotion).toEqual({
+      idle: 'Idle',
+      walk: 'Walk',
+      run: 'Run',
+      jump: 'Jump',
+    });
+    expect(result.animator.locomotionClips).toEqual(effective?.locomotion);
+    expect(effective?.clips).toEqual(h.poseBindings.clips);
+    expect(effective?.clips.find((c) => c.clipId === 'CrouchMove')).toEqual(
+      h.poseBindings.clips.find((c) => c.clipId === 'CrouchMove'),
+    );
+    expect(effective?.bindingSetId).not.toBe(h.poseBindings.bindingSetId);
+    const digest = createHash('sha256')
+      .update(
+        JSON.stringify({
+          clips: h.poseBindings.clips,
+          locomotion: { idle, walk, run, jump },
+        }),
+      )
+      .digest('hex');
+    expect(effective?.bindingSetId).toBe(`pose-set-v1:${digest}`);
+    expect(Object.isFrozen(effective)).toBe(true);
+    expect(Object.isFrozen(effective?.locomotion)).toBe(true);
+    expect(h.poseBindings.locomotion.crouch).toBe('CrouchMove');
+    expect(h.pack.poseBindings).toBe(h.poseBindings);
+  } finally {
+    result.animator.dispose();
+  }
+  expect(h.dispose).toHaveBeenCalledTimes(1);
 });

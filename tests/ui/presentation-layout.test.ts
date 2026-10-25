@@ -62,9 +62,14 @@ function setup(controlSize?: number) {
   const factories = createInterface(root, {
     storage: { getItem: () => JSON.stringify(configured), setItem: () => {} },
   });
+  let currentViewport = viewport;
+  let onViewport = (_value: typeof viewport) => {};
   const host = factories.host({
-    read: () => viewport,
-    subscribe: () => () => {},
+    read: () => currentViewport,
+    subscribe: (listener) => {
+      onViewport = listener;
+      return () => {};
+    },
   });
   host.render({
     revision: 1,
@@ -106,13 +111,33 @@ function setup(controlSize?: number) {
     });
   function observe() {
     observer?.callback(
-      [...observer.nodes].map(
-        (target) =>
-          ({
-            target,
-            contentRect: { width: 150, height: 80 },
-          }) as ResizeObserverEntry,
-      ),
+      [...observer.nodes].map((target) => {
+        const control = target.closest('button');
+        const outerSize = control ? parseFloat(control.style.width) || 44 : 0;
+        const content = outerSize - 10;
+        const font = outerSize < 56 ? 12 : 14;
+        const textHeight = control
+          ? Math.ceil(
+              (control.textContent?.length ?? 0) /
+                Math.max(1, Math.floor(content / font)),
+            ) *
+            font *
+            1.3
+          : 80;
+        return {
+          target,
+          contentRect: !control
+            ? { width: 150, height: 80 }
+            : target === control
+              ? { width: content, height: content }
+              : target.classList.contains('nt-button-glyphs')
+                ? {
+                    width: font,
+                    height: font * (control.textContent?.length ?? 1),
+                  }
+                : { width: content, height: textHeight },
+        } as ResizeObserverEntry;
+      }),
       {} as ResizeObserver,
     );
   }
@@ -121,7 +146,20 @@ function setup(controlSize?: number) {
     observe();
     return ui.prepareLayout?.(f);
   }
-  return { root, ui, host, bounds, observe, qualify, media, fonts };
+  return {
+    root,
+    ui,
+    host,
+    bounds,
+    observe,
+    qualify,
+    media,
+    fonts,
+    rotate: (next: typeof viewport) => {
+      currentViewport = next;
+      onViewport(next);
+    },
+  };
 }
 test('measures at most eight visible exclusions and two internal anchors then caches prepare plus render', () => {
   const s = setup();
@@ -433,7 +471,7 @@ test('full-screen fade and results invalidate a prior clear layout', () => {
   ).toBeUndefined();
 });
 
-test.each([44, 64])(
+test.each([44, 48, 64, 80])(
   'fixed %ipx control text scaling invalidates using real label and glyph observer nodes',
   (size) => {
     const s = setup(size);
@@ -526,4 +564,81 @@ test('zero HP and maximum HP retain the stated supported boundary', () => {
   });
   expect(s.qualify(zero)).toBeDefined();
   expect(s.root.querySelector('.nt-number')?.textContent).toBe('白 0 / 0');
+});
+
+test('resized actual control rectangles reach presentation exclusion capture', () => {
+  const s = setup();
+  let current = viewport;
+  const originalBounds = s.bounds.getMockImplementation();
+  s.bounds.mockImplementation(function (this: HTMLElement) {
+    if (!this.classList.contains('nt-control')) {
+      if (!originalBounds) throw Error('Missing bounds double');
+      return originalBounds.call(this);
+    }
+    const width = parseFloat(this.style.width),
+      height = parseFloat(this.style.height);
+    const left = parseFloat(this.style.left) + current.offsetLeftCssPx;
+    const top = parseFloat(this.style.top) + current.offsetTopCssPx;
+    return {
+      x: left,
+      y: top,
+      left,
+      top,
+      right: left + width,
+      bottom: top + height,
+      width,
+      height,
+      toJSON: () => ({}),
+    };
+  });
+  const first = s.qualify(frame({ viewport: current }));
+  const punch = first?.rects.find((r) => r.id === 'punch');
+  expect(punch).toBeDefined();
+  expect((punch?.right ?? 0) - (punch?.left ?? 0)).toBe(80);
+  const jump = first?.rects.find((r) => r.id === 'jump');
+  expect((jump?.right ?? 0) - (jump?.left ?? 0)).toBe(48);
+  let prior = first;
+  for (const [widthCssPx, heightCssPx] of [
+    [844, 390],
+    [320, 568],
+    [390, 844],
+  ] as const) {
+    current = {
+      ...current,
+      widthCssPx,
+      heightCssPx,
+      revision: current.revision + 1,
+    };
+    s.rotate(current);
+    expect(s.ui.prepareLayout?.(frame({ viewport: current }))).toBeUndefined();
+    const next = s.qualify(frame({ viewport: current }));
+    expect(next).toBeDefined();
+    expect(next?.layoutRevision).toBeGreaterThan(prior?.layoutRevision ?? -1);
+    expect(next?.viewportRevision).toBe(current.revision);
+    const controls = [...s.root.querySelectorAll<HTMLElement>('.nt-control')];
+    for (const [index, id] of ['punch', 'kick', 'jump'].entries()) {
+      const node = controls[index];
+      if (!node) throw Error('Missing control');
+      expect(next?.rects.find((r) => r.id === id)).toMatchObject({
+        left: parseFloat(node.style.left),
+        top: parseFloat(node.style.top),
+        right: parseFloat(node.style.left) + parseFloat(node.style.width),
+        bottom: parseFloat(node.style.top) + parseFloat(node.style.height),
+      });
+    }
+    prior = next;
+  }
+  s.fonts.status = 'loading';
+  s.fonts.dispatchEvent(new Event('loading'));
+  expect(s.ui.prepareLayout?.(frame({ viewport: current }))).toBeUndefined();
+  s.fonts.status = 'loaded';
+  s.fonts.dispatchEvent(new Event('loadingdone'));
+  expect(s.ui.prepareLayout?.(frame({ viewport: current }))).toBeUndefined();
+  const afterFont = s.qualify(frame({ viewport: current }));
+  expect(afterFont?.layoutRevision).toBeGreaterThan(
+    prior?.layoutRevision ?? -1,
+  );
+  s.bounds.mockClear();
+  expect(s.ui.prepareLayout?.(frame({ viewport: current }))).toBe(afterFont);
+  expect(s.bounds).not.toHaveBeenCalled();
 });

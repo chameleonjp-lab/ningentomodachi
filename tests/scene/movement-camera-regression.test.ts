@@ -1,9 +1,17 @@
 import { type Camera, Vector3 as ThreeVector3 } from 'three';
 import { expect, test } from 'vitest';
-import { presentationTimeMs } from '../../src/contracts';
+import {
+  actorId,
+  commandId,
+  durationMs,
+  presentationTimeMs,
+} from '../../src/contracts';
 import { createSceneAdapter } from '../../src/scene';
-import { createParisStreetLayout } from '../../src/world/street-layout';
-import { run, state, viewport } from '../world/fixtures';
+import {
+  createParisBattleLayout,
+  createParisStreetLayout,
+} from '../../src/world/street-layout';
+import { catalog, run, state, viewport } from '../world/fixtures';
 
 test('public gesture sessions capture the actual draw camera and keep older gestures immutable', () => {
   let drawnCamera: Camera | undefined;
@@ -160,4 +168,177 @@ test('scene forwards the captured measured layout to its real draw camera', () =
   expect(positions[2]!.distanceTo(focus)).toBeGreaterThan(
     positions[1]!.distanceTo(focus),
   );
+});
+
+test('stage starts player-left and input-right matches rendered screen-right', () => {
+  let drawn: Camera | undefined;
+  const scene = createSceneAdapter(
+    {
+      runId: run,
+      seed: 1,
+      viewport: { read: () => viewport, subscribe: () => () => {} },
+    },
+    {
+      layout: createParisBattleLayout(),
+      onInterruption() {},
+      createRenderer: () => ({
+        domElement: new EventTarget() as HTMLCanvasElement,
+        render(_scene, camera) {
+          camera.updateMatrixWorld();
+          drawn = camera;
+        },
+        dispose() {},
+        setPixelRatio() {},
+        setSize() {},
+      }),
+    },
+  );
+  const residentActorIds = [actorId('white'), actorId('blue')];
+  const snapshot = state(0, { residentActorIds });
+  const spatial = scene.commit({ snapshot, events: [] }, viewport);
+  scene.render({ snapshot, spatial, events: [], viewport });
+  const player = spatial.actors.find((a) => a.actorId === actorId('white')),
+    enemy = spatial.actors.find((a) => a.actorId === actorId('blue'));
+  if (!player || !enemy || !drawn)
+    throw new Error('Missing rendered battle pair');
+  const camera = drawn;
+  const screen = (position: { x: number; y: number; z: number }) =>
+    new ThreeVector3().copy(position).project(camera);
+  expect(screen(player.position).x).toBeLessThan(screen(enemy.position).x);
+  const basis = scene.beginMovementSession('right');
+  const result = scene.step(
+    {
+      snapshot: state(1, { residentActorIds }),
+      step: { durationMs: durationMs(20) },
+      intents: [
+        {
+          type: 'MoveRequested',
+          runId: run,
+          actorId: player.actorId,
+          input: { commandId: commandId('right'), sequence: 1 },
+          x: 1,
+          z: 0,
+          movementSessionId: basis.sessionId,
+          basisRevision: basis.revision,
+        },
+      ],
+    },
+    catalog(),
+  );
+  const moved = result.snapshot.actors.find(
+    (a) => a.actorId === player.actorId,
+  );
+  if (!moved) throw new Error('Missing moved player');
+  expect(screen(moved.position).x).toBeGreaterThan(screen(player.position).x);
+  scene.dispose();
+});
+
+test('countdown pair stays in low battle view before opponent activation', () => {
+  let drawn: Camera | undefined;
+  const scene = createSceneAdapter(
+    {
+      runId: run,
+      seed: 1,
+      viewport: { read: () => viewport, subscribe: () => () => {} },
+    },
+    {
+      layout: createParisBattleLayout(),
+      onInterruption() {},
+      createRenderer: () => ({
+        domElement: new EventTarget() as HTMLCanvasElement,
+        render(_scene, camera) {
+          camera.updateMatrixWorld();
+          drawn = camera;
+        },
+        dispose() {},
+        setPixelRatio() {},
+        setSize() {},
+      }),
+    },
+  );
+  const snapshot = state(0, {
+    phase: 'ready',
+    currentOpponentId: null,
+    residentActorIds: [actorId('white'), actorId('blue')],
+  });
+  const unchanged = JSON.stringify(snapshot),
+    spatial = scene.commit({ snapshot, events: [] }, viewport);
+  scene.render({ snapshot, spatial, events: [], viewport });
+  expect(JSON.stringify(snapshot)).toBe(unchanged);
+  const [a, b] = spatial.actors;
+  if (!a || !b || !drawn) throw new Error('Missing rendered countdown pair');
+  const direction = drawn.getWorldDirection(new ThreeVector3());
+  expect((Math.asin(-direction.y) * 180) / Math.PI).toBeCloseTo(6, 8);
+  // Equal-magnitude horizontal coordinates prove the countdown camera frames the pair, not only white.
+  const left = new ThreeVector3()
+    .copy(a.position)
+    .add(new ThreeVector3(0, 1.05, 0))
+    .project(drawn);
+  const right = new ThreeVector3()
+    .copy(b.position)
+    .add(new ThreeVector3(0, 1.05, 0))
+    .project(drawn);
+  expect(left.x).toBeLessThan(0);
+  expect(right.x).toBeGreaterThan(0);
+  expect((left.x + right.x) / 2).toBeCloseTo(0, 1);
+  expect(snapshot.currentOpponentId).toBeNull();
+  scene.dispose();
+});
+
+test('stage scene protects the full 2.1 metre living proxy from measured header exclusions', () => {
+  for (const bottom of [80, 100, 120]) {
+    const view = { ...viewport, widthCssPx: 844, heightCssPx: 390 };
+    let drawn: Camera | undefined;
+    const scene = createSceneAdapter(
+      {
+        runId: run,
+        seed: 1,
+        viewport: { read: () => view, subscribe: () => () => {} },
+      },
+      {
+        layout: createParisBattleLayout(),
+        onInterruption() {},
+        createRenderer: () => ({
+          domElement: new EventTarget() as HTMLCanvasElement,
+          render(_scene, camera) {
+            camera.updateMatrixWorld();
+            drawn = camera;
+          },
+          dispose() {},
+          setPixelRatio() {},
+          setSize() {},
+        }),
+      },
+    );
+    const snapshot = state(),
+      spatial = scene.commit({ snapshot, events: [] }, view);
+    scene.render({
+      snapshot,
+      spatial,
+      events: [],
+      viewport: view,
+      presentationLayout: {
+        runId: run,
+        viewportRevision: view.revision,
+        layoutRevision: 1,
+        rects: [{ id: 'player-status', left: 12, top: 28, right: 832, bottom }],
+      },
+    });
+    if (!drawn) throw new Error('Missing stage draw');
+    for (const actor of spatial.actors) {
+      for (const x of [-0.5, 0.5])
+        for (const z of [-0.5, 0.5]) {
+          const head = new ThreeVector3(
+            actor.position.x + x,
+            actor.position.y + 2.1,
+            actor.position.z + z,
+          ).project(drawn);
+          expect(
+            ((1 - head.y) * view.heightCssPx) / 2,
+            `header bottom ${bottom}`,
+          ).toBeGreaterThanOrEqual(bottom + 4);
+        }
+    }
+    scene.dispose();
+  }
 });

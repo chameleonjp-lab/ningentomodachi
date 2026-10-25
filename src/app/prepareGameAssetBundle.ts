@@ -1,4 +1,8 @@
 import type { AnimatorAssets } from '../assets/actorAnimator';
+import {
+  capturePoseBindings,
+  omitCrouchLocomotion,
+} from '../assets/poseBindings';
 import { decodeMotionAssetJson } from '../assets/motionAssetJson';
 import {
   assertRootPolicyCompatibility,
@@ -46,11 +50,18 @@ export async function prepareGameAssetBundle(input: {
       throw new Error('Duplicate or mismatched motion identity');
     ids.add(id);
   }
+  const crouch = input.locomotionClips.crouch;
+  if (
+    'crouch' in input.locomotionClips &&
+    (typeof crouch !== 'string' || !crouch.trim())
+  )
+    throw new Error('Invalid crouch locomotion clip');
   const locomotionClips = Object.freeze({
     idle: clipId(input.locomotionClips.idle),
     walk: clipId(input.locomotionClips.walk),
     run: clipId(input.locomotionClips.run),
     jump: clipId(input.locomotionClips.jump),
+    ...(crouch !== undefined ? { crouch: clipId(crouch) } : {}),
   });
   const policies = Object.freeze(rows.map((row) => row.rootPolicy));
   let pack: ThreeAssetPack | undefined;
@@ -83,12 +94,31 @@ export async function prepareGameAssetBundle(input: {
         );
     const { poseBindings, recoveryCapability, startupCapability, stageActor } =
       owned;
+    if (crouch !== undefined) {
+      if (!poseBindings) throw new Error('Missing crouch pose bindings');
+      const captured = capturePoseBindings(poseBindings);
+      const binding = captured.clips.find((c) => c.clipId === crouch);
+      if (
+        captured.locomotion.crouch !== crouch ||
+        !binding ||
+        binding.durationMs !== duration(clipId(crouch))
+      )
+        throw new Error(
+          'Crouch pose binding and visual mapping/duration differ',
+        );
+    }
+    const effectivePoseBindings =
+      crouch === undefined && poseBindings?.locomotion?.crouch !== undefined
+        ? await omitCrouchLocomotion(poseBindings)
+        : poseBindings;
     check();
     return {
       motions: Object.freeze(rows.map((row) => row.asset)),
       animator: {
         locomotionClips,
-        ...(poseBindings ? { poseBindings } : {}),
+        ...(effectivePoseBindings
+          ? { poseBindings: effectivePoseBindings }
+          : {}),
         ...(recoveryCapability ? { recoveryCapability } : {}),
         ...(startupCapability ? { startupCapability } : {}),
         ...(stageActor ? { stageActor: stageActor.bind(owned) } : {}),

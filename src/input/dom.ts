@@ -62,7 +62,7 @@ export function bindPointerControls(
       const action = name as ControlAction;
       listen(element, 'pointerdown', (event) => {
         const e = event as PointerEvent;
-        if (e.button !== 0) return;
+        if (e.button !== 0 || captured.has(e.pointerId)) return;
         e.preventDefault();
         captured.set(e.pointerId, element);
         input.pointerDown(e.pointerId, action, e.clientX, e.clientY);
@@ -74,7 +74,7 @@ export function bindPointerControls(
       });
       listen(element, 'lostpointercapture', (event) => {
         const id = (event as PointerEvent).pointerId;
-        if (!captured.has(id)) return;
+        if (captured.get(id) !== element) return;
         captured.delete(id);
         input.pointerUp(id, true);
       });

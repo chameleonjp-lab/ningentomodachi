@@ -531,6 +531,29 @@ function visualPack(duration = 100) {
   const dispose = vi.fn();
   return {
     dispose,
+    poseBindings: {
+      version: 1,
+      bindingSetId: 'synthetic-preview-bindings',
+      locomotion: {
+        idle: 'Idle',
+        walk: 'Walk',
+        run: 'Run',
+        jump: 'Jump',
+        crouch: 'CrouchMove',
+      },
+      clips: [
+        'Idle',
+        'Walk',
+        'Run',
+        'Jump',
+        'CrouchMove',
+        ...e.candidates.map((c) => c.asset.definition.clipId),
+      ].map((name) => ({
+        clipId: name,
+        durationMs: duration,
+        sourceBindingId: `synthetic-${name}`,
+      })),
+    },
     rootPolicy: (id: string) =>
       e.candidates.find((c) => c.asset.definition.clipId === id)?.rootPolicy,
     clipDuration: (id: string) => (id.startsWith('Defeat') ? 500 : duration),
@@ -683,3 +706,53 @@ test('caller byte and pin mutation across digest cannot change captured envelope
   x.pin.bytes = 1;
   expect(await pending).toHaveLength(31);
 });
+
+test('diagnostic preview starts a four-battle stage without street durability targets', () => {
+  const config = createDiagnosticPreviewConfiguration();
+  expect(config.layout?.battleStage?.mode).toBe('four-battle');
+  expect(config.layout?.actorSpawns.white).toEqual({ x: 0, y: 0, z: -1.4 });
+  expect(config.layout?.actorSpawns.blue).toEqual({ x: 0, y: 0, z: 1.4 });
+  expect(config.world).toEqual({ vehicles: [], objects: [] });
+  expect(config.layout?.vehicles).toEqual([]);
+  expect(config.layout?.objects).toEqual([]);
+});
+
+test('diagnostic preview explicitly requires crouch CrouchMove and retains its optional binding', async () => {
+  const x = encoded(envelope());
+  const pack = visualPack();
+  const config = createDiagnosticPreviewConfiguration(x.pin, {
+    fetch: loader(x.bytes),
+    loadVisuals: async () => pack,
+  });
+  const result = await config.loadAssets(
+    {} as never,
+    new AbortController().signal,
+  );
+  expect(result.animator.locomotionClips.crouch).toBe('CrouchMove');
+  expect(result.animator.poseBindings?.locomotion.crouch).toBe('CrouchMove');
+  result.animator.dispose();
+});
+
+test.each(['clip', 'binding'] as const)(
+  'diagnostic preview rejects unavailable crouch %s before readiness',
+  async (kind) => {
+    const x = encoded(envelope());
+    const pack = visualPack();
+    if (kind === 'clip')
+      Object.assign(pack, {
+        clipDuration: (id: string) =>
+          id === 'CrouchMove'
+            ? undefined
+            : durationMs(id.startsWith('Defeat') ? 500 : 100),
+      });
+    else Object.assign(pack, { poseBindings: undefined });
+    const config = createDiagnosticPreviewConfiguration(x.pin, {
+      fetch: loader(x.bytes),
+      loadVisuals: async () => pack,
+    });
+    await expect(
+      config.loadAssets({} as never, new AbortController().signal),
+    ).rejects.toThrow(/Crouch|crouch/);
+    expect(pack.dispose).toHaveBeenCalledTimes(1);
+  },
+);

@@ -777,3 +777,47 @@ it('startup v2 wire default and legacy remain unchanged', () => {
     capturePoseRunPolicy({ version: 1, mode: 'deterministic-pose-v1' }).startup,
   ).toBeUndefined();
 });
+
+it('crouch hold never advances or wraps and retains left-limit death entry', () => {
+  const hold = createLivingPoseStamp({
+    version: 1,
+    binding: { ...binding, clipId: clipId('CrouchMove') },
+    mode: 'crouch',
+    startedAt: gameTimeMs(0),
+    playback: 'hold',
+    activationId: null,
+  });
+  for (const at of [0, 100, 1000000])
+    expect(poseClipTime(hold, gameTimeMs(at))).toBe(0);
+  expect(poseClipTime(hold, gameTimeMs(100), 'left')).toBe(0);
+  expect([...poseClipIntervals(hold, gameTimeMs(10), gameTimeMs(100))]).toEqual(
+    [{ kind: 'held', gameFrom: 10, gameTo: 100, clipFrom: 0, clipTo: 0 }],
+  );
+  expect([...poseClipIntervals(hold, gameTimeMs(0), gameTimeMs(0))]).toEqual(
+    [],
+  );
+  const delayed = createLivingPoseStamp({ ...hold, startedAt: gameTimeMs(10) });
+  expect(poseClipTime(delayed, gameTimeMs(10))).toBe(0);
+  expect(() => poseClipTime(delayed, gameTimeMs(9))).toThrow(/activation/);
+  expect(() => poseClipTime(delayed, gameTimeMs(10), 'left')).toThrow(
+    /activation/,
+  );
+  expect(() =>
+    poseClipIntervals(delayed, gameTimeMs(9), gameTimeMs(100)),
+  ).toThrow();
+  const death = createDefeatPoseStamp({
+    kind: 'defeat',
+    entry: hold,
+    entryAt: gameTimeMs(100),
+    defeatStartedAt: presentationTimeMs(900),
+  });
+  if ('kind' in death.entry) throw Error('Expected held canonical entry');
+  expect(death.entry).toEqual(hold);
+  expect(poseClipTime(death.entry, death.entryAt, 'left')).toBe(0);
+  for (const playback of ['loop', 'clamp'] as const)
+    expect(() => createLivingPoseStamp({ ...hold, playback })).toThrow(
+      /playback/,
+    );
+  for (const mode of ['idle', 'walk', 'run', 'jump', 'attack'] as const)
+    expect(() => createLivingPoseStamp({ ...hold, mode })).toThrow(/playback/);
+});

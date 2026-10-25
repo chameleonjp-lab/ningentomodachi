@@ -1,5 +1,5 @@
 import { clipId, type ActorColor, type MoveSet } from '../contracts';
-import { createParisStreetLayout } from '../scene';
+import { createParisBattleLayout } from '../world/street-layout';
 import { decodeMotionAssetJson } from '../assets/motionAssetJson';
 import { copyRootPolicy, type ClipRootPolicy } from '../assets/rootPolicy';
 import { createPinnedDerivedThreeAssetPack } from '../assets/derivedAssetPack';
@@ -176,7 +176,7 @@ export function createDiagnosticPreviewConfiguration(
   dependencies: PreviewDependencies = {},
 ): AcceptedGameConfiguration {
   const fixedPin = pin ? Object.freeze({ ...pin }) : null;
-  const layout = createParisStreetLayout(),
+  const layout = createParisBattleLayout(),
     fetcher = dependencies.fetch ?? globalThis.fetch;
   const read = async (path: string, signal: AbortSignal) => {
     const response = await fetcher(
@@ -232,6 +232,7 @@ export function createDiagnosticPreviewConfiguration(
           walk: clipId('Walk'),
           run: clipId('Run'),
           jump: clipId('Jump'),
+          crouch: clipId('CrouchMove'),
         },
         signal,
         loadVisuals,

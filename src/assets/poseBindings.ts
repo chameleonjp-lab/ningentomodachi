@@ -68,6 +68,9 @@ export function capturePoseBindings(value: unknown): PoseCatalogBindings {
   for (const mode of modes)
     if (!text(locomotion[mode]) || !seen.has(locomotion[mode]))
       throw new Error('Missing pose locomotion binding');
+  const crouch = locomotion.crouch;
+  if ('crouch' in locomotion && (!text(crouch) || !seen.has(crouch)))
+    throw new Error('Missing pose crouch locomotion binding');
   // Individual checks preserve the exact public Record type without an assertion.
   if (
     !text(locomotion.idle) ||
@@ -85,8 +88,24 @@ export function capturePoseBindings(value: unknown): PoseCatalogBindings {
       walk: clipId(locomotion.walk),
       run: clipId(locomotion.run),
       jump: clipId(locomotion.jump),
+      ...(text(crouch) ? { crouch: clipId(crouch) } : {}),
     }),
   });
+}
+
+/** Optional availability is not selection. Retain every source binding while
+ * deriving the set identity for a caller that did not select crouch. */
+export async function omitCrouchLocomotion(
+  input: PoseCatalogBindings,
+): Promise<PoseCatalogBindings> {
+  const captured = capturePoseBindings(input);
+  const { idle, walk, run, jump } = captured.locomotion;
+  const locomotion = { idle, walk, run, jump };
+  const bindingSetId = `pose-set-v1:${await digest({
+    clips: captured.clips,
+    locomotion,
+  })}`;
+  return capturePoseBindings({ ...captured, bindingSetId, locomotion });
 }
 
 export async function buildPoseBindings(
@@ -154,6 +173,7 @@ export async function buildPoseBindings(
     walk: clipId('Walk'),
     run: clipId('Run'),
     jump: clipId('Jump'),
+    ...(seen.has('CrouchMove') ? { crouch: clipId('CrouchMove') } : {}),
   };
   const bindingSetId = `pose-set-v1:${await digest({ clips, locomotion })}`;
   return capturePoseBindings({ version: 1, bindingSetId, clips, locomotion });

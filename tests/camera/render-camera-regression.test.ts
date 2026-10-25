@@ -7,7 +7,10 @@ import {
 } from '../../src/camera/camera-rig';
 import { actorId, type SpatialActor, type Vector3 } from '../../src/contracts';
 import { add, dot, sub } from '../../src/world/math';
-import { createParisStreetLayout } from '../../src/world/street-layout';
+import {
+  createParisBattleLayout,
+  createParisStreetLayout,
+} from '../../src/world/street-layout';
 import { viewport } from '../world/fixtures';
 
 const pose = (x = 0, z = 0): SpatialActor => ({
@@ -69,4 +72,27 @@ test('every transitional camera publishes actual screen-right and away-positive 
       ).toBeGreaterThan(0);
       expect(dot(frame.right, frame.depth)).toBeCloseTo(0, 8);
     }
+});
+
+test('stage fixed view side stays signed through crossing and HUD projection matches Three at every DPR', () => {
+  const layout = createParisBattleLayout(),
+    rig = createCameraRig(layout);
+  let firstDepth: Vector3 | undefined;
+  for (const z of [1.4, -1.39, -1.4, -1.41, -2.8]) {
+    for (const devicePixelRatio of [1, 2, 3]) {
+      const vp = { ...viewport, devicePixelRatio };
+      const frame = rig.update(pose(0, -1.4), pose(0, z), vp, 16);
+      firstDepth ??= frame.depth;
+      expect(dot(frame.depth, firstDepth)).toBeCloseTo(1, 10);
+      expect(frame.depth.x).toBeGreaterThan(0);
+      const point = { x: 0.25, y: 2.1, z: -1 };
+      const expected = actual(point, frame),
+        got = projectPoint(point, frame, vp).cssPoint;
+      expect(got?.x).toBeCloseTo(expected.x, 8);
+      expect(got?.y).toBeCloseTo(expected.y, 8);
+      expect(actual(add(frame.target, frame.right), frame).x).toBeGreaterThan(
+        actual(frame.target, frame).x,
+      );
+    }
+  }
 });
