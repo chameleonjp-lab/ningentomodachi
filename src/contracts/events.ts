@@ -1,3 +1,4 @@
+import type { GuardHeight } from './fighting';
 import type { GameTimeMs } from './clock';
 import type { ActorState, DamageCause, TerminalResult } from './combat';
 import type { PauseReason } from './commands';
@@ -7,6 +8,7 @@ import type {
   BatchId,
   ClipId,
   DomainEventId,
+  ImpactId,
   LaunchId,
   RunId,
   VehicleId,
@@ -39,8 +41,19 @@ export interface HpChanged extends EventEnvelope {
   readonly actualHpLost: number;
   readonly batchId: BatchId;
 }
+export interface GuardResolved extends EventEnvelope {
+  readonly type: 'GuardResolved';
+  readonly actorId: ActorId;
+  readonly sourceActorId: ActorId;
+  readonly activationId: AttackActivationId;
+  readonly impactId: ImpactId;
+  readonly contact: ResolvedContact;
+  readonly height: GuardHeight;
+}
+/** GuardResolved describes accepted physical contact, never input success or HP loss. */
 export type DomainEvent =
   | HpChanged
+  | GuardResolved
   | (EventEnvelope &
       (
         | {
