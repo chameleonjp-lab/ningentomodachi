@@ -1,8 +1,21 @@
 import type { Tick } from './clock';
-import type { ActorId, CommandId, RunId } from './ids';
+import {
+  actorId,
+  commandId,
+  runId,
+  type ActorId,
+  type CommandId,
+  type RunId,
+} from './ids';
 import type { AttackCategory } from './motion';
 export type PauseReason = 'settings' | 'background' | 'manual' | 'interruption';
 export type DisplayQuality = 'standard' | 'low';
+export interface GuardRequested extends Envelope {
+  readonly type: 'GuardRequested';
+  readonly actorId: ActorId;
+  readonly active: boolean;
+  readonly input: InputPacket;
+}
 interface Envelope {
   readonly runId: RunId;
 }
@@ -42,6 +55,8 @@ export type GameplayCommand = Envelope & {
         readonly category: AttackCategory;
       }
   );
+/** Opt-in until Core and transport install explicit guard handling. */
+export type FightingGameplayCommand = GameplayCommand | GuardRequested;
 export type GameCommand =
   | GameplayCommand
   | (Envelope &
@@ -69,3 +84,28 @@ export interface GameplayInputBatch {
 export type CoreCommand =
   | GameCommand
   | { readonly type: 'AssetsReady'; readonly runId: RunId };
+
+/** Capture the semantic guard packet; no device choice or posture inference occurs here. */
+export function captureGuardRequested(input: GuardRequested): GuardRequested {
+  if (
+    input?.type !== 'GuardRequested' ||
+    typeof input.active !== 'boolean' ||
+    !input.input ||
+    !Number.isSafeInteger(input.input.sequence) ||
+    input.input.sequence <= 0 ||
+    typeof input.runId !== 'string' ||
+    typeof input.actorId !== 'string' ||
+    typeof input.input.commandId !== 'string'
+  )
+    throw new RangeError('Invalid guard request');
+  return Object.freeze({
+    type: 'GuardRequested',
+    runId: runId(input.runId),
+    actorId: actorId(input.actorId),
+    active: input.active,
+    input: Object.freeze({
+      commandId: commandId(input.input.commandId),
+      sequence: input.input.sequence,
+    }),
+  });
+}

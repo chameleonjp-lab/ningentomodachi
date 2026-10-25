@@ -23,6 +23,16 @@ export type LivingPoseMode =
   | 'jump'
   | 'crouch'
   | 'attack';
+export type FightingPoseMode =
+  | 'guard-standing'
+  | 'guard-crouching'
+  | 'hit-standing'
+  | 'hit-crouching';
+/** Separate until consumers explicitly opt in; old LivingPoseStamp/locomotion stay exact. */
+export interface FightingPoseStamp extends Omit<LivingPoseStamp, 'mode'> {
+  readonly mode: FightingPoseMode;
+}
+export type FightingPoseBindings = Readonly<Record<FightingPoseMode, ClipId>>;
 export type PoseSampleSide = 'left' | 'right';
 export interface PoseRunPolicy {
   readonly attackStartStance?: 'selected-side-kicks-v1';
@@ -63,6 +73,7 @@ export type ActorPoseStamp =
   | DefeatPoseStamp;
 /** Descriptor coverage only. No geometry/sampler or anatomy-ready flag is implied. */
 export interface PoseCatalogBindings {
+  readonly fighting?: FightingPoseBindings;
   readonly version: 1;
   readonly bindingSetId: string;
   readonly clips: readonly PoseClipBinding[];
@@ -709,4 +720,50 @@ export function requireStartupCapability(
       JSON.stringify(policy)
   )
     throw Error('Missing or conflicting startup capability');
+}
+
+export function captureFightingPoseBindings(
+  input: FightingPoseBindings,
+): FightingPoseBindings {
+  if (!input || typeof input !== 'object')
+    throw new RangeError('Missing fighting pose bindings');
+  const get = (mode: FightingPoseMode) => {
+    const id = input[mode];
+    if (typeof id !== 'string')
+      throw new RangeError('Missing fighting pose binding');
+    return clipId(id);
+  };
+  return Object.freeze({
+    'guard-standing': get('guard-standing'),
+    'guard-crouching': get('guard-crouching'),
+    'hit-standing': get('hit-standing'),
+    'hit-crouching': get('hit-crouching'),
+  });
+}
+export function createFightingPoseStamp(
+  input: FightingPoseStamp,
+): FightingPoseStamp {
+  if (
+    !input ||
+    ![
+      'guard-standing',
+      'guard-crouching',
+      'hit-standing',
+      'hit-crouching',
+    ].includes(input.mode)
+  )
+    throw new RangeError('Invalid fighting pose mode');
+  const guard =
+    input.mode === 'guard-standing' || input.mode === 'guard-crouching';
+  if (
+    input.playback !== (guard ? 'hold' : 'clamp') ||
+    input.activationId !== null
+  )
+    throw new RangeError('Invalid fighting pose playback/activation');
+  // Reuse binding and finite-time validation, without passing new modes to old consumers.
+  const base = createLivingPoseStamp({
+    ...input,
+    mode: guard ? 'crouch' : 'jump',
+  });
+  return Object.freeze({ ...base, mode: input.mode });
 }
