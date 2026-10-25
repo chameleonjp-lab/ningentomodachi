@@ -73,6 +73,8 @@ export function freezeFightingClock(
     throw new RangeError(
       'Stop must cover a positive interval within the supplied clock',
     );
+  if (clock.endpoint && clock.endpoint.epochId !== last.epochId)
+    throw new RangeError('Cannot freeze an unproved endpoint transition');
   const slices: FightingClockSlice[] = [];
   let epoch: string | null = null;
   let motion = durationMs(0);
@@ -113,7 +115,13 @@ export function freezeFightingClock(
       motion = end;
     }
   }
-  return captureFightingClock({ ...clock, slices });
+  return captureFightingClock({
+    ...clock,
+    slices,
+    ...(clock.endpoint
+      ? { endpoint: { ...clock.endpoint, motionMs: motion } }
+      : {}),
+  });
 }
 
 /** Both values must already be mapped to the same absolute clock. Equality is a gap. */

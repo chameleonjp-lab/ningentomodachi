@@ -1,11 +1,17 @@
 import { describe, expect, test } from 'vitest';
+import { requireValue } from '../../src/core/invariant';
 import {
   activeRealTimeMs,
   durationMs,
   gameTimeMs,
   tick,
 } from '../../src/contracts/clock';
-import { actorId, attackActivationId, clipId } from '../../src/contracts/ids';
+import {
+  actorId,
+  attackActivationId,
+  clipId,
+  runId,
+} from '../../src/contracts/ids';
 import {
   captureFightingClock,
   type FightingClock,
@@ -239,4 +245,54 @@ test('a wholly frozen fractional real interval leaves the committed heat cursor 
       durationMs(0.2),
     ),
   ).toBe(0.1);
+});
+
+describe('accepted endpoint freeze coherence', () => {
+  const withEndpoint = (): FightingClock => {
+    const clock = moving(),
+      last = requireValue(clock.slices.at(-1));
+    return captureFightingClock({
+      ...clock,
+      endpoint: {
+        runId: runId('endpoint-run'),
+        actorId: last.actorId,
+        stepTick: clock.stepTick,
+        atGameMs: last.toGameMs,
+        epochId: last.epochId,
+        clipId: last.clipId,
+        activationId: last.activationId,
+        motionMs: last.toMotionMs,
+        phase: 'active',
+        posture: 'standing',
+      },
+    });
+  };
+  test('freeze helper cannot retain a stale strict endpoint after changed motion coverage', () => {
+    const original = withEndpoint();
+    const stopped = freezeFightingClock(
+      original,
+      gameTimeMs(120.25),
+      gameTimeMs(180.25),
+    );
+    expect(stopped.endpoint?.motionMs).toBe(143.5);
+    expect(stopped.endpoint?.epochId).toBe(original.endpoint?.epochId);
+    expect(original.endpoint?.motionMs).toBe(203.5);
+    expect(sampleFightingMotion(stopped, gameTimeMs(300.25))).toBeNull();
+  });
+  test('freeze refuses a transition-bearing endpoint whose provenance it cannot prove', () => {
+    const original = withEndpoint();
+    const clock = captureFightingClock({
+      ...original,
+      activeEpochId: 'new-at-end',
+      endpoint: {
+        ...requireValue(original.endpoint),
+        epochId: 'new-at-end',
+        motionMs: durationMs(0),
+        activationId: null,
+      },
+    });
+    expect(() =>
+      freezeFightingClock(clock, gameTimeMs(120.25), gameTimeMs(180.25)),
+    ).toThrow(/transition/i);
+  });
 });
