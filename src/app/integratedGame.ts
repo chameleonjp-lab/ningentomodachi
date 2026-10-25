@@ -177,7 +177,15 @@ export function createIntegratedGame(
       };
       const core = createCore(context, {
         moves,
-        catalog: bundle.catalog,
+        // Preserve the prepared optional posture descriptor for Core in legacy
+        // display mode too, without enabling deterministic display negotiation.
+        catalog: {
+          get: (id) => bundle.catalog.get(id),
+          list: () => bundle.catalog.list(),
+          get pose() {
+            return bundle.catalog.pose ?? bundle.residents?.assets.poseBindings;
+          },
+        },
         world: config.world,
         enemyAi: (snapshot, spatial) =>
           bundle.ai?.decide(snapshot, spatial) ?? [],

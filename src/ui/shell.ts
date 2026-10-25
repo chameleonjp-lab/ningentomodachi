@@ -34,8 +34,12 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
   fade.hidden = true;
   const controlsLayer = element(document, 'div', 'nt-controls');
   controlsLayer.hidden = true;
-  const move = element(document, 'div', 'nt-swipe', 'スワイプで移動');
-  move.setAttribute('aria-label', '移動スワイプ領域');
+  const swipeHelp = '左右：移動　上：ジャンプ　下：しゃがみ';
+  const move = element(document, 'div', 'nt-swipe', swipeHelp);
+  move.setAttribute(
+    'aria-label',
+    `移動・ジャンプ・しゃがみスワイプ領域。${swipeHelp}`,
+  );
   const controls: ControlElements = {
     move,
     punch: button(document, 'パンチ', () => {}),
@@ -179,6 +183,11 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     layoutUsable = result.usable;
     notice.textContent = result.warning ?? '';
     notice.hidden = !result.warning;
+    notice.style.top = `${v.safeAreaCssPx.top + 80}px`;
+    notice.style.bottom = 'auto';
+    move.style.left = `${v.safeAreaCssPx.left + 8}px`;
+    move.style.width = `${Math.max(0, v.widthCssPx * 0.4 - v.safeAreaCssPx.left - 8)}px`;
+    move.style.bottom = `${v.safeAreaCssPx.bottom + 8}px`;
     header.style.top = `${v.safeAreaCssPx.top + 8}px`;
     header.style.left = `${v.safeAreaCssPx.left + 12}px`;
     header.style.right = `${v.safeAreaCssPx.right + 12}px`;
@@ -192,6 +201,10 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       style.top = `${b.y}px`;
       style.width = `${b.size}px`;
       style.height = `${b.size}px`;
+      style.setProperty(
+        '--nt-control-font-size',
+        b.size < 56 ? '12px' : '14px',
+      );
       style.opacity = String(b.opacity);
     }
     controlsLayer.hidden =
@@ -202,12 +215,19 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       !layoutUsable;
   };
   const apply = (next: ControlSettings) => {
-    const proposed = viewport ? resolveLayout(next, viewport.read()) : null;
-    const safe = viewport ? settingsForLayout(next, viewport.read()) : next;
+    settings = viewport ? settingsForLayout(next, viewport.read()) : next;
+    settingsWarning =
+      '変更はこのプレイに適用中です。「設定を保存」で端末内に保存します。';
+    layout();
+  };
+  const persist = () => {
+    const captured = viewport?.read();
+    const proposed = captured ? resolveLayout(settings, captured) : null;
+    const safe = captured ? settingsForLayout(settings, captured) : settings;
     const result = saveSettings(safe, storage);
     settings = result.settings;
     settingsWarning = result.saved
-      ? (proposed?.warning ?? null)
+      ? (proposed?.warning ?? '設定を保存しました。')
       : '変更はこのプレイに適用しましたが、端末内に保存できません。';
     layout();
   };
@@ -252,7 +272,7 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       'p',
       '',
       settingsWarning ??
-        '操作領域は44 CSS px以上です。位置は画面内へ調整されます。',
+        '初期値はパンチ・キック80 CSS px、補助ジャンプ48 CSS pxです。画面に合わせ44 CSS px以上で調整します。保存は「設定を保存」を押してください。',
     );
     status.setAttribute('role', 'status');
     panel.append(status);
@@ -274,6 +294,20 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
         dot.style.height = `${(100 * b.size) / v.heightCssPx}%`;
         dot.style.opacity = String(b.opacity);
         preview.append(dot);
+      }
+    };
+    const refreshSliders = () => {
+      for (const slider of panel.querySelectorAll('input')) {
+        const label = slider.getAttribute('aria-label');
+        for (const action of buttonNames)
+          for (const [property, text] of [
+            ['x', '横位置'],
+            ['y', '縦位置'],
+            ['size', 'サイズ'],
+            ['opacity', '不透明度'],
+          ] as const)
+            if (label === `${actionLabels[action]} ${text}`)
+              slider.value = String(settings.buttons[action][property]);
       }
     };
     refreshSettingsPreview = () => {
@@ -309,20 +343,9 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
               },
             },
           });
-          status.textContent = settingsWarning ?? '設定を保存しました。';
+          status.textContent = settingsWarning;
           updatePreview();
-          for (const slider of panel.querySelectorAll('input')) {
-            const label = slider.getAttribute('aria-label');
-            for (const action of buttonNames)
-              for (const [property, text] of [
-                ['x', '横位置'],
-                ['y', '縦位置'],
-                ['size', 'サイズ'],
-                ['opacity', '不透明度'],
-              ] as const)
-                if (label === `${actionLabels[action]} ${text}`)
-                  slider.value = String(settings.buttons[action][property]);
-          }
+          refreshSliders();
         });
         row.append(input);
         field.append(row);
@@ -330,6 +353,13 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
       panel.append(field);
     }
     panel.append(
+      button(document, '設定を保存', () => {
+        if (!isCurrent()) return;
+        persist();
+        status.textContent = settingsWarning;
+        updatePreview();
+        refreshSliders();
+      }),
       button(document, '初期配置に戻す', () => {
         if (!isCurrent()) return;
         apply(defaultSettings);
@@ -527,7 +557,8 @@ export function createShell(root: HTMLElement, storage?: SettingsStorage) {
     }
     if (state.phase === 'title') {
       panel.append(
-        element(document, 'p', '', '人間の友達として、街の暴動を止めよう。'),
+        element(document, 'p', '', '青・緑・黄・黒の4連戦。'),
+        element(document, 'p', '', swipeHelp),
         button(document, 'はじめる', () =>
           request({ type: 'PrepareRequested' }),
         ),

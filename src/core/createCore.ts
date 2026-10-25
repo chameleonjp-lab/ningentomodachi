@@ -8,6 +8,7 @@ import {
   attackActivationId,
   batchId,
   type CoreCommand,
+  createLivingPoseStamp,
   type CoreOutput,
   type CorePort,
   type DamageCause,
@@ -45,7 +46,8 @@ import {
 } from './rules';
 import { createWorldLedger, type WorldSeed } from './worldLedger';
 export interface CoreOptions {
-  readonly catalog: Pick<MotionCatalogPort, 'get' | 'list'>;
+  readonly catalog: Pick<MotionCatalogPort, 'get' | 'list'> &
+    Partial<Pick<MotionCatalogPort, 'pose'>>;
   readonly moves: Readonly<Record<ActorColor, MoveSet>>;
   readonly world?: WorldSeed;
   /** Production composition supplies an AI intent provider with real C movement sessions. */
@@ -87,7 +89,30 @@ export function createCore(
   );
   const sets = immutableDto(options.moves);
   let metadata = new Map<MotionDefinition['clipId'], MotionDefinition>();
+  let crouchAvailable = false;
   function prepareCatalog() {
+    // Capture capability only after preparation. A partial/generic catalog
+    // never turns an input-selected posture into physics authority.
+    const pose = options.catalog.pose;
+    const binding = pose?.clips.find(
+      (b) => b.clipId === pose.locomotion.crouch,
+    );
+    crouchAvailable = false;
+    if (pose?.version === 1 && pose.bindingSetId?.trim() && binding) {
+      try {
+        createLivingPoseStamp({
+          version: 1,
+          binding,
+          mode: 'crouch',
+          startedAt: gameTimeMs(0),
+          playback: 'hold',
+          activationId: null,
+        });
+        crouchAvailable = true;
+      } catch {
+        // Optional support is absent when its descriptor is invalid.
+      }
+    }
     const catalogItems = options.catalog.list();
     if (new Set(catalogItems.map((m) => m.clipId)).size !== catalogItems.length)
       throw new Error('Catalog clip IDs must be unique');
@@ -138,6 +163,7 @@ export function createCore(
     heat: initialHeat(),
     attack: null,
     defeated: false,
+    crouching: false,
     actions: {
       punch: denied('not-running'),
       kick: denied('not-running'),
@@ -199,6 +225,22 @@ export function createCore(
   const seenCommands = new Set<string>();
   let intents: GameplayCommand[] = [];
   const moves = new Map<ActorId, GameplayCommand>();
+  const crouchOwners = new Map<
+    ActorId,
+    { sessionId: string; revision: number }
+  >();
+  const closedCrouchSessions = new Set<string>();
+  function clearCrouch(id?: ActorId, close = false) {
+    let changed = false;
+    for (const [actor, owner] of crouchOwners) {
+      if (id !== undefined && actor !== id) continue;
+      if (close) closedCrouchSessions.add(owner.sessionId);
+      crouchOwners.delete(actor);
+      updateActor(actor, { crouching: false });
+      changed = true;
+    }
+    return changed;
+  }
   let phaseBeforePause: GameSnapshot['phase'] = 'running';
   const participant = (id: ActorId) =>
     id === requireValue(actors[0]).actorId || id === snapshot.currentOpponentId;
@@ -266,6 +308,18 @@ export function createCore(
   function publish(change: Partial<GameSnapshot> = {}) {
     const previous = snapshot;
     snapshot = { ...snapshot, ...change };
+    for (const actor of actors)
+      if (
+        actor.crouching &&
+        (snapshot.phase !== 'running' ||
+          pendingOpponent ||
+          actor.defeated ||
+          actor.attack ||
+          !participant(actor.actorId) ||
+          spatial?.actors.find((p) => p.actorId === actor.actorId)?.grounded ===
+            false)
+      )
+        clearCrouch(actor.actorId);
     permissions();
     snapshot = immutableDto({
       ...snapshot,
@@ -326,6 +380,47 @@ export function createCore(
   function accept(command: GameplayCommand) {
     if (command.runId !== context.runId) return;
     const a = actors.find((a) => a.actorId === command.actorId);
+    if (command.type === 'CrouchRequested') {
+      if (
+        !a ||
+        typeof command.active !== 'boolean' ||
+        !command.movementSessionId?.trim() ||
+        !Number.isSafeInteger(command.basisRevision) ||
+        command.basisRevision < 0
+      )
+        return;
+      const owner = crouchOwners.get(a.actorId);
+      // Release bypasses attack/phase locks, but cannot release another hold.
+      if (!command.active) {
+        if (
+          owner?.sessionId === command.movementSessionId &&
+          owner.revision === command.basisRevision
+        ) {
+          clearCrouch(a.actorId);
+          publish();
+        }
+        return;
+      }
+      if (
+        !crouchAvailable ||
+        closedCrouchSessions.has(command.movementSessionId) ||
+        !participant(a.actorId) ||
+        snapshot.phase !== 'running' ||
+        pendingOpponent ||
+        a.defeated ||
+        a.attack ||
+        !a.actions.move.allowed ||
+        spatial?.actors.find((p) => p.actorId === a.actorId)?.grounded === false
+      )
+        return;
+      crouchOwners.set(a.actorId, {
+        sessionId: command.movementSessionId,
+        revision: command.basisRevision,
+      });
+      updateActor(a.actorId, { crouching: true });
+      publish();
+      return;
+    }
     if (!a || !participant(a.actorId) || snapshot.phase !== 'running') {
       if (command.type === 'AttackRequested') reject(command, 'not-running');
       return;
@@ -376,6 +471,7 @@ export function createCore(
         a.actorId,
         startHeat(requireValue(heat.get(a.actorId)), processedReal),
       );
+      clearCrouch(a.actorId);
       updateActor(a.actorId, {
         attack: {
           activationId,
@@ -400,7 +496,15 @@ export function createCore(
       return;
     }
     if (command.type === 'JumpRequested') {
-      if (a.actions.jump.allowed) intents.push(command);
+      if (a.actions.jump.allowed) {
+        if (
+          spatial?.actors.find((p) => p.actorId === a.actorId)?.grounded !==
+            false &&
+          clearCrouch(a.actorId)
+        )
+          publish();
+        intents.push(command);
+      }
       return;
     }
     if (
@@ -444,10 +548,23 @@ export function createCore(
         if (actors.find((a) => a.actorId === c.actorId)?.attack)
           attacking.add(c.actorId);
       }
+    const jumping = new Set<ActorId>();
+    for (const c of unique)
+      if (c.type === 'JumpRequested' && !attacking.has(c.actorId)) {
+        const actor = actors.find((a) => a.actorId === c.actorId);
+        if (
+          actor?.actions.jump.allowed &&
+          spatial?.actors.find((p) => p.actorId === c.actorId)?.grounded !==
+            false
+        )
+          jumping.add(c.actorId);
+        accept(c);
+      }
     for (const c of unique)
       if (
         c.type === 'MoveRequested' ||
-        (c.type === 'JumpRequested' && !attacking.has(c.actorId))
+        (c.type === 'CrouchRequested' &&
+          (!c.active || (!attacking.has(c.actorId) && !jumping.has(c.actorId))))
       )
         accept(c);
   }
@@ -476,6 +593,7 @@ export function createCore(
         if (['running', 'paused', 'terminal'].includes(snapshot.phase)) {
           if (snapshot.phase !== 'paused') phaseBeforePause = snapshot.phase;
           pauses.add(command.reason);
+          clearCrouch(undefined, true);
           moves.clear();
           intents = [];
           progress(snapshot.phase === 'terminal' ? 'terminal' : 'paused');
@@ -485,6 +603,7 @@ export function createCore(
         if (snapshot.phase !== 'paused') phaseBeforePause = snapshot.phase;
         pauses.add('background');
         pauses.add('interruption');
+        clearCrouch(undefined, true);
         moves.clear();
         intents = [];
         progress(snapshot.phase === 'running' ? 'paused' : snapshot.phase);
@@ -509,17 +628,26 @@ export function createCore(
       case 'InputsReleased':
         moves.clear();
         intents = [];
+        if (clearCrouch(undefined, true)) publish();
         break;
-      case 'MovementSessionEnded':
+      case 'MovementSessionEnded': {
+        closedCrouchSessions.add(command.sessionId);
+        let releasedCrouch = false;
+        for (const [id, owner] of crouchOwners)
+          if (owner.sessionId === command.sessionId)
+            releasedCrouch = clearCrouch(id) || releasedCrouch;
         for (const [id, c] of moves)
           if (
             c.type === 'MoveRequested' &&
             c.movementSessionId === command.sessionId
           )
             moves.delete(id);
+        if (releasedCrouch) publish();
         break;
+      }
       case 'AttackRequested':
       case 'MoveRequested':
+      case 'CrouchRequested':
       case 'JumpRequested':
         batch([command]);
         break;
@@ -667,6 +795,7 @@ export function createCore(
           at,
         );
     }
+    clearCrouch(undefined, true);
     moves.clear();
     intents = [];
     for (const a of actors)
@@ -1233,6 +1362,7 @@ export function createCore(
     fail(message) {
       if (disposed) return;
       inStep = false;
+      clearCrouch(undefined, true);
       progress('error');
       emit({ type: 'FoundationError', message });
     },
@@ -1240,6 +1370,8 @@ export function createCore(
       if (disposed) return;
       disposed = true;
       inStep = false;
+      clearCrouch();
+      closedCrouchSessions.clear();
       moves.clear();
       intents = [];
       progress('stopped');

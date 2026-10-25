@@ -226,6 +226,10 @@ test('open settings preview follows viewport changes without replacing focused c
   slider.value = '0.7';
   slider.dispatchEvent(new Event('input', { bubbles: true }));
   slider.focus();
+  expect(writes).toHaveLength(0);
+  [...root.querySelectorAll('button')]
+    .find((button) => button.textContent === '設定を保存')
+    ?.click();
   const saved = writes.at(-1);
   const count = writes.length;
   expect(count).toBe(1);
@@ -761,4 +765,206 @@ test('settings scroll never carries into closed reopened or successor contexts',
   scroll();
   s.host.render(state('error'));
   expectTop();
+});
+
+test('title explains the four opponents without promising street exploration', () => {
+  const s = setup();
+  s.host.render(state('title'));
+  expect(s.root.textContent).toContain('青・緑・黄・黒の4連戦。');
+  s.click('はじめる');
+  expect(s.requests.at(-1)?.type).toBe('PrepareRequested');
+  s.host.dispose();
+  s.root.remove();
+});
+
+test('legacy rendering and slider edits only save v2 after explicit save while swipe help and native jump remain available', () => {
+  const root = document.createElement('div');
+  document.body.append(root);
+  const oldKey = 'ningentomodachi.controls.v1';
+  const raw = JSON.stringify({
+    version: 1,
+    buttons: Object.fromEntries(
+      ['punch', 'kick', 'jump'].map((name) => [
+        name,
+        { x: 1, y: 1, size: 64, opacity: 0.8 },
+      ]),
+    ),
+  });
+  const bytes = new Map([[oldKey, raw]]);
+  const writes: string[] = [];
+  let current = viewport;
+  let notify = (_next: typeof viewport) => {};
+  const ui = createInterface(root, {
+    storage: {
+      getItem: (key) => bytes.get(key) ?? null,
+      setItem: (key, value) => {
+        writes.push(key);
+        bytes.set(key, value);
+      },
+    },
+  });
+  const host = ui.host({
+    read: () => current,
+    subscribe: (listener) => {
+      notify = listener;
+      return () => {};
+    },
+  });
+  const click = (label: string) => {
+    const node = [...root.querySelectorAll('button')].find(
+      (button) => button.textContent === label,
+    );
+    if (!node) throw Error(`Missing ${label}`);
+    node.click();
+  };
+  host.render({ ...state('playing', snapshot()), viewport: current });
+  const controls = [...root.querySelectorAll<HTMLButtonElement>('.nt-control')];
+  expect(controls.map((node) => node.style.width)).toEqual([
+    '80px',
+    '80px',
+    '48px',
+  ]);
+  expect(
+    controls.every(
+      (node) =>
+        node.tagName === 'BUTTON' && node.type === 'button' && !node.disabled,
+    ),
+  ).toBe(true);
+  const move = root.querySelector('.nt-swipe');
+  expect(move?.textContent).toBe('左右：移動　上：ジャンプ　下：しゃがみ');
+  expect(move?.getAttribute('aria-label')).toContain('上：ジャンプ');
+  expect(move?.getAttribute('aria-label')).toContain('下：しゃがみ');
+  for (const [widthCssPx, heightCssPx] of [
+    [844, 390],
+    [320, 568],
+    [390, 844],
+  ] as const) {
+    current = {
+      ...current,
+      widthCssPx,
+      heightCssPx,
+      revision: current.revision + 1,
+    };
+    notify(current);
+  }
+  expect(writes).toEqual([]);
+  click('設定');
+  const slider = root.querySelector<HTMLInputElement>(
+    '[aria-label="パンチ 不透明度"]',
+  );
+  if (!slider) throw Error('Missing slider');
+  slider.value = '0.6';
+  slider.dispatchEvent(new Event('input'));
+  expect(writes).toEqual([]);
+  click('設定を閉じる');
+  expect(writes).toEqual([]);
+  click('設定');
+  click('設定を保存');
+  expect(writes).toEqual(['ningentomodachi.controls.v2']);
+  expect(bytes.get(oldKey)).toBe(raw);
+  expect(
+    JSON.parse(bytes.get('ningentomodachi.controls.v2') ?? '{}').buttons.punch
+      .opacity,
+  ).toBe(0.6);
+  click('初期配置に戻す');
+  expect(writes).toHaveLength(1);
+  host.dispose();
+  root.remove();
+});
+
+test('explicit save denial retains in-memory settings and the existing honest warning', () => {
+  const root = document.createElement('main');
+  document.body.append(root);
+  const save = vi.fn(() => {
+    throw Error('quota denied');
+  });
+  const ui = createInterface(root, {
+    storage: { getItem: () => null, setItem: save },
+  });
+  const host = ui.host({ read: () => viewport, subscribe: () => () => {} });
+  const click = (label: string) => {
+    const node = [...root.querySelectorAll('button')].find(
+      (button) => button.textContent === label,
+    );
+    if (!node) throw Error(`Missing ${label}`);
+    node.click();
+  };
+  host.render(state('title'));
+  click('設定');
+  const slider = root.querySelector<HTMLInputElement>(
+    '[aria-label="パンチ 不透明度"]',
+  );
+  if (!slider) throw Error('Missing slider');
+  slider.value = '0.55';
+  slider.dispatchEvent(new Event('input'));
+  expect(save).not.toHaveBeenCalled();
+  click('設定を保存');
+  expect(save).toHaveBeenCalledOnce();
+  expect(root.querySelector('.nt-panel')?.textContent).toContain(
+    '変更はこのプレイに適用しましたが、端末内に保存できません。',
+  );
+  expect(root.querySelector<HTMLElement>('.nt-control')?.style.opacity).toBe(
+    '0.55',
+  );
+  click('設定を閉じる');
+  click('設定');
+  expect(
+    root.querySelector<HTMLInputElement>('[aria-label="パンチ 不透明度"]')
+      ?.value,
+  ).toBe('0.55');
+  host.dispose();
+  root.remove();
+});
+
+test('explicit save after responsive fallback refreshes slider values without replacing focused controls', () => {
+  const root = document.createElement('div');
+  document.body.append(root);
+  let current = viewport;
+  let onViewport = (_next: typeof viewport) => {};
+  let saved = '';
+  const ui = createInterface(root, {
+    storage: {
+      getItem: () => null,
+      setItem: (_key, value) => {
+        saved = value;
+      },
+    },
+  });
+  const host = ui.host({
+    read: () => current,
+    subscribe: (listener) => {
+      onViewport = listener;
+      return () => {};
+    },
+  });
+  host.render(state('title'));
+  const click = (label: string) => {
+    const node = [...root.querySelectorAll('button')].find(
+      (button) => button.textContent === label,
+    );
+    if (!node) throw Error(`Missing ${label}`);
+    node.click();
+  };
+  click('設定');
+  const slider = root.querySelector<HTMLInputElement>(
+    '[aria-label="パンチ サイズ"]',
+  );
+  if (!slider) throw Error('Missing slider');
+  slider.focus();
+  current = {
+    ...current,
+    revision: current.revision + 1,
+    widthCssPx: 200,
+    heightCssPx: 250,
+    safeAreaCssPx: { top: 0, bottom: 0, left: 0, right: 0 },
+  };
+  onViewport(current);
+  expect(saved).toBe('');
+  expect(slider.value).toBe('80');
+  click('設定を保存');
+  expect(JSON.parse(saved).buttons.punch.size).toBe(44);
+  expect(slider.value).toBe('44');
+  expect(document.activeElement).toBe(slider);
+  host.dispose();
+  root.remove();
 });

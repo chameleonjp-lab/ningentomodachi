@@ -1776,3 +1776,244 @@ test('finite composition whole frame failure preserves old residents with zero w
     a.dispose();
   }
 });
+
+import { createPoseTimeline } from '../../src/world/pose-timeline';
+import { batchId, domainEventId, poseClipTime } from '../../src/contracts';
+const crouchBinding = {
+  clipId: clipId('CrouchMove'),
+  durationMs: durationMs(1000),
+  sourceBindingId: 'synthetic-CrouchMove',
+};
+const crouchBindings: PoseCatalogBindings = {
+  ...bindings,
+  bindingSetId: 'synthetic-display-crouch',
+  clips: [...bindings.clips, crouchBinding],
+  locomotion: { ...bindings.locomotion, crouch: clipId('CrouchMove') },
+};
+
+test('legacy and stamped crouch both seek clip zero and release to ordinary motion', () => {
+  for (const mode of ['legacy', 'deterministic-pose-v1'] as const) {
+    const h = setup();
+    const seeks: { clip: string; time: number }[] = [];
+    const entries: { clip: string; time: number }[] = [];
+    const a = createActorAnimator(
+      { ...h.context, posePolicy: { version: 1, mode } },
+      {
+        ...h.assets,
+        poseBindings: crouchBindings,
+        locomotionClips: crouchBindings.locomotion,
+        create: () => ({
+          ...h.makeRig('white'),
+          seek: (clip, seconds) => {
+            if (clip.startsWith('Defeat')) {
+              const prior = seeks.at(-1);
+              if (!prior) throw Error('Missing inherited living entry');
+              entries.push({ ...prior });
+            } else seeks.push({ clip, time: seconds * 1000 });
+          },
+          seekPose: (binding, time) => {
+            seeks.push({ clip: binding.clipId, time });
+          },
+          seekDefeat: (input) => {
+            if ('kind' in input.entry)
+              throw Error('Expected held canonical entry');
+            expect(input.entry.sampleSide).toBe('left');
+            entries.push({
+              clip: input.entry.binding.clipId,
+              time: input.entry.clipTime,
+            });
+          },
+        }),
+      },
+    );
+    const render = (
+      time: number,
+      locomotion: 'crouch' | 'idle' | 'jump',
+      startedAt: number,
+    ) => {
+      const f = stamped(time);
+      const name =
+        locomotion === 'crouch'
+          ? 'CrouchMove'
+          : locomotion === 'jump'
+            ? 'Jump'
+            : 'Idle';
+      const binding = crouchBindings.clips.find((c) => c.clipId === name);
+      if (!binding) throw Error('Missing test binding');
+      const pose = createLivingPoseStamp({
+        version: 1,
+        binding,
+        mode: locomotion,
+        startedAt: gameTimeMs(startedAt),
+        playback:
+          locomotion === 'crouch'
+            ? 'hold'
+            : locomotion === 'jump'
+              ? 'clamp'
+              : 'loop',
+        activationId: null,
+      });
+      a.render({
+        ...f,
+        spatial: {
+          ...f.spatial,
+          actors: f.spatial.actors.map((actor) => ({
+            ...actor,
+            locomotion,
+            pose: { kind: 'living', living: pose },
+          })),
+        },
+      });
+      return pose;
+    };
+    for (const time of [0, 100, 1000000]) render(time, 'crouch', 0);
+    expect(seeks).toEqual(
+      Array.from({ length: 3 }, () => ({ clip: 'CrouchMove', time: 0 })),
+    );
+    render(1000010, 'idle', 1000010);
+    render(1000035, 'idle', 1000010);
+    expect(seeks.slice(-2)).toEqual([
+      { clip: 'Idle', time: 0 },
+      { clip: 'Idle', time: 25 },
+    ]);
+    render(1000040, 'jump', 1000040);
+    render(1000065, 'jump', 1000040);
+    expect(seeks.slice(-2)).toEqual([
+      { clip: 'Jump', time: 0 },
+      { clip: 'Jump', time: 25 },
+    ]);
+    const entry = render(1000070, 'crouch', 1000070);
+    render(1000170, 'crouch', 1000070);
+    const death = defeated(1000270, 1000170);
+    a.render({
+      ...death,
+      spatial: {
+        ...death.spatial,
+        actors: death.spatial.actors.map((actor) => ({
+          ...actor,
+          locomotion: 'crouch',
+          pose: {
+            kind: 'defeat',
+            entry,
+            entryAt: gameTimeMs(1000170),
+            defeatStartedAt: presentationTimeMs(1000),
+          },
+        })),
+      },
+    });
+    expect(entries).toEqual([{ clip: 'CrouchMove', time: 0 }]);
+    a.dispose();
+  }
+});
+
+test('crouch timeline keeps one activation and strict-left held death at release', () => {
+  // The runtime timeline consumes the admitted Core stance, not a motor-only
+  // request. Keep that authority true throughout this held interval.
+  const crouchingSnapshot = (time: number) => {
+    const snapshot = frame(time).snapshot;
+    return {
+      ...snapshot,
+      actors: snapshot.actors.map((actor) => ({ ...actor, crouching: true })),
+    };
+  };
+  const t = createPoseTimeline(run);
+  t.bindPreparedCatalog(crouchBindings);
+  t.prepareCommit(
+    { snapshot: crouchingSnapshot(0), events: [] },
+    gameTimeMs(0),
+    new Map([[player, 'crouch']]),
+  )();
+  for (const [from, to] of [
+    [0, 100],
+    [100, 1000100],
+  ] as const) {
+    t.prepareStep(
+      {
+        snapshot: crouchingSnapshot(to),
+        step: { durationMs: durationMs(to - from) },
+        intents: [],
+      },
+      new Map([[player, 'crouch']]),
+    )();
+    expect(t.read(player)).toMatchObject({
+      kind: 'living',
+      living: { mode: 'crouch', playback: 'hold', startedAt: 0 },
+    });
+    t.prepareCommit(
+      { snapshot: crouchingSnapshot(to), events: [] },
+      gameTimeMs(to),
+    )();
+  }
+  t.prepareStep(
+    {
+      snapshot: frame(1000200).snapshot,
+      step: { durationMs: durationMs(100) },
+      intents: [],
+    },
+    new Map([[player, 'idle']]),
+  )();
+  expect(t.read(player)).toMatchObject({
+    living: { mode: 'idle', startedAt: 1000100 },
+  });
+  const death = defeated(1000300, 1000200);
+  t.prepareCommit(
+    {
+      snapshot: death.snapshot,
+      events: [
+        {
+          type: 'ActorDefeated',
+          actorId: player,
+          runId: run,
+          eventId: domainEventId('held-death'),
+          sequence: 1,
+          at: gameTimeMs(1000100),
+          batchId: batchId('held-batch'),
+        },
+      ],
+    },
+    gameTimeMs(1000100),
+  )();
+  const held = t.read(player);
+  expect(held).toMatchObject({
+    kind: 'defeat',
+    entry: { mode: 'crouch', startedAt: 0, playback: 'hold' },
+    entryAt: 1000100,
+  });
+  if (held?.kind !== 'defeat' || 'kind' in held.entry)
+    throw Error('Missing held death');
+  expect(poseClipTime(held.entry, held.entryAt, 'left')).toBe(0);
+  t.dispose();
+  const invalid = createPoseTimeline(run);
+  expect(() =>
+    invalid.bindPreparedCatalog({
+      ...bindings,
+      locomotion: { ...bindings.locomotion, crouch: clipId('Missing') },
+    }),
+  ).toThrow(/locomotion/);
+  invalid.bindPreparedCatalog(bindings);
+  expect(() =>
+    invalid.prepareCommit(
+      { snapshot: crouchingSnapshot(0), events: [] },
+      gameTimeMs(0),
+      new Map([[player, 'crouch']]),
+    ),
+  ).toThrow(/crouch/);
+  invalid.dispose();
+});
+
+test('stamped crouch mapping mismatch is rejected before actor allocation', () => {
+  const h = setup();
+  expect(() =>
+    createActorAnimator(h.context, {
+      ...h.assets,
+      poseBindings: crouchBindings,
+    }),
+  ).toThrow(/mapping/);
+  expect(() =>
+    createActorAnimator(h.context, {
+      ...h.assets,
+      locomotionClips: crouchBindings.locomotion,
+    }),
+  ).toThrow(/mapping/);
+  expect(h.events).toEqual([]);
+});

@@ -52,6 +52,8 @@ export interface ActorState {
   readonly heat: HeatState;
   readonly attack: AttackState | null;
   readonly defeated: boolean;
+  /** Core-owned hold. Omitted legacy fixture values mean standing. */
+  readonly crouching?: boolean;
   /** Durable A-owned visual choice. Optional only for pre-P1 fixtures. Vehicle -> kick is provisional.
    * B seeks the shared presentation clock, applies the slow rate until its duration, then 1.0,
    * clamps to its mapped clip duration and holds the final pose. No render callback changes HP. */

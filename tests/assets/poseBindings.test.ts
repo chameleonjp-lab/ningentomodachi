@@ -164,3 +164,64 @@ test('binding construction captures inputs before yielding; catalog callback is 
   expect(catalog.pose).toBeUndefined();
   expect(catalog.list()).toEqual([]);
 });
+
+test('optional crouch bindings preserve old four-mode fixtures and reject missing declared clip', async () => {
+  const legacy = await buildPoseBindings(inputs);
+  expect(legacy.locomotion).toEqual({
+    idle: 'Idle',
+    walk: 'Walk',
+    run: 'Run',
+    jump: 'Jump',
+  });
+  expect(Object.hasOwn(legacy.locomotion, 'crouch')).toBe(false);
+  const crouch = {
+    clipId: clipId('CrouchMove'),
+    durationMs: durationMs(1234),
+    sourceSha256: 'c'.repeat(64),
+    sourceClipIndex: 7,
+  };
+  const complete = await buildPoseBindings([...inputs, crouch]);
+  expect(complete.locomotion.crouch).toBe('CrouchMove');
+  expect(complete.bindingSetId).not.toBe(legacy.bindingSetId);
+  // Independently SHA-256-derived from this literal synthetic provenance and the
+  // five-mode map, so omitting crouch from the set digest cannot pass.
+  expect(complete.bindingSetId).toBe(
+    'pose-set-v1:704b2f78e8d331e8271d4d918d7469ff37f1c0d269888db81990e0891a356749',
+  );
+  expect(complete.clips[0]?.sourceBindingId).toBe(
+    'pose-v1:d4175200f23993723d99fc87ee9e009fb3bf0c26ba09b76fcd833725572d063a',
+  );
+  expect(await buildPoseBindings([crouch, ...[...inputs].reverse()])).toEqual(
+    complete,
+  );
+  expect(complete.clips.map((c) => c.clipId)).toEqual([
+    'CrouchMove',
+    'Idle',
+    'Jump',
+    'Partial',
+    'Run',
+    'Walk',
+  ]);
+  for (const clip of legacy.clips)
+    expect(complete.clips.find((c) => c.clipId === clip.clipId)).toEqual(clip);
+  expect(capturePoseBindings(complete)).toEqual(complete);
+  expect(Object.isFrozen(complete.locomotion)).toBe(true);
+  for (const changed of [
+    { ...crouch, durationMs: durationMs(1235) },
+    { ...crouch, sourceSha256: 'd'.repeat(64) },
+    { ...crouch, sourceClipIndex: 8 },
+  ]) {
+    const different = await buildPoseBindings([...inputs, changed]);
+    expect(different.bindingSetId).not.toBe(complete.bindingSetId);
+    expect(
+      different.clips.find((c) => c.clipId === 'CrouchMove')?.sourceBindingId,
+    ).not.toBe(complete.clips[0]?.sourceBindingId);
+  }
+  for (const bad of [undefined, null, '', 1, 'Missing'])
+    expect(() =>
+      capturePoseBindings({
+        ...legacy,
+        locomotion: { ...legacy.locomotion, crouch: bad },
+      }),
+    ).toThrow(/locomotion/);
+});

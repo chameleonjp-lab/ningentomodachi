@@ -7,6 +7,7 @@ import {
   type GameSnapshot,
   type MotionCatalogPort,
   type MovementBasisSnapshot,
+  type LivingPoseMode,
   type PoseRunPolicy,
   type RecoveryTimelinePolicy,
   type RunId,
@@ -59,6 +60,7 @@ export function createSpatialEngine(
   // Identity-only tombstones never retain poses, nodes, clips or actor resources.
   const retired = new Set<ActorId>();
   let explicitResidency = false;
+  let activatedOpponentId: ActorId | undefined;
   let latestAuthority:
     | { revision: number; tick: number; residents: ReadonlySet<ActorId> }
     | undefined;
@@ -135,6 +137,20 @@ export function createSpatialEngine(
           locomotion: 'idle',
         });
     for (const state of output.snapshot.actors) {
+      const pose = poses.get(state.actorId);
+      if (pose && !state.defeated) {
+        const crouching =
+          state.crouching === true &&
+          pose.grounded &&
+          !state.attack &&
+          output.snapshot.phase === 'running';
+        if (crouching || pose.locomotion === 'crouch')
+          poses.set(state.actorId, {
+            ...pose,
+            velocity: v(0, pose.velocity.y, 0),
+            locomotion: crouching ? 'crouch' : pose.grounded ? 'idle' : 'jump',
+          });
+      }
       if (
         state.defeated ||
         (state.color !== 'white' &&
@@ -149,6 +165,73 @@ export function createSpatialEngine(
           });
       }
     }
+  }
+  // Plan without side effects. sync's authority guards must succeed before
+  // either the pair reset or its once-only marker becomes live.
+  function planEncounterReset(state: GameSnapshot) {
+    const opponentId = state.currentOpponentId;
+    if (
+      !layout.battleStage ||
+      !opponentId ||
+      opponentId === activatedOpponentId
+    )
+      return undefined;
+    const residents =
+      state.residentActorIds ?? state.actors.map((a) => a.actorId);
+    const player = state.actors.find(
+      (a) =>
+        a.color === 'white' && !a.defeated && residents.includes(a.actorId),
+    );
+    const opponent = state.actors.find(
+      (a) =>
+        a.actorId === opponentId &&
+        a.color !== 'white' &&
+        !a.defeated &&
+        residents.includes(a.actorId),
+    );
+    return player && opponent
+      ? { opponentId, actors: [player, opponent] }
+      : undefined;
+  }
+  function resetEncounter(plan: ReturnType<typeof planEncounterReset>) {
+    if (!plan) return;
+    for (const actor of plan.actors) {
+      poses.set(actor.actorId, {
+        actorId: actor.actorId,
+        position: { ...layout.actorSpawns[actor.color] },
+        facing: v(0, 0, actor.color === 'white' ? 1 : -1),
+        velocity: v(),
+        grounded: true,
+        locomotion: 'idle',
+      });
+      attacks.delete(actor.actorId);
+    }
+    activatedOpponentId = plan.opponentId;
+  }
+  function captureCheckpoint() {
+    return {
+      poses: new Map(poses),
+      attacks: new Map(attacks),
+      retired: new Set(retired),
+      explicitResidency,
+      latestAuthority,
+      lastTick,
+      lastTime,
+      activatedOpponentId,
+    };
+  }
+  function restoreCheckpoint(checkpoint: ReturnType<typeof captureCheckpoint>) {
+    poses.clear();
+    for (const [id, pose] of checkpoint.poses) poses.set(id, pose);
+    attacks.clear();
+    for (const [id, attack] of checkpoint.attacks) attacks.set(id, attack);
+    retired.clear();
+    for (const id of checkpoint.retired) retired.add(id);
+    explicitResidency = checkpoint.explicitResidency;
+    latestAuthority = checkpoint.latestAuthority;
+    lastTick = checkpoint.lastTick;
+    lastTime = checkpoint.lastTime;
+    activatedOpponentId = checkpoint.activatedOpponentId;
   }
   function snapshot(tick: SpatialSnapshot['tick']): SpatialSnapshot {
     return {
@@ -183,14 +266,48 @@ export function createSpatialEngine(
     isRetired: (id: ActorId) => retired.has(id),
     assertReplayAllowed,
     commit(output: CoreOutput): SpatialSnapshot {
+      const reset = planEncounterReset(output.snapshot);
+      const postureChanges = output.snapshot.actors.flatMap((actor) => {
+        const pose = poses.get(actor.actorId);
+        if (!pose || actor.defeated) return [];
+        const crouching =
+          actor.crouching === true &&
+          pose.grounded &&
+          !actor.attack &&
+          output.snapshot.phase === 'running';
+        const mode = crouching
+          ? ('crouch' as const)
+          : pose.grounded
+            ? ('idle' as const)
+            : ('jump' as const);
+        return (crouching || pose.locomotion === 'crouch') &&
+          pose.locomotion !== mode
+          ? [[actor.actorId, mode] as const]
+          : [];
+      });
+      const overrides = reset
+        ? new Map<ActorId, Exclude<LivingPoseMode, 'attack'>>(
+            reset.actors.map((actor) => [actor.actorId, 'idle']),
+          )
+        : postureChanges.length
+          ? new Map(postureChanges)
+          : undefined;
       const applyPose = timeline?.prepareCommit(
         output,
         output.snapshot.clocks.gameTimeMs,
+        overrides,
       );
-      sync(output);
-      vehicles.commit(output, poses);
-      applyPose?.();
-      return snapshot(output.snapshot.clocks.tick);
+      const checkpoint = layout.battleStage ? captureCheckpoint() : undefined;
+      try {
+        sync(output);
+        resetEncounter(reset);
+        vehicles.commit(output, poses);
+        applyPose?.();
+        return snapshot(output.snapshot.clocks.tick);
+      } catch (error) {
+        if (checkpoint) restoreCheckpoint(checkpoint);
+        throw error;
+      }
     },
     begin(
       sessionId: string,
@@ -234,6 +351,7 @@ export function createSpatialEngine(
       retired.clear();
       latestAuthority = undefined;
       explicitResidency = false;
+      activatedOpponentId = undefined;
       usedSessions.clear();
     },
     step(
@@ -262,33 +380,41 @@ export function createSpatialEngine(
       // Validate descriptor/authority before any live motor or residency changes.
       timeline?.prepareStep(request, new Map());
       timeline?.validateAttackCatalog(state, catalog, stanceEnabled);
-      const checkpoint = timeline
-        ? {
-            poses: new Map(poses),
-            attacks: new Map(attacks),
-            retired: new Set(retired),
-            explicitResidency,
-            latestAuthority,
-            lastTick,
-            lastTime,
-          }
-        : undefined;
+      const reset = planEncounterReset(state);
+      const inactive =
+        state.phase !== 'running' ||
+        state.result !== null ||
+        state.pauseReasons.length > 0;
+      // An inactive step skips the motor, but an admitted encounter reset must
+      // still install its prevalidated pose in the same transaction.
+      const applyInactiveReset =
+        reset && inactive
+          ? timeline?.prepareCommit(
+              { snapshot: state, events: [] },
+              state.clocks.gameTimeMs,
+              new Map<ActorId, Exclude<LivingPoseMode, 'attack'>>(
+                reset.actors.map((actor) => [actor.actorId, 'idle']),
+              ),
+            )
+          : undefined;
+      const checkpoint =
+        timeline || layout.battleStage ? captureCheckpoint() : undefined;
       try {
         sync({ snapshot: state, events: [] });
+        resetEncounter(reset);
         lastTick = state.clocks.tick;
         lastTime = state.clocks.gameTimeMs;
-        if (
-          state.phase !== 'running' ||
-          state.result ||
-          state.pauseReasons.length
-        )
+        if (inactive) {
+          applyInactiveReset?.();
           return { snapshot: snapshot(state.clocks.tick), candidates: [] };
+        }
 
         if (from < 0) throw new RangeError('Invalid spatial time interval');
         const player = state.actors.find((a) => a.color === 'white');
         const active = state.actors.filter(
           (a) =>
             !a.defeated &&
+            (!layout.battleStage || state.currentOpponentId !== null) &&
             poses.has(a.actorId) &&
             (a.actorId === player?.actorId ||
               a.actorId === state.currentOpponentId),
@@ -397,6 +523,9 @@ export function createSpatialEngine(
             }
             if (intent.type === 'JumpRequested') jump = true;
           }
+          const crouching =
+            actor.crouching === true && old.grounded && !actor.attack && !jump;
+          if (crouching) movement = v();
           // Outside combat, grounded travel supplies facing. Keep attack,
           // takeoff, and airborne orientation under their existing owners.
           if (
@@ -449,10 +578,18 @@ export function createSpatialEngine(
             layout,
             obstacles,
           );
-          poses.set(actor.actorId, result.actor);
+          const resolved =
+            crouching && result.actor.grounded
+              ? {
+                  ...result.actor,
+                  velocity: v(),
+                  locomotion: 'crouch' as const,
+                }
+              : result.actor;
+          poses.set(actor.actorId, resolved);
           trajectories.push({
             state: actor,
-            actor: result.actor,
+            actor: resolved,
             path: result.path,
             sample,
           });
@@ -478,19 +615,7 @@ export function createSpatialEngine(
         applyPose?.();
         return { snapshot: snapshot(state.clocks.tick), candidates };
       } catch (error) {
-        if (checkpoint) {
-          poses.clear();
-          for (const [id, pose] of checkpoint.poses) poses.set(id, pose);
-          attacks.clear();
-          for (const [id, attack] of checkpoint.attacks)
-            attacks.set(id, attack);
-          retired.clear();
-          for (const id of checkpoint.retired) retired.add(id);
-          explicitResidency = checkpoint.explicitResidency;
-          latestAuthority = checkpoint.latestAuthority;
-          lastTick = checkpoint.lastTick;
-          lastTime = checkpoint.lastTime;
-        }
+        if (checkpoint) restoreCheckpoint(checkpoint);
         throw error;
       }
     },

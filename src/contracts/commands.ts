@@ -28,6 +28,13 @@ export type GameplayCommand = Envelope & {
         readonly movementSessionId: string;
         readonly basisRevision: number;
       }
+    | {
+        readonly type: 'CrouchRequested';
+        readonly actorId: ActorId;
+        readonly active: boolean;
+        readonly movementSessionId: string;
+        readonly basisRevision: number;
+      }
     | { readonly type: 'JumpRequested'; readonly actorId: ActorId }
     | {
         readonly type: 'AttackRequested';

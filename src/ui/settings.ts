@@ -8,20 +8,21 @@ export interface ButtonSetting {
   readonly opacity: number;
 }
 export interface ControlSettings {
-  readonly version: 1;
+  readonly version: 1 | 2;
   readonly buttons: Readonly<Record<ButtonName, ButtonSetting>>;
 }
 export interface SettingsStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
-export const settingsKey = 'ningentomodachi.controls.v1';
+export const legacySettingsKey = 'ningentomodachi.controls.v1';
+export const settingsKey = 'ningentomodachi.controls.v2';
 export const defaultSettings: ControlSettings = Object.freeze({
-  version: 1,
+  version: 2,
   buttons: Object.freeze({
-    punch: Object.freeze({ x: 0.8, y: 0.65, size: 64, opacity: 0.85 }),
-    kick: Object.freeze({ x: 0.8, y: 0.85, size: 64, opacity: 0.85 }),
-    jump: Object.freeze({ x: 0.55, y: 0.85, size: 64, opacity: 0.85 }),
+    punch: Object.freeze({ x: 0.8, y: 0.65, size: 80, opacity: 0.85 }),
+    kick: Object.freeze({ x: 0.8, y: 0.85, size: 80, opacity: 0.85 }),
+    jump: Object.freeze({ x: 0.55, y: 0.85, size: 48, opacity: 0.85 }),
   }),
 });
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -32,7 +33,11 @@ const range = (value: unknown, min: number, max: number): value is number =>
   value >= min &&
   value <= max;
 export function validateSettings(value: unknown): value is ControlSettings {
-  if (!record(value) || value.version !== 1 || !record(value.buttons))
+  if (
+    !record(value) ||
+    (value.version !== 1 && value.version !== 2) ||
+    !record(value.buttons)
+  )
     return false;
   return buttonNames.every((name) => {
     const b = value.buttons;
@@ -47,6 +52,21 @@ export function validateSettings(value: unknown): value is ControlSettings {
     );
   });
 }
+/** Upgrade only in memory. The original v1 key and bytes are never written. */
+function currentSettings(settings: ControlSettings): ControlSettings {
+  if (settings.version === 2) return settings;
+  const one = (name: ButtonName): ButtonSetting => ({
+    ...settings.buttons[name],
+    size:
+      settings.buttons[name].size === 64
+        ? defaultSettings.buttons[name].size
+        : settings.buttons[name].size,
+  });
+  return {
+    version: 2,
+    buttons: { punch: one('punch'), kick: one('kick'), jump: one('jump') },
+  };
+}
 export function readSettings(storage: SettingsStorage | undefined): {
   settings: ControlSettings;
   warning: string | null;
@@ -57,10 +77,12 @@ export function readSettings(storage: SettingsStorage | undefined): {
         settings: defaultSettings,
         warning: '端末内保存を利用できません。',
       };
-    const raw = storage.getItem(settingsKey);
+    const raw =
+      storage.getItem(settingsKey) ?? storage.getItem(legacySettingsKey);
     if (raw === null) return { settings: defaultSettings, warning: null };
     const value: unknown = JSON.parse(raw);
-    if (validateSettings(value)) return { settings: value, warning: null };
+    if (validateSettings(value))
+      return { settings: currentSettings(value), warning: null };
   } catch {
     /* Storage and corrupt data cannot block play. */
   }
@@ -73,7 +95,9 @@ export function saveSettings(
   settings: ControlSettings,
   storage: SettingsStorage | undefined,
 ): { settings: ControlSettings; saved: boolean } {
-  const safe = validateSettings(settings) ? settings : defaultSettings;
+  const safe = validateSettings(settings)
+    ? currentSettings(settings)
+    : defaultSettings;
   try {
     if (!storage) return { settings: safe, saved: false };
     storage.setItem(settingsKey, JSON.stringify(safe));
@@ -103,63 +127,113 @@ export function resolveLayout(
   const bottom = viewport.heightCssPx - viewport.safeAreaCssPx.bottom - 8;
   const width = Math.max(0, right - left);
   const height = Math.max(0, bottom - top);
-  const make = (source: ControlSettings): Record<ButtonName, ButtonLayout> => {
-    const one = (name: ButtonName) => {
-      const b = source.buttons[name];
-      return {
-        x: left + Math.max(0, width - b.size) * b.x,
-        y: top + Math.max(0, height - b.size) * b.y,
-        size: b.size,
-        opacity: b.opacity,
-      };
+  const gap = 12;
+  const controlsLeft = Math.max(left, viewport.widthCssPx * 0.4 + gap);
+  const source = validateSettings(settings)
+    ? currentSettings(settings)
+    : defaultSettings;
+  const one = (name: ButtonName): ButtonLayout => {
+    const b = source.buttons[name];
+    return {
+      x: left + Math.max(0, width - b.size) * b.x,
+      y: top + Math.max(0, height - b.size) * b.y,
+      size: b.size,
+      opacity: b.opacity,
     };
-    return { punch: one('punch'), kick: one('kick'), jump: one('jump') };
   };
   const fits = (buttons: Record<ButtonName, ButtonLayout>) => {
     const list = Object.values(buttons);
+    // Normalizing an explicitly saved layout may introduce subpixel roundoff.
+    const epsilon = 1e-7;
     return (
       list.every(
-        (b) => b.size <= width && b.size <= height && b.x >= left + width * 0.4,
+        (b) =>
+          b.size >= 44 &&
+          b.x >= controlsLeft - epsilon &&
+          b.y >= top - epsilon &&
+          b.x + b.size <= right + epsilon &&
+          b.y + b.size <= bottom + epsilon,
       ) &&
       list.every((a, i) =>
         list
           .slice(i + 1)
           .every(
             (b) =>
-              a.x + a.size + 8 <= b.x ||
-              b.x + b.size + 8 <= a.x ||
-              a.y + a.size + 8 <= b.y ||
-              b.y + b.size + 8 <= a.y,
+              a.x + a.size + gap <= b.x + epsilon ||
+              b.x + b.size + gap <= a.x + epsilon ||
+              a.y + a.size + gap <= b.y + epsilon ||
+              b.y + b.size + gap <= a.y + epsilon,
           ),
       )
     );
   };
-  const candidate = make(
-    validateSettings(settings) ? settings : defaultSettings,
-  );
-  if (fits(candidate))
-    return { buttons: candidate, usable: true, warning: null };
-  // Compact fallback reserves the left half for swipe and the top for HUD/navigation.
-  const size = Math.max(
-    44,
-    Math.min(64, (width * 0.6 - 8) / 2, (height - 8) / 2),
-  );
-  const x = right - size;
-  const y = bottom - size;
-  const buttons = {
-    punch: { x, y: y - size - 8, size, opacity: 0.85 },
-    kick: { x, y, size, opacity: 0.85 },
-    jump: { x: x - size - 8, y, size, opacity: 0.85 },
+  const candidate = {
+    punch: one('punch'),
+    kick: one('kick'),
+    jump: one('jump'),
   };
+  const initialPlacement = buttonNames.every(
+    (name) =>
+      source.buttons[name].x === defaultSettings.buttons[name].x &&
+      source.buttons[name].y === defaultSettings.buttons[name].y,
+  );
+  if (!initialPlacement && fits(candidate))
+    return { buttons: candidate, usable: true, warning: null };
+  // Right-thumb cluster. Keep a separate left-side swipe region and never
+  // shrink any target below 44px, even when the viewport cannot fit the result.
+  const availableWidth = right - controlsLeft;
+  const jumpSize = Math.max(
+    44,
+    Math.min(source.buttons.jump.size, 48, availableWidth - gap - 44, height),
+  );
+  const desiredPunch = initialPlacement
+    ? source.buttons.punch.size
+    : Math.min(source.buttons.punch.size, 80);
+  const desiredKick = initialPlacement
+    ? source.buttons.kick.size
+    : Math.min(source.buttons.kick.size, 80);
+  const maxAttackSize = Math.max(44, availableWidth - gap - jumpSize);
+  const boundedPunch = Math.min(desiredPunch, maxAttackSize);
+  const boundedKick = Math.min(desiredKick, maxAttackSize);
+  // Reserve both minimum targets before sharing the remaining vertical space.
+  // Scaling whole unequal targets then clamping one to 44 could falsely fail.
+  const extra = boundedPunch + boundedKick - 88;
+  const scale =
+    extra > 0 ? Math.max(0, Math.min(1, (height - gap - 88) / extra)) : 1;
+  const punchSize = 44 + Math.floor((boundedPunch - 44) * scale);
+  const kickSize = 44 + Math.floor((boundedKick - 44) * scale);
+  const buttons = {
+    punch: {
+      x: right - punchSize,
+      y: bottom - kickSize - gap - punchSize,
+      size: punchSize,
+      opacity: source.buttons.punch.opacity,
+    },
+    kick: {
+      x: right - kickSize,
+      y: bottom - kickSize,
+      size: kickSize,
+      opacity: source.buttons.kick.opacity,
+    },
+    jump: {
+      x: right - Math.max(punchSize, kickSize) - gap - jumpSize,
+      y: bottom - jumpSize,
+      size: jumpSize,
+      opacity: source.buttons.jump.opacity,
+    },
+  };
+  const usable = fits(buttons);
   return {
     buttons,
-    usable: fits(buttons),
-    warning: fits(buttons)
-      ? '画面に収まる初期配置へ調整しました。'
-      : '画面が小さすぎます。画面を広げるか横向きにしてください。',
+    usable,
+    warning: !usable
+      ? '画面が小さすぎます。画面を広げてください。'
+      : initialPlacement
+        ? null
+        : '画面に収まる初期配置へ調整しました。',
   };
 }
-/** Persist the safe layout actually displayed, not rejected overlapping/offscreen coordinates. */
+/** Resolve in memory; only an explicit save may persist this displayed layout. */
 export function settingsForLayout(
   settings: ControlSettings,
   viewport: ViewportSnapshot,
@@ -180,7 +254,7 @@ export function settingsForLayout(
     };
   };
   return {
-    version: 1,
+    version: 2,
     buttons: { punch: one('punch'), kick: one('kick'), jump: one('jump') },
   };
 }

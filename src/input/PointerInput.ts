@@ -35,6 +35,12 @@ export function createPointerInput(
     y: number;
     basis: MovementBasisSnapshot;
     actorId: ActorId;
+    jumpFired: boolean;
+    crouchHeld: boolean;
+    crouchPending: boolean | null;
+    crouchRequestedAtTick: number | null;
+    update: number;
+    vertical: 'up' | 'down' | null;
   } | null = null;
   const emit = (command: GameCommand) => {
     for (const listener of [...listeners]) listener(command);
@@ -81,7 +87,19 @@ export function createPointerInput(
           `${context.runId}:gesture:${++gesture}`,
         );
         if (basis.runId !== context.runId) return;
-        movement = { pointerId, x, y, basis, actorId };
+        movement = {
+          pointerId,
+          x,
+          y,
+          basis,
+          actorId,
+          jumpFired: false,
+          crouchHeld: false,
+          crouchPending: null,
+          crouchRequestedAtTick: null,
+          update: 0,
+          vertical: null,
+        };
         pointers.set(pointerId, action);
         emit({
           type: 'MoveRequested',
@@ -121,19 +139,89 @@ export function createPointerInput(
         !Number.isFinite(y)
       )
         return;
-      const dx = (x - movement.x) / 64;
-      const dz = (movement.y - y) / 64;
-      const length = Math.max(1, Math.hypot(dx, dz));
+      const current = movement;
+      const dx = x - current.x;
+      const dy = y - current.y;
+      if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+      const update = ++current.update;
+      const vertical =
+        Math.abs(dy) >= 32 && Math.abs(dy) >= Math.abs(dx) * 1.25
+          ? dy < 0
+            ? 'up'
+            : 'down'
+          : null;
+      const inDeadzone = Math.hypot(dx, dy) <= 12;
+      const snapshot = context.readSnapshot();
+      const actor = snapshot?.actors.find(
+        (actor) => actor.actorId === current.actorId,
+      );
+      // A false stance after an admitted tick is authoritative even if an
+      // entire attack occurred between pointer events. Before that tick the
+      // true request may still be queued, so unrelated publications cannot
+      // clear its optimistic hold. Neither observation rearms a down crossing.
+      if (
+        current.crouchHeld &&
+        current.crouchPending !== true &&
+        snapshot &&
+        actor &&
+        !actor.crouching &&
+        (actor.attack ||
+          (current.crouchRequestedAtTick !== null &&
+            snapshot.clocks.tick > current.crouchRequestedAtTick))
+      ) {
+        current.crouchHeld = false;
+        current.crouchRequestedAtTick = null;
+      }
+      const releaseCrouch = current.crouchHeld && (inDeadzone || dy <= 0);
+      const startCrouch = vertical === 'down' && current.vertical !== 'down';
+      const jump = vertical === 'up' && !current.jumpFired;
+      current.vertical = vertical;
+      if (releaseCrouch || startCrouch) {
+        current.crouchHeld = startCrouch;
+        current.crouchPending = startCrouch;
+      }
+      // Every event is lateral OR vertical. Retain the session's captured
+      // basis, but never translate a vertical swipe into depth travel.
       emit({
         type: 'MoveRequested',
         runId: context.runId,
-        actorId: movement.actorId,
-        x: dx / length,
-        z: dz / length,
-        movementSessionId: movement.basis.sessionId,
-        basisRevision: movement.basis.revision,
+        actorId: current.actorId,
+        x:
+          vertical || inDeadzone || current.crouchHeld
+            ? 0
+            : Math.max(-1, Math.min(1, dx / 64)),
+        z: 0,
+        movementSessionId: current.basis.sessionId,
+        basisRevision: current.basis.revision,
         input: packet(),
       });
+      if (movement !== current || current.update !== update) return;
+      if (current.crouchPending !== null) {
+        const active = current.crouchPending;
+        current.crouchPending = null;
+        current.crouchRequestedAtTick = active
+          ? (context.readSnapshot()?.clocks.tick ?? null)
+          : null;
+        emit({
+          type: 'CrouchRequested',
+          runId: context.runId,
+          actorId: current.actorId,
+          active,
+          movementSessionId: current.basis.sessionId,
+          basisRevision: current.basis.revision,
+          input: packet(),
+        });
+      }
+      if (movement !== current || current.update !== update) return;
+      if (jump) {
+        current.jumpFired = true;
+        emit({
+          type: 'JumpRequested',
+          runId: context.runId,
+          actorId: current.actorId,
+          input: packet(),
+        });
+      }
     },
     pointerUp(pointerId, cancelled = false) {
       pointers.delete(pointerId);

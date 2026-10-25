@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Vector3 } from 'three';
+import { Box3, Mesh, PerspectiveCamera, Ray, Vector3 } from 'three';
 import { expect, test } from 'vitest';
 import { type CameraFrame, createCameraRig } from '../../src/camera/camera-rig';
 import { cameraSphereBlocked } from '../../src/camera/sphere-box';
@@ -9,7 +9,12 @@ import {
   worldObjectId,
 } from '../../src/contracts';
 import { toBox } from '../../src/world/character-motor';
-import { createParisStreetLayout } from '../../src/world/street-layout';
+import {
+  createParisBattleLayout,
+  createParisStreetLayout,
+} from '../../src/world/street-layout';
+import { createParisStreet } from '../../src/scene/paris-street';
+import { run } from '../world/fixtures';
 import { viewport } from '../world/fixtures';
 
 const landscape = { ...viewport, widthCssPx: 800, heightCssPx: 400 };
@@ -250,4 +255,183 @@ test('combat wall safety overrides the preferred low pitch without cropping bodi
     ),
   ).toBe(false);
   projected(frame, [a, b], landscape);
+});
+
+// Removing the stage-only fixed ray/bounds budget must break this real projection.
+test('portrait stage dollies back without overhead fallback or foreground occlusion', () => {
+  const layout = createParisBattleLayout();
+  const street = createParisStreet(layout);
+  const cases: readonly (readonly [SpatialActor, SpatialActor])[] = [
+    [actor('white', -1.4), actor('blue', 1.4)],
+    [actor('white', -1.4), actor('blue', 1.4, 3)],
+    [actor('white', 1.4), actor('blue', -1.4)],
+    ...[-2, 2].flatMap((x) =>
+      [-5, 5].map(
+        (z) =>
+          [
+            { ...actor('white', z), position: { x, y: 0, z } },
+            {
+              ...actor('blue', z > 0 ? z - 1 : z + 1),
+              position: {
+                x: x > 0 ? x - 1 : x + 1,
+                y: 0,
+                z: z > 0 ? z - 1 : z + 1,
+              },
+            },
+          ] as const,
+      ),
+    ),
+    [
+      { ...actor('white', -5), position: { x: -2, y: 0, z: -5 } },
+      { ...actor('blue', 5, 3), position: { x: 2, y: 3, z: 5 } },
+    ],
+  ];
+  const backdrop: Box3[] = [];
+  street.root.updateMatrixWorld(true);
+  street.root.traverse((node) => {
+    if (!(node instanceof Mesh) || node.name === 'battle-stage-ground') return;
+    const box = new Box3().setFromObject(node);
+    expect(box.min.x).toBeGreaterThanOrEqual(7);
+    backdrop.push(box);
+  });
+  expect(backdrop.length).toBeGreaterThan(0);
+  const distances: number[] = [];
+  for (const [widthCssPx, heightCssPx, sideInset] of [
+    [390, 844, 0],
+    [844, 390, 44],
+    [320, 568, 0],
+  ] as const) {
+    const vp = {
+      ...viewport,
+      widthCssPx: widthCssPx,
+      heightCssPx: heightCssPx,
+      safeAreaCssPx: {
+        top: 24,
+        bottom: 20,
+        left: sideInset,
+        right: sideInset,
+      },
+    };
+    const exclusions = [
+      {
+        id: 'player-status' as const,
+        left: sideInset + 12,
+        top: 32,
+        right: widthCssPx - sideInset - 12,
+        bottom: 104,
+      },
+      {
+        id: 'punch' as const,
+        left: widthCssPx - sideInset - 92,
+        top: heightCssPx - 204,
+        right: widthCssPx - sideInset - 12,
+        bottom: heightCssPx - 124,
+      },
+      {
+        id: 'kick' as const,
+        left: widthCssPx - sideInset - 92,
+        top: heightCssPx - 112,
+        right: widthCssPx - sideInset - 12,
+        bottom: heightCssPx - 32,
+      },
+      {
+        id: 'jump' as const,
+        left: widthCssPx - sideInset - 152,
+        top: heightCssPx - 80,
+        right: widthCssPx - sideInset - 104,
+        bottom: heightCssPx - 32,
+      },
+    ];
+    for (const pair of cases) {
+      const [a, b] = pair;
+      const frame = createCameraRig(layout).update(a, b, vp, 0, [], {
+        runId: run,
+        layout: {
+          runId: run,
+          viewportRevision: vp.revision,
+          layoutRevision: 1,
+          rects: exclusions,
+        },
+      });
+      expect(frame.constrained).toBe(false);
+      expect(pitch(frame)).toBeCloseTo(6, 8);
+      expect(range(frame)).toBeGreaterThanOrEqual(2.5);
+      expect(frame.depth.x).toBeGreaterThan(0);
+      expect(frame.depth.z).toBeLessThan(0);
+      expect(
+        frame.presentationFit?.status,
+        JSON.stringify({ vp, a, b, frame }),
+      ).toBe('bounds-clear');
+      if (pair === cases[0]) distances.push(range(frame));
+      const camera = new PerspectiveCamera(
+        50,
+        vp.widthCssPx / vp.heightCssPx,
+        0.05,
+        250,
+      );
+      camera.position.copy(frame.position);
+      camera.lookAt(new Vector3().copy(frame.target));
+      camera.updateMatrixWorld(true);
+      for (const body of [a, b]) {
+        const projectedCorners: Vector3[] = [];
+        for (const x of [-0.5, 0.5])
+          for (const y of [0, 2.1])
+            for (const z of [-0.5, 0.5]) {
+              const point = new Vector3(
+                body.position.x + x,
+                body.position.y + y,
+                body.position.z + z,
+              );
+              const ray = new Ray(
+                camera.position,
+                point.clone().sub(camera.position).normalize(),
+              );
+              for (const box of backdrop) {
+                const hit = ray.intersectBox(box, new Vector3());
+                expect(
+                  hit === null ||
+                    hit.distanceTo(camera.position) >
+                      point.distanceTo(camera.position),
+                ).toBe(true);
+              }
+              const ndc = point.project(camera);
+              expect(Math.abs(ndc.z)).toBeLessThanOrEqual(1);
+              const css = new Vector3(
+                ((ndc.x + 1) * vp.widthCssPx) / 2,
+                ((1 - ndc.y) * vp.heightCssPx) / 2,
+                0,
+              );
+              expect(css.x).toBeGreaterThanOrEqual(
+                vp.safeAreaCssPx.left - 1e-7,
+              );
+              expect(css.x).toBeLessThanOrEqual(
+                vp.widthCssPx - vp.safeAreaCssPx.right + 1e-7,
+              );
+              expect(css.y).toBeGreaterThanOrEqual(vp.safeAreaCssPx.top - 1e-7);
+              expect(css.y).toBeLessThanOrEqual(
+                vp.heightCssPx - vp.safeAreaCssPx.bottom + 1e-7,
+              );
+              projectedCorners.push(css);
+            }
+        const left = Math.min(...projectedCorners.map((p) => p.x)),
+          right = Math.max(...projectedCorners.map((p) => p.x));
+        const top = Math.min(...projectedCorners.map((p) => p.y)),
+          bottom = Math.max(...projectedCorners.map((p) => p.y));
+        expect(
+          exclusions.some(
+            (r) =>
+              left < r.right + 4 &&
+              right > r.left - 4 &&
+              top < r.bottom + 4 &&
+              bottom > r.top - 4,
+          ),
+        ).toBe(false);
+      }
+    }
+  }
+  const [portraitDistance, landscapeDistance] = distances;
+  if (portraitDistance === undefined || landscapeDistance === undefined)
+    throw new Error('Missing compared stage projections');
+  expect(portraitDistance).toBeGreaterThan(landscapeDistance);
+  street.dispose();
 });

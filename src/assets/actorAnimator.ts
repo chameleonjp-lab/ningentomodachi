@@ -12,7 +12,6 @@ import type {
   PoseCatalogBindings,
   PoseClipBinding,
   PresentationTimeMs,
-  SpatialActor,
   StampedDefeatSeek,
 } from '../contracts';
 import {
@@ -77,9 +76,7 @@ export interface AnimatorAssets<Node> {
   readonly poseBindings?: PoseCatalogBindings;
   create(color: ActorColor): ActorRig<Node>;
   clipDuration(clipId: ClipId): DurationMs | undefined;
-  readonly locomotionClips: Readonly<
-    Record<SpatialActor['locomotion'], ClipId>
-  >;
+  readonly locomotionClips: PoseCatalogBindings['locomotion'];
 }
 export function createActorAnimator<Node>(
   context: AnimationModuleContext<Node>,
@@ -317,6 +314,7 @@ export function createActorAnimator<Node>(
         entry.rig.setEmissiveEnabled(true);
         const clip =
           actor.attack?.clipId ?? assets.locomotionClips[spatial.locomotion];
+        if (!clip) throw new Error('Unavailable animation clip');
         const duration = assets.clipDuration(clip);
         if (
           duration === undefined ||
@@ -334,9 +332,11 @@ export function createActorAnimator<Node>(
             (actor.attack?.startedAt ?? entry.startedAt),
         );
         const clipMs =
-          actor.attack || spatial.locomotion === 'jump'
-            ? Math.min(duration, elapsed)
-            : elapsed % duration;
+          !actor.attack && spatial.locomotion === 'crouch'
+            ? 0
+            : actor.attack || spatial.locomotion === 'jump'
+              ? Math.min(duration, elapsed)
+              : elapsed % duration;
         entry.rig.seek(clip, clipMs / 1000);
       }
     },
@@ -390,7 +390,7 @@ function createStampedActorAnimator<Node>(
     if (duration(binding.clipId) !== binding.durationMs)
       throw new Error('Pose binding and visual duration differ');
   const locomotion = assets.locomotionClips;
-  for (const mode of ['idle', 'walk', 'run', 'jump'] as const)
+  for (const mode of ['idle', 'walk', 'run', 'jump', 'crouch'] as const)
     if (locomotion[mode] !== descriptor.locomotion[mode])
       throw new Error('Pose locomotion and visual mapping differ');
   for (const name of ['DefeatPunch', 'DefeatKick'])

@@ -81,13 +81,14 @@ export function createPoseTimeline(
   function stamp(mode: Mode, startedAt: GameTimeMs, source = bindings!) {
     const binding = source.clips.find(
       (b) => b.clipId === source.locomotion[mode],
-    )!;
+    );
+    if (!binding) throw new Error(`Missing ${mode} pose locomotion binding`);
     return createLivingPoseStamp({
       version: 1,
       binding,
       mode,
       startedAt,
-      playback: mode === 'jump' ? 'clamp' : 'loop',
+      playback: mode === 'crouch' ? 'hold' : mode === 'jump' ? 'clamp' : 'loop',
       activationId: null,
     });
   }
@@ -307,6 +308,12 @@ export function createPoseTimeline(
       for (const mode of ['idle', 'walk', 'run', 'jump'] as const)
         if (!ids.has(input.locomotion[mode]))
           throw new Error('Missing locomotion binding');
+      if (
+        'crouch' in input.locomotion &&
+        (typeof input.locomotion.crouch !== 'string' ||
+          !ids.has(input.locomotion.crouch))
+      )
+        throw new Error('Missing crouch locomotion binding');
       const captured: PoseCatalogBindings = Object.freeze({
         version: 1,
         bindingSetId: input.bindingSetId,
@@ -363,7 +370,11 @@ export function createPoseTimeline(
           throw new Error('Attack pose timing mismatch');
       }
     },
-    prepareCommit(output: CoreOutput, activationAt: GameTimeMs) {
+    prepareCommit(
+      output: CoreOutput,
+      activationAt: GameTimeMs,
+      locomotionOverrides?: ReadonlyMap<ActorId, Mode>,
+    ) {
       const next = seed(output, activationAt);
       const state = output.snapshot,
         now = state.clocks.gameTimeMs;
@@ -452,6 +463,17 @@ export function createPoseTimeline(
           } else {
             if (resident.defeat || event)
               throw new Error('Conflicting living authority');
+            const override = locomotionOverrides?.get(actor.actorId);
+            if (override !== undefined)
+              resident = {
+                ...resident,
+                mode: override,
+                selections: [stamp(override, now)],
+                recoveries: [],
+                startups: NO_STARTUPS,
+                unqualified: undefined,
+                step: undefined,
+              };
             // Encounter outcomes cancel any surviving activation at the batch time.
             const cancellation = deaths
               .map((e) => e.at)
@@ -546,6 +568,28 @@ export function createPoseTimeline(
             ? resident.startups.filter((r) => r.epoch.endMs >= from)
             : NO_STARTUPS,
         };
+        // Crouch is an already-admitted Core posture at the left boundary,
+        // not a motor-end blend from the prior standing capsule/pose.
+        const motorMode = motorEnds.get(actor.actorId);
+        const posture =
+          actor.crouching === true && !actor.attack && motorMode === 'crouch'
+            ? 'crouch'
+            : resident.mode === 'crouch'
+              ? motorMode === 'jump'
+                ? 'jump'
+                : 'idle'
+              : undefined;
+        if (posture !== undefined && posture !== resident.mode) {
+          // Interior truncation/cancellation must retain this admitted posture,
+          // not the prior interval's mode. The older selection still owns the
+          // strict-left boundary used by a same-time death.
+          resident = {
+            ...resident,
+            mode: posture,
+            step: { from, to: now, held: posture },
+          };
+          resident = select(resident, stamp(posture, from));
+        }
         resident = attackSelection(resident, actor, now, startupBases);
         const mode = motorEnds.get(actor.actorId) ?? resident.mode;
         const current = resident.selections.at(-1)!;

@@ -56,6 +56,42 @@ export function createParisStreet(layout: StreetLayout) {
     parent.add(m);
     return m;
   }
+  if (layout.battleStage) {
+    const ground = mesh(root, paving, 0, -0.12, 0, 20, 0.2, 30);
+    ground.name = 'battle-stage-ground';
+    const backdrop = new Group();
+    backdrop.name = 'battle-stage-backdrop';
+    root.add(backdrop);
+    // All vertical scenery, including facade trim and balconies, stays beyond
+    // the battle area's far edge. The fixed camera ray approaches from -X.
+    const facadeX = layout.battleStage.backdropMinX + 3;
+    for (const z of [-12, 0, 12]) {
+      const building = new Group();
+      building.position.set(facadeX, 0, z);
+      backdrop.add(building);
+      mesh(building, stone, 0, 4, 0, 4, 8, 11.8);
+      for (const y of [3, 6, 8.1])
+        mesh(building, trim, 0, y, 0, 4.25, 0.18, 12);
+      for (const dz of [-4, -2, 0, 2, 4]) {
+        mesh(building, glass, -2.03, 1.6, dz, 0.08, 2.5, 1.5);
+        for (const y of [4.5, 6.9]) {
+          mesh(building, glass, -2.04, y, dz, 0.08, 1.5, 1.2);
+          mesh(building, iron, -2.32, y - 0.5, dz, 0.45, 0.1, 1.5);
+        }
+      }
+      mesh(building, gold, -2.12, 2.95, 0, 0.12, 0.4, 10);
+      mesh(building, iron, -2.4, 2.55, 0, 0.9, 0.16, 10);
+    }
+    return {
+      root,
+      update(_snapshot: GameSnapshot, _spatial: SpatialSnapshot) {},
+      dispose() {
+        for (const geometry of geometries) geometry.dispose();
+        for (const mat of materials) mat.dispose();
+        root.clear();
+      },
+    };
+  }
   mesh(root, road, 0, -0.12, 31, 14, 0.2, 76);
   for (const side of [-1, 1]) {
     mesh(root, paving, side * 5.5, -0.015, 31, 3, 0.08, 76);

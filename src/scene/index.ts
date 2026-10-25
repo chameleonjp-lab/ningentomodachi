@@ -358,13 +358,26 @@ export function createSceneAdapter(
         frame.snapshot.presentation.kind === 'clear-slow'
           ? frame.snapshot.presentation.actorId
           : null;
+      const initialOpponent =
+        layout.battleStage &&
+        (frame.snapshot.phase === 'loading' || frame.snapshot.phase === 'ready')
+          ? frame.snapshot.actors.find(
+              (actor) =>
+                actor.color === 'blue' &&
+                !actor.defeated &&
+                frame.snapshot.residentActorIds?.includes(actor.actorId),
+            )?.actorId
+          : undefined;
       const playerId = frame.snapshot.actors.find(
           (a) => a.color === 'white',
         )?.actorId,
         player = displayActors.find((a) => a.actorId === playerId),
         opponent = displayActors.find(
           (a) =>
-            a.actorId === (frame.snapshot.currentOpponentId ?? stagedOpponent),
+            a.actorId ===
+            (frame.snapshot.currentOpponentId ??
+              stagedOpponent ??
+              initialOpponent),
         );
       const time = frame.snapshot.clocks.presentationTimeMs,
         elapsed =
@@ -376,9 +389,10 @@ export function createSceneAdapter(
       for (const actor of [player, opponent])
         if (actor && !offsets.has(actor.actorId)) {
           const corners: Vector3[] = [];
-          for (const x of [-0.35, 0.35])
-            for (const y of [0, 1.85])
-              for (const z of [-0.35, 0.35])
+          const halfWidth = layout.battleStage ? 0.5 : 0.35;
+          for (const x of [-halfWidth, halfWidth])
+            for (const y of [0, layout.battleStage?.framingHeightM ?? 1.85])
+              for (const z of [-halfWidth, halfWidth])
                 corners.push({
                   x: actor.position.x + x,
                   y: actor.position.y + y,

@@ -16,7 +16,13 @@ import {
 
 /** Protocol declarations describe deterministic pose timing, NOT anatomical CCD acceptance. */
 export const POSE_PROTOCOL_VERSION = 1 as const;
-export type LivingPoseMode = 'idle' | 'walk' | 'run' | 'jump' | 'attack';
+export type LivingPoseMode =
+  | 'idle'
+  | 'walk'
+  | 'run'
+  | 'jump'
+  | 'crouch'
+  | 'attack';
 export type PoseSampleSide = 'left' | 'right';
 export interface PoseRunPolicy {
   readonly attackStartStance?: 'selected-side-kicks-v1';
@@ -36,7 +42,7 @@ export interface LivingPoseStamp {
   readonly binding: PoseClipBinding;
   readonly mode: LivingPoseMode;
   readonly startedAt: GameTimeMs;
-  readonly playback: 'loop' | 'clamp';
+  readonly playback: 'loop' | 'clamp' | 'hold';
   readonly activationId: AttackActivationId | null;
 }
 export interface DefeatPoseStamp {
@@ -61,7 +67,9 @@ export interface PoseCatalogBindings {
   readonly bindingSetId: string;
   readonly clips: readonly PoseClipBinding[];
   readonly locomotion: Readonly<
-    Record<Exclude<LivingPoseMode, 'attack'>, ClipId>
+    Record<Exclude<LivingPoseMode, 'attack' | 'crouch'>, ClipId> & {
+      readonly crouch?: ClipId;
+    }
   >;
 }
 export interface PoseDisplayCapability {
@@ -146,7 +154,7 @@ export function createLivingPoseStamp(input: LivingPoseStamp): LivingPoseStamp {
   const { binding, mode, playback, activationId } = input;
   if (
     input.version !== 1 ||
-    !['idle', 'walk', 'run', 'jump', 'attack'].includes(mode)
+    !['idle', 'walk', 'run', 'jump', 'crouch', 'attack'].includes(mode)
   )
     throw new RangeError('Invalid pose mode/version');
   if (
@@ -156,7 +164,14 @@ export function createLivingPoseStamp(input: LivingPoseStamp): LivingPoseStamp {
     binding.durationMs <= 0
   )
     throw new RangeError('Invalid pose binding');
-  if (playback !== (mode === 'attack' || mode === 'jump' ? 'clamp' : 'loop'))
+  if (
+    playback !==
+    (mode === 'crouch'
+      ? 'hold'
+      : mode === 'attack' || mode === 'jump'
+        ? 'clamp'
+        : 'loop')
+  )
     throw new RangeError('Invalid pose playback');
   if (mode === 'attack' ? !nonempty(activationId) : activationId !== null)
     throw new RangeError('Invalid pose activation');
@@ -216,6 +231,7 @@ function localTime(
     throw new RangeError('Invalid sample side');
   if (at < stamp.startedAt || (side === 'left' && at === stamp.startedAt))
     throw new RangeError('Pose has no sample before its activation');
+  if (stamp.playback === 'hold') return durationMs(0);
   const elapsed = at - stamp.startedAt;
   const duration = stamp.binding.durationMs;
   if (stamp.playback === 'clamp')
@@ -227,7 +243,7 @@ function localTime(
     side === 'left' && elapsed > 0 && position.seam ? duration : position.time,
   );
 }
-/** Source first-key holding is B's evaluator behavior; never shift or round clip time. */
+/** Explicit hold keeps source time zero. Otherwise never shift or round source clip time. */
 export function poseClipTime(
   stamp: LivingPoseStamp,
   at: GameTimeMs,
@@ -274,9 +290,11 @@ export function poseClipIntervals(
       while (cursor < to) {
         const start = localTime(stamp, cursor, 'right');
         const held =
-          stamp.playback === 'clamp' && start === stamp.binding.durationMs;
-        const boundary =
-          stamp.playback === 'clamp'
+          stamp.playback === 'hold' ||
+          (stamp.playback === 'clamp' && start === stamp.binding.durationMs);
+        const boundary = held
+          ? to
+          : stamp.playback === 'clamp'
             ? stamp.startedAt + stamp.binding.durationMs
             : stamp.startedAt +
               (loopPosition(stamp, cursor).cycle + 1) *

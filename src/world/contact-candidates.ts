@@ -251,6 +251,13 @@ export function combatContacts(
         }
         continue;
       }
+      // A single finalized Core stance owns this entire admitted interval.
+      // Never sweep between old standing and new low capsule endpoints.
+      const crouching =
+        target.state.crouching === true &&
+        target.actor.grounded &&
+        !target.state.attack &&
+        !target.state.defeated;
       const cuts = [
         sweep.from,
         ...target.path
@@ -272,8 +279,8 @@ export function combatContacts(
             sweep.end,
             (to - sweep.from) / (sweep.to - sweep.from),
           ),
-          combatHurt(positionAt(target.path, from)),
-          combatHurt(positionAt(target.path, to)),
+          combatHurt(positionAt(target.path, from), crouching),
+          combatHurt(positionAt(target.path, to), crouching),
         );
         if (hit)
           candidates.push({
