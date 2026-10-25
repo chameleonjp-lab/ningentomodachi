@@ -1,4 +1,9 @@
 import type {
+  FightingAttackState,
+  FightingClock,
+  FightingCombatantState,
+} from './fighting';
+import type {
   ActiveRealTimeMs,
   DurationMs,
   GameTimeMs,
@@ -36,6 +41,8 @@ export type ActionPermission =
         | 'unavailable';
     };
 export interface AttackState {
+  /** Absent means the unchanged legacy path, not an implicit v3 attack. */
+  readonly fighting?: FightingAttackState;
   readonly activationId: AttackActivationId;
   readonly clipId: ClipId;
   readonly category: AttackCategory;
@@ -45,6 +52,9 @@ export interface AttackState {
   readonly impactBindings: readonly ImpactBinding[];
 }
 export interface ActorState {
+  readonly fighting?: FightingCombatantState;
+  /** Sole delivery field for planned beginStep and accepted completeStep motion slices. */
+  readonly fightingClock?: FightingClock;
   readonly actorId: ActorId;
   readonly color: ActorColor;
   readonly hp: number;
