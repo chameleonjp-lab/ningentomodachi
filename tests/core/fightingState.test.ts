@@ -16,6 +16,7 @@ import {
   applyFightingTransition,
   createFightingCombatant,
   fightingHeatCost,
+  receiveFightingInputs,
 } from '../../src/core/fightingState';
 import {
   resolveFightingContact,
@@ -60,6 +61,48 @@ function tickMany(
   return next;
 }
 
+describe('approved A exclusions preserve paid attacks and their native recovery', () => {
+  test.each(['PP', 'K', 'KP'] as const)(
+    '%s + P cannot start an inactive role or a neutral replacement after a confirmed hit',
+    (route) => {
+      const active = attack(route);
+      const confirmed = applyFightingTransition(active, {
+        type: 'hit-confirmed',
+        contactAgeTicks: active.moveAgeTicks,
+      });
+      let baseline = confirmed;
+      let attempted = confirmed;
+      const rejected = edge(100);
+      let wall = 0;
+      while (baseline.phase !== 'neutral' && wall < 100) {
+        const before = attempted;
+        baseline = advanceFightingTick(baseline, [], false);
+        attempted = advanceFightingTick(
+          attempted,
+          wall === 0 ? [rejected, edge(101, 'K')] : [],
+          false,
+        );
+        expect(fightingHeatCost(before, attempted)).toBe(0);
+        const { buffer: _baselineBuffer, ...baselineMotion } = baseline;
+        const { buffer: _attemptedBuffer, ...attemptedMotion } = attempted;
+        expect(attemptedMotion).toEqual(baselineMotion);
+        if (confirmed.stopTicksRemaining > wall)
+          expect(attempted.buffer).toEqual({ edge: rejected, ageTicks: 0 });
+        wall++;
+      }
+      expect(wall).toBe(route === 'PP' ? 24 : route === 'K' ? 30 : 34);
+      expect(attempted).toMatchObject({
+        phase: 'neutral',
+        moveId: null,
+        stage: 0,
+        route: '',
+        buffer: null,
+      });
+      expect(advanceFightingTick(attempted, [], false).moveId).toBeNull();
+    },
+  );
+});
+
 describe('actor tick phases, starts and deterministic hit-only routes', () => {
   test('an accepted start has age zero; existing phases use half-open S/A/R intervals', () => {
     const initial = createFightingCombatant();
@@ -95,15 +138,15 @@ describe('actor tick phases, starts and deterministic hit-only routes', () => {
   test.each([
     ['P', ['p_short']],
     ['PP', ['p_short', 'p_body']],
-    ['PPP', ['p_short', 'p_body', 'p_finish']],
+    ['PPP', ['p_short', 'p_body']],
     ['PK', ['p_short', 'k_low']],
     ['PPK', ['p_short', 'p_body', 'k_turn']],
     ['K', ['k_front']],
     ['KK', ['k_front', 'k_turn']],
-    ['KP', ['k_front', 'p_entry']],
-    ['KPP', ['k_front', 'p_entry', 'p_finish']],
+    ['KP', ['k_front']],
+    ['KPP', ['k_front']],
   ] as const)(
-    '%s sequentially starts exactly its selected roles',
+    '%s sequentially starts only its active selected roles',
     (route, want) => {
       let state = createFightingCombatant();
       const moves: unknown[] = [];
@@ -126,10 +169,17 @@ describe('actor tick phases, starts and deterministic hit-only routes', () => {
           [edge(++index, button as 'P' | 'K')],
           false,
         );
-        expect(fightingHeatCost(before, state)).toBe(1);
-        moves.push(state.moveId);
-        expect(state.stage).toBe(index);
-        expect(state.buffer).toBeNull();
+        if (index <= want.length) {
+          expect(fightingHeatCost(before, state)).toBe(1);
+          moves.push(state.moveId);
+          expect(state.stage).toBe(index);
+          expect(state.buffer).toBeNull();
+        } else {
+          expect(fightingHeatCost(before, state)).toBe(0);
+          expect(state.moveId).toBe(before.moveId);
+          expect(state.route).toBe(before.route);
+          expect(state.stage).toBe(want.length);
+        }
       }
       expect(moves).toEqual(want);
     },
@@ -196,15 +246,15 @@ describe('actor tick phases, starts and deterministic hit-only routes', () => {
   });
 });
 
-describe('all seven cancel boundaries are relative to actual unfrozen contact', () => {
+describe('four active and three inactive cancel boundaries use actual unfrozen contact', () => {
   const cases = [
     ['P', 'P', 'p_body', 8],
     ['P', 'K', 'k_low', 3],
-    ['PP', 'P', 'p_finish', 8],
+    ['PP', 'P', null, 8],
     ['PP', 'K', 'k_turn', 3],
     ['K', 'K', 'k_turn', 5],
-    ['K', 'P', 'p_entry', 7],
-    ['KP', 'P', 'p_finish', 8],
+    ['K', 'P', null, 7],
+    ['KP', 'P', null, 8],
   ] as const;
   for (const [route, button, move, maximum] of cases)
     test(`${route}+${button}: delays 1/${maximum}/${maximum + 1} at every source active offset`, () => {
@@ -223,8 +273,9 @@ describe('all seven cancel boundaries are relative to actual unfrozen contact', 
             contactAgeTicks: contactAge,
           };
           const next = advanceFightingTick(state, [edge(1, button)], false);
-          expect(next.moveId).toBe(delay <= maximum ? move : state.moveId);
-          expect(fightingHeatCost(state, next)).toBe(delay <= maximum ? 1 : 0);
+          const starts = move !== null && delay <= maximum;
+          expect(next.moveId).toBe(starts ? move : state.moveId);
+          expect(fightingHeatCost(state, next)).toBe(starts ? 1 : 0);
         }
         const beforeStop = applyFightingTransition(attack(route, contactAge), {
           type: 'hit-confirmed',
@@ -245,9 +296,107 @@ describe('all seven cancel boundaries are relative to actual unfrozen contact', 
         expect(atContact.moveAgeTicks - (atContact.contactAgeTicks ?? -1)).toBe(
           0,
         );
-        expect(advanceFightingTick(atContact, [], false).moveId).toBe(move);
+        const zeroDelay = receiveFightingInputs(atContact, [], false);
+        expect(zeroDelay.moveId).toBe(beforeStop.moveId);
+        expect(fightingHeatCost(atContact, zeroDelay)).toBe(0);
+        expect(advanceFightingTick(atContact, [], false).moveId).toBe(
+          move ?? beforeStop.moveId,
+        );
       }
     });
+});
+
+describe('active A remains hit-only and guard never cancels paid recovery', () => {
+  test.each([
+    ['P', 'P'],
+    ['P', 'K'],
+    ['PP', 'K'],
+    ['K', 'K'],
+  ] as const)(
+    '%s + %s never branches from a block or whiff',
+    (route, button) => {
+      const source = attack(route);
+      if (!source.moveId) throw new Error('Expected a historical source role');
+      const descriptor = incomingDescriptor(source.moveId);
+      const block = resolveFightingContact(
+        descriptor,
+        {
+          ...createFightingCombatant(),
+          guardHeld: true,
+          guardHeight: 'standing',
+        },
+        1,
+        contactPolicy,
+      );
+      expect(block.kind).toBe('blocked');
+      if (block.kind !== 'blocked')
+        throw new Error('Expected a covered source');
+      for (const stopTicksRemaining of [0, block.stopTicks]) {
+        const unconfirmed = { ...source, stopTicksRemaining };
+        const queued = receiveFightingInputs(
+          unconfirmed,
+          [edge(200, button)],
+          false,
+        );
+        expect(queued.hitConfirmed).toBe(false);
+        expect(fightingHeatCost(unconfirmed, queued)).toBe(0);
+        const after = tickMany(queued, stopTicksRemaining + 1);
+        expect(after).toMatchObject({
+          moveId: source.moveId,
+          route,
+          stage: source.stage,
+          moveAgeTicks: source.moveAgeTicks + 1,
+          hitConfirmed: false,
+        });
+        expect(fightingHeatCost(queued, after)).toBe(0);
+        expect(tickMany(after, 60)).toMatchObject({
+          phase: 'neutral',
+          moveId: null,
+          buffer: null,
+        });
+      }
+    },
+  );
+  test.each([
+    ['PP', 16],
+    ['PPK', 27],
+    ['KK', 27],
+    ['PK', 22],
+    ['K', 20],
+  ] as const)(
+    '%s retains all %i recovery ticks when G is held',
+    (route, recovery) => {
+      const spec = FIGHTING_MOVE_SPECS[FIGHTING_GROUND_ROUTES[route]];
+      let state: FightingCombatantState = {
+        ...attack(route, spec.startupTicks + spec.activeTicks),
+        phase: 'recovery' as const,
+        hitConfirmed: true,
+        contactAgeTicks: spec.startupTicks,
+      };
+      for (let elapsed = 1; elapsed <= recovery; elapsed++) {
+        const before = state;
+        state = advanceFightingTick(state, [edge(300 + elapsed)], true);
+        expect(fightingHeatCost(before, state)).toBe(0);
+        expect(state.buffer).toBeNull();
+        if (elapsed < recovery) {
+          expect(state).toMatchObject({
+            phase: 'recovery',
+            moveId: before.moveId,
+            stage: route.length,
+            moveAgeTicks: spec.startupTicks + spec.activeTicks + elapsed,
+            guardHeight: null,
+          });
+        } else {
+          expect(state).toMatchObject({
+            phase: 'neutral',
+            moveId: null,
+            stage: 0,
+            guardHeight: 'standing',
+          });
+        }
+      }
+    },
+  );
 });
 
 describe('one finite chronological input slot', () => {
@@ -555,14 +704,14 @@ describe('forced clears, guard lock, landing recovery and accepted-start heat on
     }
   });
   test.each([
-    ['P', 27],
-    ['PP', 43],
-    ['PPP', 67],
-    ['PPK', 78],
-    ['KPP', 80],
+    ['P', 27, 1, 6],
+    ['PP', 43, 2, 12],
+    ['PPP', 43, 2, 12],
+    ['PPK', 78, 3, 21],
+    ['KPP', 40, 1, 7],
   ] as const)(
     '%s earliest legal full recovery is %i wall ticks including hitstop exactly once',
-    (route, want) => {
+    (route, want, starts, stoppedTicks) => {
       let state = advanceFightingTick(
         createFightingCombatant(),
         [edge(1, route[0] as 'P' | 'K')],
@@ -589,19 +738,8 @@ describe('forced clears, guard lock, landing recovery and accepted-start heat on
         state = next;
       }
       expect(wall).toBe(want);
-      expect(heat).toBe(route.length);
-      expect(state.tick - 1).toBe(
-        want -
-          (route === 'P'
-            ? 6
-            : route === 'PP'
-              ? 12
-              : route === 'PPP'
-                ? 20
-                : route === 'PPK'
-                  ? 21
-                  : 23),
-      );
+      expect(heat).toBe(starts);
+      expect(state.tick - 1).toBe(want - stoppedTicks);
     },
   );
 });

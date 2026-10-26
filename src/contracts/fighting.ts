@@ -46,6 +46,7 @@ export const FIGHTING_HZ = 60 as const;
 export const FIGHTING_MAX_STAGE = 3 as const;
 export const FIGHTING_BUFFER_MAX_AGE_TICKS = 6 as const;
 export const FIGHTING_DAMAGE_SCALES = Object.freeze([1, 0.8, 0.65] as const);
+/** Historical material roles, including roles excluded from active A selection. */
 export type FightingMoveId =
   | 'p_short'
   | 'p_body'
@@ -57,6 +58,18 @@ export type FightingMoveId =
   | 'c_body'
   | 'a_palm'
   | 'a_kick';
+/** Approved A selection; this does not shrink the historical material registry. */
+export const FIGHTING_ACTIVE_MOVE_IDS = Object.freeze([
+  'p_short',
+  'p_body',
+  'k_front',
+  'k_low',
+  'k_turn',
+  'c_body',
+  'a_palm',
+  'a_kick',
+] as const satisfies readonly FightingMoveId[]);
+export type FightingActiveMoveId = (typeof FIGHTING_ACTIVE_MOVE_IDS)[number];
 export type FightingPosture = 'standing' | 'crouching' | 'airborne';
 export type GuardHeight = 'standing' | 'crouching';
 export type HitLevel = 'high' | 'mid' | 'low';
@@ -87,6 +100,7 @@ export interface FightingMoveDefinition {
 }
 export type FightingMoveSpec = Omit<FightingMoveDefinition, 'clipId'>;
 /** Role data is not an asset binding. C supplies source-backed clip IDs separately. */
+/** Historical definitions remain complete; presence does not grant active selection. */
 export const FIGHTING_MOVE_SPECS: Readonly<
   Record<FightingMoveId, FightingMoveSpec>
 > = Object.freeze({
@@ -126,6 +140,7 @@ function spec(
     level,
   });
 }
+/** Historical routes retained for material validation and historical records. */
 export const FIGHTING_GROUND_ROUTES = Object.freeze({
   P: 'p_short',
   PP: 'p_body',
@@ -137,10 +152,19 @@ export const FIGHTING_GROUND_ROUTES = Object.freeze({
   KP: 'p_entry',
   KPP: 'p_finish',
 } as const);
+export const FIGHTING_ACTIVE_GROUND_ROUTES = Object.freeze({
+  P: 'p_short',
+  PP: 'p_body',
+  PK: 'k_low',
+  PPK: 'k_turn',
+  K: 'k_front',
+  KK: 'k_turn',
+} as const);
 export interface FightingEntry {
   readonly posture: FightingPosture;
   readonly moveId: FightingMoveId;
 }
+/** Exact historical backing catalog: 11 posture entries remain required for admission. */
 export const FIGHTING_ENTRIES: readonly FightingEntry[] = Object.freeze([
   ...(
     [
@@ -158,7 +182,14 @@ export const FIGHTING_ENTRIES: readonly FightingEntry[] = Object.freeze([
   Object.freeze({ posture: 'airborne', moveId: 'a_palm' }),
   Object.freeze({ posture: 'airborne', moveId: 'a_kick' }),
 ]);
+/** Readonly views of the nine active entries within the unchanged backing catalog. */
+export const FIGHTING_ACTIVE_ENTRIES: readonly FightingEntry[] = Object.freeze(
+  FIGHTING_ENTRIES.filter(({ moveId }) =>
+    FIGHTING_ACTIVE_MOVE_IDS.some((activeMoveId) => activeMoveId === moveId),
+  ),
+);
 /** Hit-confirmed edges only; delays count unfrozen ticks after contact (minimum 1). */
+/** Historical cancel records are retained, not active-selection permission. */
 export const FIGHTING_CANCEL_EDGES = Object.freeze([
   Object.freeze({ from: 'P', to: 'PP', maxDelayTicks: 8 }),
   Object.freeze({ from: 'P', to: 'PK', maxDelayTicks: 3 }),
@@ -167,6 +198,13 @@ export const FIGHTING_CANCEL_EDGES = Object.freeze([
   Object.freeze({ from: 'K', to: 'KK', maxDelayTicks: 5 }),
   Object.freeze({ from: 'K', to: 'KP', maxDelayTicks: 7 }),
   Object.freeze({ from: 'KP', to: 'KPP', maxDelayTicks: 8 }),
+] as const);
+/** Active A hit-only edges; delays retain the historical unfrozen-tick units. */
+export const FIGHTING_ACTIVE_CANCEL_EDGES = Object.freeze([
+  Object.freeze({ from: 'P', to: 'PP', maxDelayTicks: 8 }),
+  Object.freeze({ from: 'P', to: 'PK', maxDelayTicks: 3 }),
+  Object.freeze({ from: 'PP', to: 'PPK', maxDelayTicks: 3 }),
+  Object.freeze({ from: 'K', to: 'KK', maxDelayTicks: 5 }),
 ] as const);
 export interface FightingCombatantState {
   readonly tick: number;

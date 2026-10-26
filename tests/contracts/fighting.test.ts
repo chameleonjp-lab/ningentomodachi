@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTRACT_VERSION,
+  FIGHTING_ACTIVE_MOVE_IDS,
+  FIGHTING_ACTIVE_GROUND_ROUTES,
+  FIGHTING_ACTIVE_ENTRIES,
+  FIGHTING_ACTIVE_CANCEL_EDGES,
+  type FightingActiveMoveId,
   activeRealTimeMs,
   presentationTimeMs,
   actorId,
@@ -324,6 +329,230 @@ describe('adopted fighting inventory', () => {
       expect(() =>
         captureFightingMoveDefinition({ ...m, ...patch } as typeof m),
       ).toThrow(RangeError);
+  });
+});
+
+describe('approved A active composition', () => {
+  it('activeARosterHasEightRolesNineEntriesSixRoutesFourEdges', () => {
+    const activeIds: readonly FightingActiveMoveId[] = FIGHTING_ACTIVE_MOVE_IDS;
+    expect(activeIds).toEqual([
+      'p_short',
+      'p_body',
+      'k_front',
+      'k_low',
+      'k_turn',
+      'c_body',
+      'a_palm',
+      'a_kick',
+    ]);
+    expect(FIGHTING_ACTIVE_GROUND_ROUTES).toEqual({
+      P: 'p_short',
+      PP: 'p_body',
+      PK: 'k_low',
+      PPK: 'k_turn',
+      K: 'k_front',
+      KK: 'k_turn',
+    });
+    expect(FIGHTING_ACTIVE_ENTRIES).toEqual([
+      { posture: 'standing', moveId: 'p_short' },
+      { posture: 'standing', moveId: 'p_body' },
+      { posture: 'standing', moveId: 'k_front' },
+      { posture: 'standing', moveId: 'k_low' },
+      { posture: 'standing', moveId: 'k_turn' },
+      { posture: 'crouching', moveId: 'c_body' },
+      { posture: 'crouching', moveId: 'k_low' },
+      { posture: 'airborne', moveId: 'a_palm' },
+      { posture: 'airborne', moveId: 'a_kick' },
+    ]);
+    expect(FIGHTING_ACTIVE_CANCEL_EDGES).toEqual([
+      { from: 'P', to: 'PP', maxDelayTicks: 8 },
+      { from: 'P', to: 'PK', maxDelayTicks: 3 },
+      { from: 'PP', to: 'PPK', maxDelayTicks: 3 },
+      { from: 'K', to: 'KK', maxDelayTicks: 5 },
+    ]);
+    for (const collection of [
+      FIGHTING_ACTIVE_MOVE_IDS,
+      FIGHTING_ACTIVE_GROUND_ROUTES,
+      FIGHTING_ACTIVE_ENTRIES,
+      FIGHTING_ACTIVE_CANCEL_EDGES,
+    ])
+      expect(Object.isFrozen(collection)).toBe(true);
+    for (const value of [
+      ...FIGHTING_ACTIVE_ENTRIES,
+      ...FIGHTING_ACTIVE_CANCEL_EDGES,
+    ])
+      expect(Object.isFrozen(value)).toBe(true);
+  });
+
+  it('activeSelectionPreservesHistoricalRegistry', () => {
+    expect(FIGHTING_ACTIVE_ENTRIES).toBeDefined();
+    expect(FIGHTING_MOVE_SPECS).toEqual({
+      p_short: {
+        id: 'p_short',
+        startupTicks: 5,
+        activeTicks: 2,
+        recoveryTicks: 14,
+        hitstunTicks: 18,
+        hitstopTicks: 6,
+        damageNormalized: 10,
+        blockstunTicks: 10,
+        blockstopTicks: 4,
+        level: 'high',
+      },
+      p_body: {
+        id: 'p_body',
+        startupTicks: 7,
+        activeTicks: 2,
+        recoveryTicks: 16,
+        hitstunTicks: 20,
+        hitstopTicks: 6,
+        damageNormalized: 12,
+        blockstunTicks: 12,
+        blockstopTicks: 4,
+        level: 'mid',
+      },
+      p_finish: {
+        id: 'p_finish',
+        startupTicks: 9,
+        activeTicks: 2,
+        recoveryTicks: 22,
+        hitstunTicks: 16,
+        hitstopTicks: 8,
+        damageNormalized: 18,
+        blockstunTicks: 12,
+        blockstopTicks: 6,
+        level: 'mid',
+      },
+      k_front: {
+        id: 'k_front',
+        startupTicks: 10,
+        activeTicks: 3,
+        recoveryTicks: 20,
+        hitstunTicks: 22,
+        hitstopTicks: 7,
+        damageNormalized: 16,
+        blockstunTicks: 14,
+        blockstopTicks: 5,
+        level: 'mid',
+      },
+      k_low: {
+        id: 'k_low',
+        startupTicks: 11,
+        activeTicks: 3,
+        recoveryTicks: 22,
+        hitstunTicks: 24,
+        hitstopTicks: 7,
+        damageNormalized: 18,
+        blockstunTicks: 14,
+        blockstopTicks: 5,
+        level: 'low',
+      },
+      k_turn: {
+        id: 'k_turn',
+        startupTicks: 13,
+        activeTicks: 3,
+        recoveryTicks: 27,
+        hitstunTicks: 18,
+        hitstopTicks: 9,
+        damageNormalized: 24,
+        blockstunTicks: 16,
+        blockstopTicks: 6,
+        level: 'mid',
+      },
+      p_entry: {
+        id: 'p_entry',
+        startupTicks: 12,
+        activeTicks: 2,
+        recoveryTicks: 24,
+        hitstunTicks: 20,
+        hitstopTicks: 8,
+        damageNormalized: 20,
+        blockstunTicks: 14,
+        blockstopTicks: 5,
+        level: 'mid',
+      },
+      c_body: {
+        id: 'c_body',
+        startupTicks: 7,
+        activeTicks: 2,
+        recoveryTicks: 14,
+        hitstunTicks: 15,
+        hitstopTicks: 6,
+        damageNormalized: 10,
+        blockstunTicks: 10,
+        blockstopTicks: 4,
+        level: 'mid',
+      },
+      a_palm: {
+        id: 'a_palm',
+        startupTicks: 8,
+        activeTicks: 3,
+        recoveryTicks: 14,
+        hitstunTicks: 12,
+        hitstopTicks: 5,
+        damageNormalized: 10,
+        blockstunTicks: 10,
+        blockstopTicks: 4,
+        level: 'mid',
+      },
+      a_kick: {
+        id: 'a_kick',
+        startupTicks: 11,
+        activeTicks: 4,
+        recoveryTicks: 18,
+        hitstunTicks: 14,
+        hitstopTicks: 7,
+        damageNormalized: 16,
+        blockstunTicks: 12,
+        blockstopTicks: 5,
+        level: 'mid',
+      },
+    });
+    expect(Object.keys(FIGHTING_MOVE_SPECS)).toHaveLength(10);
+    expect(FIGHTING_ENTRIES).toHaveLength(11);
+    expect(Object.keys(FIGHTING_GROUND_ROUTES)).toHaveLength(9);
+    expect(FIGHTING_CANCEL_EDGES).toHaveLength(7);
+    expect(FIGHTING_GROUND_ROUTES.PPP).toBe('p_finish');
+    expect(FIGHTING_GROUND_ROUTES.KP).toBe('p_entry');
+    expect(FIGHTING_GROUND_ROUTES.KPP).toBe('p_finish');
+    for (const entry of FIGHTING_ACTIVE_ENTRIES) {
+      const backingEntries = FIGHTING_ENTRIES.filter(
+        (candidate) =>
+          candidate.posture === entry.posture &&
+          candidate.moveId === entry.moveId,
+      );
+      expect(backingEntries).toHaveLength(1);
+      expect(backingEntries[0]).toBe(entry);
+    }
+    for (const collection of [
+      FIGHTING_MOVE_SPECS,
+      FIGHTING_GROUND_ROUTES,
+      FIGHTING_ENTRIES,
+      FIGHTING_CANCEL_EDGES,
+    ])
+      expect(Object.isFrozen(collection)).toBe(true);
+    for (const value of [
+      ...Object.values(FIGHTING_MOVE_SPECS),
+      ...FIGHTING_ENTRIES,
+      ...FIGHTING_CANCEL_EDGES,
+    ])
+      expect(Object.isFrozen(value)).toBe(true);
+    expect(
+      captureFightingCombatantState({
+        ...state(),
+        moveId: 'p_finish',
+        route: 'PPP',
+        stage: 3,
+      }).moveId,
+    ).toBe('p_finish');
+    expect(
+      captureFightingCombatantState({
+        ...state(),
+        moveId: 'p_entry',
+        route: 'KP',
+        stage: 2,
+      }).moveId,
+    ).toBe('p_entry');
   });
 });
 
