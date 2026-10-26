@@ -43,20 +43,17 @@ function combatant(
 function fighter(overrides: Partial<FightingCombatantState> = {}): ActorState {
   return { ...actor(), fighting: combatant(overrides) };
 }
-test('guide exposes all nine ground routes and four posture controls without inventing stages', async () => {
+test('guideShowsOnlyApprovedARoutes', async () => {
   const { FIGHTING_COMBO_GUIDE: guide } = await guideModule();
   expect(
     guide.ground.map((row) => [row.input, row.moveId, row.stage, row.level]),
   ).toEqual([
     ['P', 'p_short', 1, '上段'],
     ['PP', 'p_body', 2, '中段'],
-    ['PPP', 'p_finish', 3, '中段'],
     ['PK', 'k_low', 2, '下段'],
     ['PPK', 'k_turn', 3, '中段'],
     ['K', 'k_front', 1, '中段'],
     ['KK', 'k_turn', 2, '中段'],
-    ['KP', 'p_entry', 2, '中段'],
-    ['KPP', 'p_finish', 3, '中段'],
   ]);
   expect(
     guide.posture.map((row) => [row.posture, row.input, row.moveId, row.stage]),
@@ -72,15 +69,21 @@ test('guide exposes all nine ground routes and four posture controls without inv
     kick: { text: 'K' },
     guard: { text: 'G' },
   });
-  expect(guide.controls.guard.accessibleName).toContain('押している間');
+  expect(guide.controls.guard.accessibleName).toBe('G ガード（押している間）');
+  expect(guide.guardHelp).toBe(
+    'G保持でガード／下スワイプ保持と組合せてしゃがみガード',
+  );
 });
 test('non-hover guide teaches hit-only, distance failures and exact guard-height caveats', async () => {
   const { FIGHTING_COMBO_GUIDE: guide } = await guideModule();
   expect(guide.notes.join(' ')).toMatch(/実命中/);
   expect(guide.notes.join(' ')).toMatch(/空振り.*ガード|ガード.*空振り/);
+  expect(guide.notes.join(' ')).toMatch(/ガード・空振り.*終了.*後隙/);
   expect(guide.notes.join(' ')).toMatch(/距離.*外れ/);
+  expect(guide.notes.join(' ')).toMatch(/接続は保証されません/);
   expect(guide.notes.join(' ')).toMatch(/最大3/);
   expect(guide.notes.join(' ')).toMatch(/空中.*1回/);
+  expect(guide.notes.join(' ')).toMatch(/入力予約.*開始・命中.*別/);
   expect(guide.guardHelp).toMatch(/下スワイプ/);
   expect(guide.guardRules).toEqual([
     { posture: 'standing', blocks: ['high', 'mid'], evades: [] },

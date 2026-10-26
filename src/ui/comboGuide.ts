@@ -1,5 +1,5 @@
 import {
-  FIGHTING_GROUND_ROUTES,
+  FIGHTING_ACTIVE_GROUND_ROUTES,
   FIGHTING_MAX_STAGE,
   FIGHTING_MOVE_SPECS,
   type ActorId,
@@ -33,7 +33,7 @@ export const FIGHTING_COMBO_GUIDE = Object.freeze({
     }),
   }),
   ground: Object.freeze(
-    Object.entries(FIGHTING_GROUND_ROUTES).map(([input, moveId]) =>
+    Object.entries(FIGHTING_ACTIVE_GROUND_ROUTES).map(([input, moveId]) =>
       row(input, moveId, 'standing'),
     ),
   ),

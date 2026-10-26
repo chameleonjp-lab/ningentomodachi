@@ -1,7 +1,7 @@
 import {
   FIGHTING_HZ,
   FIGHTING_BUFFER_MAX_AGE_TICKS,
-  FIGHTING_CANCEL_EDGES,
+  FIGHTING_ACTIVE_CANCEL_EDGES,
   FIGHTING_MAX_STAGE,
   FIGHTING_MOVE_SPECS,
   captureFightingCombatantState,
@@ -84,7 +84,7 @@ function canStart(
     state.stage >= FIGHTING_MAX_STAGE
   )
     return false;
-  const cancel = FIGHTING_CANCEL_EDGES.find(
+  const cancel = FIGHTING_ACTIVE_CANCEL_EDGES.find(
     (candidate) =>
       candidate.from === state.route &&
       candidate.to === state.route + edge.button,

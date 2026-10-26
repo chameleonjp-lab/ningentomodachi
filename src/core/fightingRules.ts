@@ -7,7 +7,7 @@ import {
   captureFightingPolicy,
   captureNormalizedFightingInputs,
   FIGHTING_DAMAGE_SCALES,
-  FIGHTING_GROUND_ROUTES,
+  FIGHTING_ACTIVE_GROUND_ROUTES,
   type FightingAttackDescriptor,
   type FightingButton,
   type FightingCombatantState,
@@ -33,8 +33,10 @@ export function resolveFightingMove(
     throw new RangeError('Unknown fighting button');
   if (posture === 'standing') {
     const next = route + button;
-    return Object.hasOwn(FIGHTING_GROUND_ROUTES, next)
-      ? FIGHTING_GROUND_ROUTES[next as keyof typeof FIGHTING_GROUND_ROUTES]
+    return Object.hasOwn(FIGHTING_ACTIVE_GROUND_ROUTES, next)
+      ? FIGHTING_ACTIVE_GROUND_ROUTES[
+          next as keyof typeof FIGHTING_ACTIVE_GROUND_ROUTES
+        ]
       : null;
   }
   if (posture !== 'crouching' && posture !== 'airborne')

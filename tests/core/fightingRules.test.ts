@@ -3,8 +3,8 @@ import { actorId, clipId, commandId, runId } from '../../src/contracts/ids';
 import type { FightingGameplayCommand } from '../../src/contracts/commands';
 import {
   FIGHTING_MOVE_SPECS,
+  FIGHTING_GROUND_ROUTES,
   type FightingAttackDescriptor,
-  type FightingButton,
   type FightingCombatantState,
   type FightingMoveId,
   type FightingPolicy,
@@ -19,6 +19,30 @@ import {
 
 const run = runId('run'),
   actor = actorId('player');
+
+test('excludedARoutesNeverStartOrRemap', () => {
+  for (const route of ['PP', 'K', 'KP'])
+    expect(resolveFightingMove('standing', route, 'P')).toBeNull();
+  for (const [route, button, move] of [
+    ['', 'P', 'p_short'],
+    ['P', 'P', 'p_body'],
+    ['P', 'K', 'k_low'],
+    ['PP', 'K', 'k_turn'],
+    ['', 'K', 'k_front'],
+    ['K', 'K', 'k_turn'],
+  ] as const)
+    expect(resolveFightingMove('standing', route, button)).toBe(move);
+  for (const [posture, button, move] of [
+    ['crouching', 'P', 'c_body'],
+    ['crouching', 'K', 'k_low'],
+    ['airborne', 'P', 'a_palm'],
+    ['airborne', 'K', 'a_kick'],
+  ] as const) {
+    expect(resolveFightingMove(posture, '', button)).toBe(move);
+    for (const route of ['P', 'PP', 'K', 'KP'])
+      expect(resolveFightingMove(posture, route, button)).toBeNull();
+  }
+});
 const policy: FightingPolicy = {
   version: 3,
   hpPerNormalizedPoint: 5,
@@ -71,17 +95,17 @@ function source(moveId: FightingMoveId = 'p_short'): FightingAttackDescriptor {
   };
 }
 
-describe('deterministic fighting routes and seven robust cancel edges', () => {
+describe('deterministic active A routes and historical robust timing', () => {
   test.each([
     ['', 'P', 'p_short'],
     ['P', 'P', 'p_body'],
-    ['PP', 'P', 'p_finish'],
+    ['PP', 'P', null],
     ['P', 'K', 'k_low'],
     ['PP', 'K', 'k_turn'],
     ['', 'K', 'k_front'],
     ['K', 'K', 'k_turn'],
-    ['K', 'P', 'p_entry'],
-    ['KP', 'P', 'p_finish'],
+    ['K', 'P', null],
+    ['KP', 'P', null],
   ] as const)(
     '%s + %s selects %s without any random source',
     (route, button, want) => {
@@ -349,32 +373,34 @@ describe('contact guard policy and one-time HP conversion', () => {
     ['PPP', 31.3],
     ['PPK', 35.2],
     ['KPP', 43.7],
-  ] as const)('%s has normalized damage %f', (route, want) => {
-    let prefix = '',
-      total = 0,
-      stage = 0;
-    for (const button of route) {
-      const move = resolveFightingMove(
-        'standing',
-        prefix,
-        button as FightingButton,
-      );
-      if (!move) throw new Error('Invalid test route');
-      stage++;
-      total += fightingDamageHp(
-        {
-          kind: 'v3-normalized',
-          value: FIGHTING_MOVE_SPECS[move].damageNormalized,
-        },
-        stage as 1 | 2 | 3,
-        { ...policy, hpPerNormalizedPoint: 1 },
-      );
-      prefix += button;
-    }
-    expect(total).toBeCloseTo(want, 12);
-    // A fixed five HP/point is independent of a target's 500 versus 700 maximum HP.
-    expect(total * 5).toBeCloseTo(want * 5, 12);
-  });
+  ] as const)(
+    'historical %s retains normalized damage %f without granting active selection',
+    (route, want) => {
+      let prefix = '',
+        total = 0,
+        stage = 0;
+      for (const button of route) {
+        const move =
+          FIGHTING_GROUND_ROUTES[
+            (prefix + button) as keyof typeof FIGHTING_GROUND_ROUTES
+          ];
+        if (!move) throw new Error('Invalid test route');
+        stage++;
+        total += fightingDamageHp(
+          {
+            kind: 'v3-normalized',
+            value: FIGHTING_MOVE_SPECS[move].damageNormalized,
+          },
+          stage as 1 | 2 | 3,
+          { ...policy, hpPerNormalizedPoint: 1 },
+        );
+        prefix += button;
+      }
+      expect(total).toBeCloseTo(want, 12);
+      // A fixed five HP/point is independent of a target's 500 versus 700 maximum HP.
+      expect(total * 5).toBeCloseTo(want * 5, 12);
+    },
+  );
   test('HP conversion rejects an invalid explicit policy, damage, or stage', () => {
     for (const hpPerNormalizedPoint of [0, -1, NaN, Infinity])
       expect(() =>

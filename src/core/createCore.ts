@@ -39,7 +39,7 @@ import { requireValue } from './invariant';
 import {
   FIGHTING_ENTRIES,
   FIGHTING_MOVE_SPECS,
-  FIGHTING_CANCEL_EDGES,
+  FIGHTING_ACTIVE_CANCEL_EDGES,
   captureFightingCombatantState,
   captureFightingClock,
   captureFightingPolicy,
@@ -1144,7 +1144,7 @@ export function createCore(
     let allowStart = h.lockedUntil === null && !h.pendingLock && h.amount < 7;
     if (before.moveId && before.hitConfirmed && r.contactAt !== null) {
       const edge = before.buffer?.edge ?? edges[0];
-      const cancel = FIGHTING_CANCEL_EDGES.find(
+      const cancel = FIGHTING_ACTIVE_CANCEL_EDGES.find(
         (c) => c.from === before.route && c.to === before.route + edge?.button,
       );
       allowStart &&=

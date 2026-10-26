@@ -21,6 +21,7 @@ import {
   gameTimeMs,
   tick,
   FIGHTING_ENTRIES,
+  FIGHTING_ACTIVE_ENTRIES,
   FIGHTING_MOVE_SPECS,
   type ActorColor,
   type CorePort,
@@ -264,6 +265,32 @@ function body(
 }
 
 describe('opt-in authoritative fighting Core (synthetic witnesses)', () => {
+  test('active nine-entry selection remains uniquely bound inside the required eleven-entry material pack', () => {
+    const options = config();
+    const fighting = requireValue(options.fighting);
+    expect(fighting.entries).toHaveLength(11);
+    expect(fighting.catalog.list()).toHaveLength(11);
+    expect(FIGHTING_ACTIVE_ENTRIES).toHaveLength(9);
+    for (const entry of FIGHTING_ACTIVE_ENTRIES) {
+      const matches = fighting.entries.filter(
+        (bound) =>
+          bound.posture === entry.posture && bound.moveId === entry.moveId,
+      );
+      expect(matches).toHaveLength(1);
+      expect(
+        fighting.catalog.get(requireValue(matches[0]).clipId),
+      ).toBeDefined();
+    }
+    expect(() => setup(options)).not.toThrow();
+    for (const inactive of ['p_finish', 'p_entry']) {
+      const entries = fighting.entries.filter(
+        (entry) => entry.moveId !== inactive,
+      );
+      expect(() =>
+        setup({ ...options, fighting: { ...fighting, entries } }),
+      ).toThrow('Fighting requires all eleven separately bound entries');
+    }
+  });
   test('selects deterministic P without consuming the legacy enemy random draw; default remains legacy', () => {
     const first = setup();
     input(first, [packet(first, 'punch')]);
@@ -1092,9 +1119,65 @@ describe('physical takeoff seam and transport/lifecycle edges', () => {
 });
 
 describe('route and contact-time traces (synthetic Core evidence only)', () => {
-  test.each(['P', 'PP', 'PPP', 'PK', 'PPK', 'K', 'KK', 'KP', 'KPP'])(
-    'executes %s from actual accepted body hits with one heat per started stage',
+  test.each(['PP', 'K'] as const)(
+    '%s + P cannot spend heat, replace the attack or skip recovery after accepted body contact',
     (route) => {
+      const core = setup();
+      input(core, [packet(core, route[0] === 'P' ? 'punch' : 'kick')]);
+      for (let stage = 0; stage < route.length; stage++) {
+        const before = requireValue(actor(core).fighting);
+        const spec = FIGHTING_MOVE_SPECS[requireValue(before.moveId)];
+        step(core, spec.startupTicks * T);
+        if (stage + 1 < route.length) input(core, [packet(core, 'punch')]);
+        const out = step(core, T, (r) =>
+          result(r, [body(core, r, 'white', 'blue', T / 4)]),
+        );
+        expect(
+          out.events.filter((event) => event.type === 'HpChanged'),
+        ).toHaveLength(1);
+        step(core, (spec.hitstopTicks + 0.25) * T);
+      }
+      const before = requireValue(actor(core).fighting);
+      const activation = requireValue(actor(core).attack).activationId;
+      const heat = actor(core).heat.amount;
+      expect(before.hitConfirmed).toBe(true);
+      input(core, [packet(core, 'punch')]);
+      expect(actor(core).fighting).toMatchObject({
+        route,
+        stage: route.length,
+        moveId: route === 'PP' ? 'p_body' : 'k_front',
+        moveAgeTicks: before.moveAgeTicks,
+      });
+      expect(actor(core).attack?.activationId).toBe(activation);
+      expect(actor(core).heat.amount).toBe(heat);
+      expect(
+        core.drain().events.filter((event) => event.type === 'AttackAccepted'),
+      ).toHaveLength(0);
+      const remaining = route === 'PP' ? 16.75 : 21.75;
+      step(core, (remaining - 0.01) * T);
+      expect(actor(core).attack?.activationId).toBe(activation);
+      step(core, 0.01 * T);
+      expect(actor(core).attack).toBeNull();
+      expect(actor(core).fighting).toMatchObject({
+        phase: 'neutral',
+        stage: 0,
+        buffer: null,
+      });
+    },
+  );
+  test.each([
+    ['P', 'P'],
+    ['PP', 'PP'],
+    ['PPP', 'PP'],
+    ['PK', 'PK'],
+    ['PPK', 'PPK'],
+    ['K', 'K'],
+    ['KK', 'KK'],
+    ['KP', 'K'],
+    ['KPP', 'K'],
+  ])(
+    'requested %s executes only active prefix %s from accepted body hits with one heat per started stage',
+    (requested, route) => {
       const core = setup();
       const accepted: string[] = [];
       input(core, [packet(core, route[0] === 'P' ? 'punch' : 'kick')]);
@@ -1124,6 +1207,22 @@ describe('route and contact-time traces (synthetic Core evidence only)', () => {
       }
       expect(actor(core).heat.amount).toBe(route.length);
       expect(accepted).toHaveLength(route.length);
+      if (requested !== route) {
+        input(
+          core,
+          [...requested.slice(route.length)].map((button) =>
+            packet(core, button === 'P' ? 'punch' : 'kick'),
+          ),
+        );
+        const spec =
+          FIGHTING_MOVE_SPECS[requireValue(actor(core).fighting?.moveId)];
+        step(core, (spec.hitstopTicks + 0.25) * T);
+        expect(actor(core).fighting).toMatchObject({
+          route,
+          stage: route.length,
+        });
+        expect(actor(core).heat.amount).toBe(route.length);
+      }
       input(core, [packet(core, 'punch')]);
       step(core, 60 * T);
       expect(actor(core).attack).toBeNull();
