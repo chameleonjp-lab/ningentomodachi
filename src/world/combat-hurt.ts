@@ -78,3 +78,24 @@ export function validateHurtRegions(
     throw new RangeError('Incomplete hurt region coverage');
   return sorted;
 }
+
+/** Explicit accepted-posture proxy for fighting. Attack/reaction activity does
+ * not turn crouch into standing; airborne uses physical anchor Y exactly once. */
+export function fightingHurtProxy(
+  position: Vector3,
+  posture: import('../contracts').FightingPosture,
+) {
+  if (
+    posture !== 'standing' &&
+    posture !== 'crouching' &&
+    posture !== 'airborne'
+  )
+    throw new RangeError('Unknown accepted fighting posture');
+  const proxyPosture =
+    posture === 'crouching' ? ('crouching' as const) : ('standing' as const);
+  return {
+    kind: 'posture-capsule-proxy-v1' as const,
+    posture: proxyPosture,
+    volume: combatHurt(position, proxyPosture === 'crouching'),
+  };
+}

@@ -3,6 +3,9 @@ import {
   type StartupBasis,
   type CoreOutput,
   capturePoseRunPolicy,
+  captureFightingReadyDescriptor,
+  captureFightingSpatialTransactionPolicy,
+  type FightingPreparedSpatialBinding,
   durationMs,
   type GameSnapshot,
   type MotionCatalogPort,
@@ -65,6 +68,7 @@ export function createSpatialEngine(
     | { revision: number; tick: number; residents: ReadonlySet<ActorId> }
     | undefined;
   function assertReplayAllowed(snapshot: GameSnapshot) {
+    assertNoUnqualifiedFightingAuthority(snapshot);
     if (explicitResidency && snapshot.residentActorIds === undefined)
       throw new Error('Explicit residency cannot downgrade to legacy');
     const ids =
@@ -78,8 +82,94 @@ export function createSpatialEngine(
     lastTick = -1,
     lastTime = 0,
     disposed = false;
+  let bindingBusy = false;
   function alive() {
+    if (bindingBusy)
+      throw new Error('Reentrant spatial operation during fighting binding');
     if (disposed) throw new Error('Spatial engine disposed');
+  }
+  function assertNoUnqualifiedFightingAuthority(state: GameSnapshot) {
+    if (
+      state.actors.some(
+        (actor) =>
+          actor.fightingClock?.endpoint !== undefined ||
+          actor.fightingPose !== undefined ||
+          actor.fightingPoseHold !== undefined,
+      )
+    )
+      throw new Error(
+        'A2 actual geometry and qualified interval capability are required for fighting spatial projection',
+      );
+  }
+  /** A1 has no authenticated sole/multishape/continuous geometry authority. Keep
+   * this production-only capability closed instead of treating toy point samples
+   * as qualified ready poses. A2 positive bootstrap/project remains a dependency. */
+  function bindFightingPrepared(binding: FightingPreparedSpatialBinding): void {
+    alive();
+    bindingBusy = true;
+    try {
+      const own = (value: object, key: string) => {
+        const field = Object.getOwnPropertyDescriptor(value, key);
+        if (!field || !('value' in field))
+          throw new RangeError('Fighting binding requires own data fields');
+        return field.value;
+      };
+      const ready = captureFightingReadyDescriptor(
+        own(binding, 'readyDescriptor'),
+      );
+      captureFightingSpatialTransactionPolicy(
+        own(binding, 'transactionPolicy'),
+      );
+      const factory = own(binding, 'recipeSamplerFactory');
+      if (
+        !factory ||
+        typeof factory !== 'object' ||
+        own(factory, 'runId') !== run ||
+        own(factory, 'bindingSetId') !== ready.bindingSetId ||
+        typeof own(factory, 'create') !== 'function'
+      )
+        throw new RangeError(
+          'Mismatched fighting sampler run/binding authority',
+        );
+      if (
+        layout.battleStage?.mode !== 'four-battle' ||
+        layout.objects.length ||
+        layout.vehicles.length ||
+        layout.bounds.min.x !== -2 ||
+        layout.bounds.max.x !== 2 ||
+        layout.bounds.min.z !== -5 ||
+        layout.bounds.max.z !== 5 ||
+        ready.supportPlane.planeY !== 0
+      )
+        throw new RangeError(
+          'Fighting projection requires the admitted empty battle layout',
+        );
+      if (
+        lastTick >= 0 ||
+        poses.size ||
+        attacks.size ||
+        retired.size ||
+        latestAuthority ||
+        activatedOpponentId !== undefined
+      )
+        throw new Error(
+          'Fighting bootstrap requires pristine physical state; loading must stay host-only',
+        );
+      for (const actor of ready.actors)
+        if (
+          actor.position.x < layout.bounds.min.x + 0.35 ||
+          actor.position.x > layout.bounds.max.x - 0.35 ||
+          actor.position.z < layout.bounds.min.z + 0.35 ||
+          actor.position.z > layout.bounds.max.z - 0.35
+        )
+          throw new RangeError('Fighting ready anchor outside battle bounds');
+      // No sampler leases or legacy sync/timeline/world mutation before this gate.
+      throw new Error(
+        'A2 actual geometry and qualified interval capability are required for fighting spatial projection',
+      );
+    } finally {
+      bindingBusy = false;
+    }
   }
   function sync(output: CoreOutput) {
     alive();
@@ -260,12 +350,24 @@ export function createSpatialEngine(
           ...(timeline.startupCapability
             ? { startup: timeline.startupCapability }
             : {}),
-          bindPreparedCatalog: timeline.bindPreparedCatalog,
+          bindPreparedCatalog: (
+            catalog: Parameters<typeof timeline.bindPreparedCatalog>[0],
+          ) => {
+            alive();
+            timeline.bindPreparedCatalog(catalog);
+          },
+          fighting: Object.freeze({
+            version: 1 as const,
+            mode: 'battle-transaction-v1' as const,
+            bindPrepared: bindFightingPrepared,
+          }),
         })
       : undefined,
     isRetired: (id: ActorId) => retired.has(id),
     assertReplayAllowed,
     commit(output: CoreOutput): SpatialSnapshot {
+      alive();
+      assertNoUnqualifiedFightingAuthority(output.snapshot);
       const reset = planEncounterReset(output.snapshot);
       const postureChanges = output.snapshot.actors.flatMap((actor) => {
         const pose = poses.get(actor.actorId);
@@ -339,9 +441,12 @@ export function createSpatialEngine(
       return basis;
     },
     end(sessionId: string) {
+      alive();
       bases.delete(sessionId);
     },
     dispose() {
+      if (bindingBusy)
+        throw new Error('Reentrant spatial dispose during fighting binding');
       timeline?.dispose();
       vehicles.dispose();
       disposed = true;
@@ -358,8 +463,9 @@ export function createSpatialEngine(
       request: SpatialStepRequest,
       catalog: MotionCatalogPort,
     ): SpatialStepResult {
-      const state = request.snapshot;
       alive();
+      const state = request.snapshot;
+      assertNoUnqualifiedFightingAuthority(state);
       if (state.runId !== run) throw new Error('Stale spatial run');
       if (lastTick >= 0 && state.clocks.tick !== lastTick + 1)
         throw new Error('Duplicate or stale spatial tick');
