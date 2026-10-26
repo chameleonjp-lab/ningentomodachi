@@ -21,7 +21,12 @@ import {
   type RunId,
   runId,
 } from './ids';
-import type { HitVolume, Vector3 } from './motion';
+import {
+  impactShapeIds,
+  type HitVolume,
+  type MotionImpact,
+  type Vector3,
+} from './motion';
 import type { DomainEvent } from './events';
 import type { GameSnapshot } from './snapshot';
 import type {
@@ -1173,6 +1178,137 @@ export interface FightingRecipeGeometrySample extends FightingRecipeEntry {
   readonly support: readonly FightingSampledSupport[];
   readonly shape: HitVolume | null;
 }
+/** A2 point schemas describe evidence; structural capture NEVER authenticates a source. */
+export interface FightingSourceVertex {
+  readonly primitive: number;
+  readonly vertexIndex: number;
+}
+export interface FightingSoleSurfaceBinding {
+  readonly side: 'L' | 'R';
+  readonly surfaceId: string;
+  readonly sourceBindingId: string;
+  readonly members: readonly FightingSourceVertex[];
+}
+export interface FightingSolePoint extends FightingSourceVertex {
+  /** Posed skin, root-stripped actor-local metres. D applies physical root/facing once. */
+  readonly local: Vector3;
+}
+export interface FightingSoleSurfaceSample {
+  readonly side: 'L' | 'R';
+  readonly surfaceId: string;
+  readonly points: readonly FightingSolePoint[];
+  /** Outward actor-local normal; physical alignment is D/F authority. */
+  readonly normal: Vector3;
+}
+export interface FightingHurtProxySample {
+  readonly kind: 'posture-capsule-proxy-v1';
+  readonly posture: 'standing' | 'crouching';
+  readonly volume: Extract<HitVolume, { readonly kind: 'capsule' }>;
+}
+export interface FightingHitShapeSample {
+  readonly shapeId: string;
+  readonly volume: HitVolume;
+}
+export interface FightingActualRecipeGeometrySample
+  extends FightingRecipeGeometrySample {
+  readonly geometryProtocol: 'actual-geometry-v1';
+  readonly geometryBindingId: string;
+  readonly soles: readonly FightingSoleSurfaceSample[];
+  readonly hurt: FightingHurtProxySample;
+  readonly hitShapes: readonly FightingHitShapeSample[];
+}
+/** Independent C/F preparation pins. Digest equality is NOT verification of asset bytes/proofs. */
+export interface FightingGeometrySourcePin {
+  readonly sourceBindingId: string;
+  readonly clipId: ClipId;
+  readonly durationMs: number;
+  readonly rootPolicy:
+    | 'full-translation'
+    | 'grounded-posture-y'
+    | 'in-place-posture-xyz';
+  readonly provenance: {
+    readonly sourceSha256: string;
+    readonly evaluatorSha256: string;
+    readonly calibrationSha256: string;
+    readonly mappingSha256: string;
+    readonly sourceClosureSha256: string;
+    readonly qualificationEvidenceSha256: string;
+  };
+  /** Exact source-mapping order for the existing 53 transform entries. */
+  readonly poseNames: readonly string[];
+  readonly primitives: readonly {
+    readonly primitive: number;
+    readonly vertexCount: number;
+  }[];
+  readonly soles: readonly FightingSoleSurfaceBinding[];
+  readonly shapeIds: readonly string[];
+}
+/** Point coverage only; no action duration, cycle counter or continuous-law qualification. */
+export type FightingGeometryPointCoverage =
+  | { readonly kind: 'finite'; readonly fromMs: 0; readonly toMs: number }
+  | {
+      readonly kind: 'prefix-tail';
+      readonly prefixEndMs: number;
+      readonly tail:
+        | { readonly kind: 'constant' }
+        | {
+            readonly kind: 'periodic';
+            readonly periodMs: number;
+            readonly phaseOriginMs: number;
+          };
+    };
+export interface FightingGeometryVariant {
+  readonly geometryBindingId: string;
+  readonly sourceBindingId: string;
+  readonly clipId: ClipId;
+  readonly phase: FightingCombatantState['phase'];
+  readonly posture: FightingPosture;
+  readonly coverage: FightingGeometryPointCoverage;
+}
+export interface FightingGeometryManifest {
+  readonly schema: 'actual-geometry-manifest-v1';
+  readonly bindingSetId: string;
+  readonly sources: readonly FightingGeometrySourcePin[];
+  readonly variants: readonly FightingGeometryVariant[];
+}
+export interface FightingGeometryPointLimits {
+  readonly maxSources: number;
+  readonly maxVariants: number;
+  readonly maxPrimitivesPerSource: number;
+  readonly maxSolePoints: number;
+  readonly maxShapes: number;
+  readonly maxImpacts: number;
+}
+export interface FightingGeometryManifestContext {
+  readonly bindingSetId: string;
+  /** Supplied independently by trusted preparation, never defaulted from the input manifest. */
+  readonly sourcePins: readonly FightingGeometrySourcePin[];
+  readonly limits: FightingGeometryPointLimits;
+}
+export interface FightingGeometrySampleContext {
+  readonly query: FightingRecipeQuery;
+  readonly manifest: FightingGeometryManifest;
+  readonly manifestContext: FightingGeometryManifestContext;
+  readonly selectedGeometryBindingId: string;
+  readonly impacts: readonly MotionImpact[];
+  /** D's existing proxy authority at actor-local origin; A owns no proxy dimensions. */
+  readonly expectedHurtProxy: FightingHurtProxySample;
+  /** Explicit measured/admitted unit-length representation error; no A epsilon/default. */
+  readonly normalLengthTolerance: number;
+}
+/** NON-DTO point preparation only. Does not satisfy production interval/binder admission. */
+export interface FightingActualRecipeSamplerPort
+  extends FightingRecipeSamplerPort {
+  readonly bindingSetId: string;
+  sample(query: FightingRecipeQuery): FightingActualRecipeGeometrySample;
+}
+/** Same actor-private create/sample route, no interval method or readiness flag fabricated. */
+export interface FightingActualRecipeSamplerFactory
+  extends FightingRecipeSamplerFactory {
+  readonly geometryManifest: FightingGeometryManifest;
+  create(actorId: ActorId): FightingActualRecipeSamplerPort;
+}
+
 /** Created CPU-only rig lease. No display node/Three object crosses the contract. */
 export interface FightingRecipeSamplerPort {
   readonly runId: RunId;
@@ -3263,4 +3399,728 @@ function captureUnrecordableDiagnostic(
       'Unrecordable-return diagnostic exceeds UTF-16 transport bounds',
     );
   return diagnostic;
+}
+
+/** A2 boundaries inspect each own data descriptor once, then validate/use only
+ * this detached tree. No original property Get or array iterator participates.
+ * The shape-preserving overload retains DTO types, not runtime trust: the
+ * caller still performs every schema/context check on the returned snapshot.
+ * Shared objects reuse one observation; cycles and non-data remain rejected. */
+function pointSnapshot<T>(input: T): T;
+function pointSnapshot(input: unknown): unknown {
+  const ancestors = new Set<object>(),
+    snapshots = new Map<object, unknown>();
+  function copy(value: unknown): unknown {
+    if (
+      value === null ||
+      typeof value === 'string' ||
+      typeof value === 'boolean'
+    )
+      return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value !== 'object' || ancestors.has(value))
+      throw new RangeError('Non-data or recursive A2 point DTO');
+    if (snapshots.has(value)) return snapshots.get(value);
+    const array = Array.isArray(value),
+      prototype = Object.getPrototypeOf(value);
+    if (
+      array
+        ? prototype !== Array.prototype
+        : prototype !== Object.prototype && prototype !== null
+    )
+      throw new RangeError('Expected plain A2 point data');
+    const descriptors = Object.getOwnPropertyDescriptors(value),
+      keys = Reflect.ownKeys(descriptors);
+    ancestors.add(value);
+    let result: unknown;
+    if (array) {
+      const length = descriptors.length;
+      const size: unknown = length?.value;
+      if (
+        !length ||
+        !Object.hasOwn(length, 'value') ||
+        typeof size !== 'number' ||
+        !Number.isSafeInteger(size) ||
+        size < 0 ||
+        keys.length !== size + 1
+      )
+        throw new RangeError('Invalid A2 point array length/properties');
+      const items: unknown[] = [];
+      for (let i = 0; i < size; i++) {
+        const descriptor = descriptors[String(i)];
+        if (!descriptor || !Object.hasOwn(descriptor, 'value'))
+          throw new RangeError('Sparse/accessor A2 point array');
+        items.push(copy(descriptor.value));
+      }
+      result = Object.freeze(items);
+    } else {
+      const record: Record<string, unknown> = {};
+      for (const key of keys) {
+        const descriptor =
+          typeof key === 'string' ? descriptors[key] : undefined;
+        if (
+          !descriptor ||
+          !Object.hasOwn(descriptor, 'value') ||
+          !descriptor.enumerable
+        )
+          throw new RangeError('A2 point DTO must contain enumerable own data');
+        Object.defineProperty(record, key, {
+          value: copy(descriptor.value),
+          enumerable: true,
+        });
+      }
+      result = Object.freeze(record);
+    }
+    ancestors.delete(value);
+    snapshots.set(value, result);
+    return result;
+  }
+  return copy(input);
+}
+/** NON-DTO resources keep their original receiver/lifetime. Only these own
+ * descriptor values are inspected; live method/metadata Gets are never used. */
+function pointResourceDescriptors<T extends object>(
+  input: T,
+  fields: readonly string[],
+) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input))
+    throw new RangeError('Expected A2 point resource record');
+  const prototype = Object.getPrototypeOf(input);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new RangeError('Expected plain A2 point resource');
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  const keys = Reflect.ownKeys(descriptors);
+  if (
+    keys.length !== fields.length ||
+    fields.some((key) => !Object.hasOwn(descriptors, key))
+  )
+    throw new RangeError('Unexpected/missing A2 point resource field');
+  for (const key of keys) {
+    const descriptor = typeof key === 'string' ? descriptors[key] : undefined;
+    if (
+      !descriptor ||
+      !Object.hasOwn(descriptor, 'value') ||
+      !descriptor.enumerable
+    )
+      throw new RangeError('A2 point resource must contain own data/methods');
+  }
+  return descriptors;
+}
+
+function pointInteger(value: number, positive = false): number {
+  if (!Number.isSafeInteger(value) || value < (positive ? 1 : 0))
+    throw new RangeError('Invalid geometry cardinality/index');
+  return value;
+}
+function pointArray<T>(values: readonly T[], maximum: number): readonly T[] {
+  denseArray(values);
+  if (values.length > maximum)
+    throw new RangeError('Geometry preparation limit exceeded');
+  return values;
+}
+function pointVector(input: Vector3): Vector3 {
+  exactFields(input, ['x', 'y', 'z']);
+  return vector(input);
+}
+function pointDigest(value: string): string {
+  if (!/^[0-9a-f]{64}$/.test(text(value)))
+    throw new RangeError('Invalid geometry provenance digest');
+  return value;
+}
+function pointLimits(
+  input: FightingGeometryPointLimits,
+): FightingGeometryPointLimits {
+  exactFields(input, [
+    'maxSources',
+    'maxVariants',
+    'maxPrimitivesPerSource',
+    'maxSolePoints',
+    'maxShapes',
+    'maxImpacts',
+  ]);
+  return Object.freeze({
+    maxSources: pointInteger(input.maxSources, true),
+    maxVariants: pointInteger(input.maxVariants, true),
+    maxPrimitivesPerSource: pointInteger(input.maxPrimitivesPerSource, true),
+    maxSolePoints: pointInteger(input.maxSolePoints, true),
+    maxShapes: pointInteger(input.maxShapes),
+    maxImpacts: pointInteger(input.maxImpacts),
+  });
+}
+function pointSource(
+  input: FightingGeometrySourcePin,
+  limits: FightingGeometryPointLimits,
+): FightingGeometrySourcePin {
+  exactFields(input, [
+    'sourceBindingId',
+    'clipId',
+    'durationMs',
+    'rootPolicy',
+    'provenance',
+    'poseNames',
+    'primitives',
+    'soles',
+    'shapeIds',
+  ]);
+  const sourceBindingId = text(input.sourceBindingId);
+  exactFields(input.provenance, [
+    'sourceSha256',
+    'evaluatorSha256',
+    'calibrationSha256',
+    'mappingSha256',
+    'sourceClosureSha256',
+    'qualificationEvidenceSha256',
+  ]);
+  const provenance = Object.freeze({
+    sourceSha256: pointDigest(input.provenance.sourceSha256),
+    evaluatorSha256: pointDigest(input.provenance.evaluatorSha256),
+    calibrationSha256: pointDigest(input.provenance.calibrationSha256),
+    mappingSha256: pointDigest(input.provenance.mappingSha256),
+    sourceClosureSha256: pointDigest(input.provenance.sourceClosureSha256),
+    qualificationEvidenceSha256: pointDigest(
+      input.provenance.qualificationEvidenceSha256,
+    ),
+  });
+  const poseNames = uniqueIds(pointArray(input.poseNames, 53));
+  if (poseNames.length !== 53)
+    throw new RangeError('Expected pinned 53-transform order');
+  const primitives = pointArray(
+    input.primitives,
+    limits.maxPrimitivesPerSource,
+  ).map((p) => {
+    exactFields(p, ['primitive', 'vertexCount']);
+    return Object.freeze({
+      primitive: pointInteger(p.primitive),
+      vertexCount: pointInteger(p.vertexCount, true),
+    });
+  });
+  if (!primitives.length)
+    throw new RangeError('Missing geometry primitive bounds');
+  uniqueIds(primitives.map((p) => String(p.primitive)));
+  const soles = pointArray(input.soles, 2).map((sole) => {
+    exactFields(sole, ['side', 'surfaceId', 'sourceBindingId', 'members']);
+    if (sole.sourceBindingId !== sourceBindingId)
+      throw new RangeError('Foreign sole source');
+    const members = pointArray(sole.members, limits.maxSolePoints).map((m) => {
+      exactFields(m, ['primitive', 'vertexIndex']);
+      const primitive = pointInteger(m.primitive),
+        vertexIndex = pointInteger(m.vertexIndex);
+      const bound = primitives.find((p) => p.primitive === primitive);
+      if (!bound || vertexIndex >= bound.vertexCount)
+        throw new RangeError('Sole member outside source primitive');
+      return Object.freeze({ primitive, vertexIndex });
+    });
+    if (!members.length) throw new RangeError('Empty sole membership');
+    uniqueIds(members.map((m) => `${m.primitive}:${m.vertexIndex}`));
+    return Object.freeze({
+      side: member(sole.side, ['L', 'R']),
+      surfaceId: text(sole.surfaceId),
+      sourceBindingId,
+      members: Object.freeze(members),
+    });
+  });
+  bijection(
+    soles.map((s) => s.side),
+    ['L', 'R'],
+  );
+  uniqueIds(soles.map((s) => s.surfaceId));
+  return Object.freeze({
+    sourceBindingId,
+    clipId: clipId(text(input.clipId)),
+    durationMs: nonnegative(input.durationMs),
+    rootPolicy: member(input.rootPolicy, [
+      'full-translation',
+      'grounded-posture-y',
+      'in-place-posture-xyz',
+    ]),
+    provenance,
+    poseNames,
+    primitives: Object.freeze(primitives),
+    soles: Object.freeze(soles),
+    shapeIds: uniqueIds(pointArray(input.shapeIds, limits.maxShapes)),
+  });
+}
+function pointCoverage(
+  input: FightingGeometryPointCoverage,
+): FightingGeometryPointCoverage {
+  ownData(input);
+  if (input.kind === 'finite') {
+    exactFields(input, ['kind', 'fromMs', 'toMs']);
+    if (input.fromMs !== 0)
+      throw new RangeError('Point coverage must start at zero');
+    return Object.freeze({
+      kind: 'finite',
+      fromMs: 0,
+      toMs: nonnegative(input.toMs),
+    });
+  }
+  if (input.kind !== 'prefix-tail')
+    throw new RangeError('Unknown point coverage');
+  exactFields(input, ['kind', 'prefixEndMs', 'tail']);
+  const prefixEndMs = nonnegative(input.prefixEndMs);
+  ownData(input.tail);
+  if (input.tail.kind === 'constant') {
+    exactFields(input.tail, ['kind']);
+    return Object.freeze({
+      kind: 'prefix-tail',
+      prefixEndMs,
+      tail: Object.freeze({ kind: 'constant' }),
+    });
+  }
+  if (input.tail.kind !== 'periodic')
+    throw new RangeError('Unknown point tail');
+  exactFields(input.tail, ['kind', 'periodMs', 'phaseOriginMs']);
+  const periodMs = nonnegative(input.tail.periodMs);
+  if (periodMs === 0) throw new RangeError('Point period must be positive');
+  return Object.freeze({
+    kind: 'prefix-tail',
+    prefixEndMs,
+    tail: Object.freeze({
+      kind: 'periodic',
+      periodMs,
+      phaseOriginMs: finite(input.tail.phaseOriginMs),
+    }),
+  });
+}
+/** Pure structural preparation capture, not source-byte authentication.
+ * Independent context pins/limits are mandatory; this never derives them from input. */
+export function captureFightingGeometryManifest(
+  input: FightingGeometryManifest,
+  context: FightingGeometryManifestContext,
+): FightingGeometryManifest {
+  const snapshot = pointSnapshot({ input, context });
+  input = snapshot.input;
+  context = snapshot.context;
+  exactFields(context, ['bindingSetId', 'sourcePins', 'limits']);
+  exactFields(input, ['schema', 'bindingSetId', 'sources', 'variants']);
+  const limits = pointLimits(context.limits),
+    bindingSetId = text(context.bindingSetId);
+  if (
+    input.schema !== 'actual-geometry-manifest-v1' ||
+    input.bindingSetId !== bindingSetId
+  )
+    throw new RangeError('Unknown geometry manifest/binding');
+  const pins = pointArray(context.sourcePins, limits.maxSources).map((p) =>
+    pointSource(p, limits),
+  );
+  uniqueIds(pins.map((p) => p.sourceBindingId));
+  const sources = pointArray(input.sources, limits.maxSources).map((s) => {
+    const captured = pointSource(s, limits),
+      pin = pins.find((p) => p.sourceBindingId === captured.sourceBindingId);
+    if (!pin) throw new RangeError('Unpinned geometry source');
+    requireEqual(
+      captured,
+      pin,
+      'Geometry source differs from independent preparation pin',
+    );
+    return captured;
+  });
+  if (!sources.length) throw new RangeError('Empty point source registry');
+  uniqueIds(sources.map((s) => s.sourceBindingId));
+  const variants = pointArray(input.variants, limits.maxVariants).map((v) => {
+    exactFields(v, [
+      'geometryBindingId',
+      'sourceBindingId',
+      'clipId',
+      'phase',
+      'posture',
+      'coverage',
+    ]);
+    const source = sources.find((s) => s.sourceBindingId === v.sourceBindingId);
+    if (!source || v.clipId !== source.clipId)
+      throw new RangeError('Unknown geometry variant source/clip');
+    const coverage = pointCoverage(v.coverage);
+    if (coverage.kind === 'finite' && coverage.toMs > source.durationMs)
+      throw new RangeError(
+        'Finite point coverage exceeds pinned source duration',
+      );
+    return Object.freeze({
+      geometryBindingId: text(v.geometryBindingId),
+      sourceBindingId: source.sourceBindingId,
+      clipId: source.clipId,
+      phase: phase(v.phase),
+      posture: posture(v.posture),
+      coverage,
+    });
+  });
+  if (!variants.length) throw new RangeError('Empty point variant registry');
+  uniqueIds(variants.map((v) => v.geometryBindingId));
+  uniqueIds(
+    variants.map((v) => JSON.stringify([v.clipId, v.phase, v.posture])),
+  );
+  return Object.freeze({
+    schema: 'actual-geometry-manifest-v1',
+    bindingSetId,
+    sources: Object.freeze(sources),
+    variants: Object.freeze(variants),
+  });
+}
+function pointVolume(input: HitVolume): HitVolume {
+  ownData(input);
+  const radiusM = finite(input.radiusM);
+  if (radiusM <= 0) throw new RangeError('Geometry radius must be positive');
+  if (input.kind === 'sphere') {
+    exactFields(input, ['kind', 'center', 'radiusM']);
+    return Object.freeze({
+      kind: 'sphere',
+      center: pointVector(input.center),
+      radiusM,
+    });
+  }
+  if (input.kind !== 'capsule') throw new RangeError('Unknown geometry volume');
+  exactFields(input, ['kind', 'start', 'end', 'radiusM']);
+  return Object.freeze({
+    kind: 'capsule',
+    start: pointVector(input.start),
+    end: pointVector(input.end),
+    radiusM,
+  });
+}
+function pointHurt(input: FightingHurtProxySample): FightingHurtProxySample {
+  exactFields(input, ['kind', 'posture', 'volume']);
+  const volume = pointVolume(input.volume);
+  if (input.kind !== 'posture-capsule-proxy-v1' || volume.kind !== 'capsule')
+    throw new RangeError('Expected explicit gameplay posture capsule');
+  return Object.freeze({
+    kind: 'posture-capsule-proxy-v1',
+    posture: member(input.posture, ['standing', 'crouching']),
+    volume,
+  });
+}
+/** Point evidence capture only; no source proof, interval guarantee or production qualification. */
+export function captureFightingActualRecipeGeometrySample(
+  input: FightingActualRecipeGeometrySample,
+  context: FightingGeometrySampleContext,
+): FightingActualRecipeGeometrySample {
+  const snapshot = pointSnapshot({ input, context });
+  input = snapshot.input;
+  context = snapshot.context;
+  exactFields(context, [
+    'query',
+    'manifest',
+    'manifestContext',
+    'selectedGeometryBindingId',
+    'impacts',
+    'expectedHurtProxy',
+    'normalLengthTolerance',
+  ]);
+  exactFields(input, [
+    'recipeVersion',
+    'clipId',
+    'atMs',
+    'pose',
+    'support',
+    'durationMs',
+    'active',
+    'intendedRoot',
+    'acceptedRoot',
+    'shape',
+    'geometryProtocol',
+    'geometryBindingId',
+    'soles',
+    'hurt',
+    'hitShapes',
+  ]);
+  const manifest = captureFightingGeometryManifest(
+    context.manifest,
+    context.manifestContext,
+  );
+  const query = context.query;
+  exactFields(query, [
+    'clipId',
+    'phase',
+    'posture',
+    'atMs',
+    'acceptedRoot',
+    'incoming',
+    'groundClearanceM',
+  ]);
+  clipId(text(query.clipId));
+  phase(query.phase);
+  posture(query.posture);
+  const atMs = nonnegative(query.atMs),
+    root = acceptedRoot(query.acceptedRoot);
+  nonnegative(query.groundClearanceM);
+  if (Object.hasOwn(query, 'incoming')) {
+    if (query.incoming === undefined)
+      throw new RangeError('Missing explicit incoming entry');
+    captureFightingRecipeEntry(query.incoming);
+  }
+  const variant = manifest.variants.find(
+    (v) => v.geometryBindingId === context.selectedGeometryBindingId,
+  );
+  const source =
+    variant &&
+    manifest.sources.find((s) => s.sourceBindingId === variant.sourceBindingId);
+  if (
+    !variant ||
+    !source ||
+    variant.clipId !== query.clipId ||
+    variant.phase !== query.phase ||
+    variant.posture !== query.posture ||
+    input.geometryBindingId !== variant.geometryBindingId ||
+    input.geometryProtocol !== 'actual-geometry-v1'
+  )
+    throw new RangeError('Point query/variant mismatch');
+  if (variant.coverage.kind === 'finite' && atMs > variant.coverage.toMs)
+    throw new RangeError('Point outside finite source coverage');
+  if (
+    input.clipId !== query.clipId ||
+    input.atMs !== atMs ||
+    input.durationMs !== source.durationMs
+  )
+    throw new RangeError('Point sample time/clip/duration mismatch');
+  const accepted = pointVector(input.acceptedRoot);
+  requireEqual(
+    accepted,
+    { x: root.x, y: 0, z: root.z },
+    'Point accepted root differs from query',
+  );
+  const intendedRoot = pointVector(input.intendedRoot);
+  const support = pointArray(input.support, 2).map((s) => {
+    exactFields(s, [
+      'side',
+      'planted',
+      'local',
+      'worldRotation',
+      'desiredWorld',
+      'errorM',
+      'world',
+    ]);
+    return Object.freeze({
+      side: member(s.side, ['L', 'R']),
+      planted: boolean(s.planted),
+      local: tuple3(s.local),
+      worldRotation: quaternion(s.worldRotation),
+      desiredWorld: tuple3(s.desiredWorld),
+      errorM: nonnegative(s.errorM),
+      world: tuple3(s.world),
+    });
+  });
+  const entry = captureFightingRecipeEntry({
+    recipeVersion: input.recipeVersion,
+    clipId: input.clipId,
+    atMs: input.atMs,
+    pose: input.pose,
+    support: support.map((s) => ({
+      side: s.side,
+      planted: s.planted,
+      local: s.local,
+      worldRotation: s.worldRotation,
+    })),
+  });
+  requireEqual(
+    entry.pose.map((p) => p.name),
+    source.poseNames,
+    'Point pose differs from pinned transform order',
+  );
+  const normalLengthTolerance = nonnegative(context.normalLengthTolerance);
+  if (normalLengthTolerance >= 1)
+    throw new RangeError('Normal-length error must exclude zero normals');
+  const soles = pointArray(input.soles, 2).map((s) => {
+    exactFields(s, ['side', 'surfaceId', 'points', 'normal']);
+    const bound = source.soles.find((b) => b.side === s.side);
+    if (!bound || s.surfaceId !== bound.surfaceId)
+      throw new RangeError('Unknown point sole');
+    const points = pointArray(
+      s.points,
+      context.manifestContext.limits.maxSolePoints,
+    ).map((p) => {
+      exactFields(p, ['primitive', 'vertexIndex', 'local']);
+      return Object.freeze({
+        primitive: pointInteger(p.primitive),
+        vertexIndex: pointInteger(p.vertexIndex),
+        local: pointVector(p.local),
+      });
+    });
+    requireEqual(
+      points.map((p) => ({
+        primitive: p.primitive,
+        vertexIndex: p.vertexIndex,
+      })),
+      bound.members,
+      'Actual sole membership differs from pinned order',
+    );
+    const normal = pointVector(s.normal),
+      length = Math.hypot(normal.x, normal.y, normal.z);
+    if (
+      !Number.isFinite(length) ||
+      length === 0 ||
+      Math.abs(length - 1) > normalLengthTolerance
+    )
+      throw new RangeError(
+        'Sole normal outside supplied unit-length representation bound',
+      );
+    return Object.freeze({
+      side: bound.side,
+      surfaceId: bound.surfaceId,
+      points: Object.freeze(points),
+      normal,
+    });
+  });
+  bijection(
+    soles.map((s) => s.side),
+    ['L', 'R'],
+  );
+  const hurt = pointHurt(input.hurt),
+    expectedHurt = pointHurt(context.expectedHurtProxy);
+  if (
+    expectedHurt.posture !==
+    (query.posture === 'crouching' ? 'crouching' : 'standing')
+  )
+    throw new RangeError('Expected proxy disagrees with selected posture');
+  requireEqual(
+    hurt,
+    expectedHurt,
+    'Point proxy differs from D-authority context',
+  );
+  const hitShapes = pointArray(
+    input.hitShapes,
+    context.manifestContext.limits.maxShapes,
+  ).map((s) => {
+    exactFields(s, ['shapeId', 'volume']);
+    return Object.freeze({
+      shapeId: text(s.shapeId),
+      volume: pointVolume(s.volume),
+    });
+  });
+  bijection(
+    hitShapes.map((s) => s.shapeId),
+    source.shapeIds,
+  );
+  pointArray(context.impacts, context.manifestContext.limits.maxImpacts);
+  const impactIndices: string[] = [],
+    referenced = new Set<string>();
+  let active = false;
+  for (const impact of context.impacts) {
+    exactFields(impact, [
+      'impactIndex',
+      'startMs',
+      'endMs',
+      'damageShare',
+      'shapeId',
+      'additionalShapeIds',
+    ]);
+    impactIndices.push(String(pointInteger(impact.impactIndex)));
+    const start = nonnegative(impact.startMs),
+      end = nonnegative(impact.endMs),
+      share = finite(impact.damageShare);
+    if (start >= end || end > source.durationMs || share <= 0 || share > 1)
+      throw new RangeError('Invalid catalog point impact');
+    for (const id of impactShapeIds(impact)) referenced.add(id);
+    active ||= atMs >= start && atMs < end;
+  }
+  uniqueIds(impactIndices);
+  bijection([...referenced], source.shapeIds);
+  if (boolean(input.active) !== active)
+    throw new RangeError('Point activity differs from catalog half-open union');
+  const shape = input.shape === null ? null : pointVolume(input.shape);
+  if (shape !== null && !hitShapes.some((s) => sameData(s.volume, shape)))
+    throw new RangeError('Legacy shape alias is not a declared point shape');
+  return Object.freeze({
+    ...entry,
+    durationMs: source.durationMs,
+    active,
+    intendedRoot,
+    acceptedRoot: accepted,
+    support: Object.freeze(support),
+    shape,
+    geometryProtocol: 'actual-geometry-v1',
+    geometryBindingId: variant.geometryBindingId,
+    soles: Object.freeze(soles),
+    hurt,
+    hitShapes: Object.freeze(hitShapes),
+  });
+}
+
+/** Structural NON-DTO point preparation only. No eager allocation, source authentication
+ * or production admission. Callers own create/dispose and separately capture each lease. */
+export function captureFightingActualRecipeSamplerFactory(
+  input: FightingActualRecipeSamplerFactory,
+  context: {
+    readonly runId: RunId;
+    readonly manifestContext: FightingGeometryManifestContext;
+  },
+): FightingActualRecipeSamplerFactory {
+  const descriptors = pointResourceDescriptors(input, [
+    'runId',
+    'bindingSetId',
+    'geometryManifest',
+    'create',
+  ]);
+  const create = descriptors.create.value;
+  const snapshot = pointSnapshot({
+    context,
+    runId: descriptors.runId.value,
+    bindingSetId: descriptors.bindingSetId.value,
+    geometryManifest: descriptors.geometryManifest.value,
+  });
+  context = snapshot.context;
+  exactFields(context, ['runId', 'manifestContext']);
+  const run = runId(text(context.runId));
+  if (!snapshot.geometryManifest)
+    throw new RangeError('Missing actual point geometry manifest');
+  const geometryManifest = captureFightingGeometryManifest(
+    snapshot.geometryManifest,
+    context.manifestContext,
+  );
+  if (
+    snapshot.runId !== run ||
+    snapshot.bindingSetId !== geometryManifest.bindingSetId ||
+    typeof create !== 'function'
+  )
+    throw new RangeError('Invalid actual point factory capability/identity');
+  return Object.freeze({
+    runId: run,
+    bindingSetId: geometryManifest.bindingSetId,
+    geometryManifest,
+    create: (id: ActorId) => Reflect.apply(create, input, [actorId(text(id))]),
+  });
+}
+/** Captures lease metadata/method references only. Returned point DTOs still require
+ * captureFightingActualRecipeGeometrySample with independent contextual authority. */
+export function captureFightingActualRecipeSamplerPort(
+  input: FightingActualRecipeSamplerPort,
+  context: {
+    readonly runId: RunId;
+    readonly actorId: ActorId;
+    readonly bindingSetId: string;
+  },
+): FightingActualRecipeSamplerPort {
+  const descriptors = pointResourceDescriptors(input, [
+    'runId',
+    'actorId',
+    'bindingSetId',
+    'sample',
+    'dispose',
+  ]);
+  const sample = descriptors.sample.value,
+    dispose = descriptors.dispose.value;
+  const snapshot = pointSnapshot({
+    context,
+    runId: descriptors.runId.value,
+    actorId: descriptors.actorId.value,
+    bindingSetId: descriptors.bindingSetId.value,
+  });
+  context = snapshot.context;
+  exactFields(context, ['runId', 'actorId', 'bindingSetId']);
+  const run = runId(text(context.runId)),
+    actor = actorId(text(context.actorId)),
+    bindingSetId = text(context.bindingSetId);
+  if (
+    snapshot.runId !== run ||
+    snapshot.actorId !== actor ||
+    snapshot.bindingSetId !== bindingSetId ||
+    typeof sample !== 'function' ||
+    typeof dispose !== 'function'
+  )
+    throw new RangeError('Invalid actual point lease capability/identity');
+  return Object.freeze({
+    runId: run,
+    actorId: actor,
+    bindingSetId,
+    sample: (query: FightingRecipeQuery) =>
+      Reflect.apply(sample, input, [query]),
+    dispose: () => Reflect.apply(dispose, input, []),
+  });
 }

@@ -1,4 +1,4 @@
-import { requireStartupCapability } from '../contracts';
+import { captureGuardRequested, requireStartupCapability } from '../contracts';
 import {
   capturePoseRunPolicy,
   type PoseRunPolicy,
@@ -8,6 +8,7 @@ import {
   type Disposable,
   type GameCommand,
   type GameplayCommand,
+  type GuardRequested,
   type GameSnapshot,
   type HostPhase,
   type HostRequest,
@@ -81,8 +82,53 @@ function isGameplay(command: GameCommand): command is GameplayCommand {
     command.type === 'AttackRequested' ||
     command.type === 'JumpRequested' ||
     command.type === 'MoveRequested' ||
-    command.type === 'CrouchRequested'
+    command.type === 'CrouchRequested' ||
+    command.type === 'GuardRequested'
   );
+}
+/** Guard has a small own-data ingress boundary, not a second combat/input policy.
+ * Original accessors are rejected without evaluation. The existing contract validator
+ * receives only this detached snapshot; its rereads cannot return to caller objects. */
+function capturePublicGuard(input: GameCommand): GuardRequested | null {
+  const fields = (value: unknown, keys: readonly string[]) => {
+    if (!value || typeof value !== 'object') return null;
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).length !== keys.length) return null;
+    const captured: Record<string, unknown> = {};
+    for (const key of keys) {
+      const descriptor = descriptors[key];
+      if (!descriptor || !('value' in descriptor) || !descriptor.enumerable)
+        return null;
+      captured[key] = descriptor.value;
+    }
+    return captured;
+  };
+  try {
+    const outer = fields(input, [
+      'type',
+      'runId',
+      'actorId',
+      'active',
+      'input',
+    ]);
+    if (!outer) return null;
+    const packet = fields(outer.input, ['commandId', 'sequence']);
+    if (!packet) return null;
+    return captureGuardRequested(
+      Object.freeze({
+        type: outer.type,
+        runId: outer.runId,
+        actorId: outer.actorId,
+        active: outer.active,
+        input: Object.freeze({
+          commandId: packet.commandId,
+          sequence: packet.sequence,
+        }),
+      }) as GuardRequested,
+    );
+  } catch {
+    return null;
+  }
 }
 export function createGame<Node>(
   factories: ModuleFactories<Node>,
@@ -288,6 +334,21 @@ export function createGame<Node>(
       );
   }
   function dispatch(command: GameCommand) {
+    // A public command discriminator must itself be own data. Capture Guard
+    // before any original run/active/input Get or packet-identity mutation.
+    let discriminator: PropertyDescriptor | undefined;
+    try {
+      discriminator = Object.getOwnPropertyDescriptor(command, 'type');
+    } catch {
+      return;
+    }
+    if (!discriminator || !('value' in discriminator)) return;
+    const guardAtIngress = discriminator.value === 'GuardRequested';
+    if (guardAtIngress) {
+      const captured = capturePublicGuard(command);
+      if (!captured) return;
+      command = captured;
+    }
     const run = active;
     if (!run || command.runId !== run.context.runId || disposed) return;
     // Runtime provenance gate also rejects serialized/internal notifications and unknown kinds.
@@ -303,6 +364,7 @@ export function createGame<Node>(
       'InputsReleased',
       'MoveRequested',
       'CrouchRequested',
+      'GuardRequested',
       'JumpRequested',
       'AttackRequested',
     ];
@@ -360,13 +422,17 @@ export function createGame<Node>(
             command.basisRevision)
       )
         return;
+      const capturedCommand = guardAtIngress
+        ? command
+        : Object.freeze({
+            ...command,
+            input: Object.freeze({ ...command.input }),
+          });
+      // A non-Guard source callback cannot change its original discriminator
+      // into an uncaptured Guard while the legacy queue packet is being copied.
+      if (capturedCommand.type !== discriminator.value) return;
       run.seen.add(command.input.commandId);
-      run.queue.push(
-        Object.freeze({
-          ...command,
-          input: Object.freeze({ ...command.input }),
-        }),
-      );
+      run.queue.push(capturedCommand);
       return;
     }
     if (command.type === 'MovementSessionEnded') {

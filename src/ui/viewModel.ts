@@ -34,6 +34,37 @@ export function actorSummary(actor: ActorState, clocks: GameClocks) {
           ),
   };
 }
+
+/** Accepted Core state, not physical button ownership or locally inferred eligibility. */
+export function fightingActorSummary(actor: ActorState) {
+  const state = actor.fighting;
+  if (!state) return null;
+  const guardPose =
+    state.guardHeight === 'standing'
+      ? '立ちガード'
+      : state.guardHeight === 'crouching'
+        ? 'しゃがみガード'
+        : null;
+  return Object.freeze({
+    route: state.route,
+    stage: state.stage,
+    phase: state.phase,
+    posture: state.posture,
+    moveId: state.moveId,
+    bufferedButton: state.buffer?.edge.button ?? null,
+    hitConfirmed: state.hitConfirmed,
+    guardHeld: state.guardHeld,
+    guardHeight: state.guardHeight,
+    guardLabel:
+      guardPose === null
+        ? 'ガードしていません'
+        : state.phase === 'blockstun'
+          ? `ガード硬直（${guardPose}）`
+          : guardPose,
+    airAttackUsed: state.airAttackUsed,
+    actions: actor.actions,
+  });
+}
 export function resultLines(
   result: TerminalResult,
 ): readonly (readonly [string, string])[] {

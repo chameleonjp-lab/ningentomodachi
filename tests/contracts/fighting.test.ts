@@ -4036,3 +4036,999 @@ describe('canonical forward interval arithmetic', () => {
     },
   );
 });
+
+// A2-point fixtures are synthetic STRUCTURAL evidence, never real-source admission.
+import type {
+  FightingActualRecipeGeometrySample,
+  FightingActualRecipeSamplerFactory,
+  FightingActualRecipeSamplerPort,
+  FightingGeometryManifest,
+  FightingGeometryManifestContext,
+  FightingGeometrySampleContext,
+  FightingGeometrySourcePin,
+  FightingRecipeSamplerFactory,
+  FightingRecipeSamplerPort,
+} from '../../src/contracts/fighting';
+
+const structuralGeometryPin = (): FightingGeometrySourcePin => ({
+  sourceBindingId: 'structural-source',
+  clipId: clip,
+  durationMs: 100,
+  rootPolicy: 'grounded-posture-y',
+  provenance: {
+    sourceSha256: '1'.repeat(64),
+    evaluatorSha256: '2'.repeat(64),
+    calibrationSha256: '3'.repeat(64),
+    mappingSha256: '4'.repeat(64),
+    sourceClosureSha256: '5'.repeat(64),
+    qualificationEvidenceSha256: '6'.repeat(64),
+  },
+  poseNames: actualEntry().pose.map((p) => p.name),
+  primitives: [{ primitive: 0, vertexCount: 4 }],
+  soles: [
+    {
+      side: 'L',
+      surfaceId: 'structural-sole-L',
+      sourceBindingId: 'structural-source',
+      members: [
+        { primitive: 0, vertexIndex: 0 },
+        { primitive: 0, vertexIndex: 1 },
+      ],
+    },
+    {
+      side: 'R',
+      surfaceId: 'structural-sole-R',
+      sourceBindingId: 'structural-source',
+      members: [
+        { primitive: 0, vertexIndex: 2 },
+        { primitive: 0, vertexIndex: 3 },
+      ],
+    },
+  ],
+  shapeIds: ['primary', 'companion'],
+});
+function structuralGeometryFixture() {
+  const source = structuralGeometryPin();
+  const manifestContext: FightingGeometryManifestContext = {
+    bindingSetId: 'structural-point-preparation',
+    sourcePins: [structuredClone(source)],
+    limits: {
+      maxSources: 2,
+      maxVariants: 4,
+      maxPrimitivesPerSource: 2,
+      maxSolePoints: 3,
+      maxShapes: 3,
+      maxImpacts: 3,
+    },
+  };
+  const manifest: FightingGeometryManifest = {
+    schema: 'actual-geometry-manifest-v1',
+    bindingSetId: manifestContext.bindingSetId,
+    sources: [source],
+    variants: [
+      {
+        geometryBindingId: 'structural-active',
+        sourceBindingId: source.sourceBindingId,
+        clipId: clip,
+        phase: 'active',
+        posture: 'standing',
+        coverage: { kind: 'finite', fromMs: 0, toMs: 100 },
+      },
+    ],
+  };
+  const context: FightingGeometrySampleContext = {
+    manifest,
+    manifestContext,
+    selectedGeometryBindingId: 'structural-active',
+    query: {
+      clipId: clip,
+      phase: 'active',
+      posture: 'standing',
+      atMs: 20,
+      acceptedRoot: { x: 0.25, z: 0.5 },
+      groundClearanceM: 0,
+    },
+    impacts: [
+      {
+        impactIndex: 0,
+        startMs: durationMs(10),
+        endMs: durationMs(50),
+        damageShare: 1,
+        shapeId: 'primary',
+        additionalShapeIds: ['companion'],
+      },
+    ],
+    expectedHurtProxy: {
+      kind: 'posture-capsule-proxy-v1',
+      posture: 'standing',
+      volume: {
+        kind: 'capsule',
+        start: { x: 0, y: 0.35, z: 0 },
+        end: { x: 0, y: 1.5, z: 0 },
+        radiusM: 0.35,
+      },
+    },
+    normalLengthTolerance: 0,
+  };
+  const entry = actualEntry(20);
+  const sample: FightingActualRecipeGeometrySample = {
+    ...entry,
+    durationMs: 100,
+    active: true,
+    intendedRoot: { x: 0, y: 0, z: 1 },
+    acceptedRoot: { ...context.query.acceptedRoot, y: 0 },
+    support: entry.support.map((s) => ({
+      ...s,
+      desiredWorld: [0, 0, 0],
+      errorM: 0,
+      world: [0, 0, 0],
+    })),
+    shape: null,
+    geometryProtocol: 'actual-geometry-v1',
+    geometryBindingId: 'structural-active',
+    soles: source.soles.map((s) => ({
+      side: s.side,
+      surfaceId: s.surfaceId,
+      points: s.members.map((m) => ({
+        ...m,
+        local: { x: m.vertexIndex, y: 0, z: 0 },
+      })),
+      normal: { x: 0, y: -1, z: 0 },
+    })),
+    hurt: structuredClone(context.expectedHurtProxy),
+    hitShapes: source.shapeIds.map((shapeId) => ({
+      shapeId,
+      volume: { kind: 'sphere', center: { x: 0, y: 1, z: 1 }, radiusM: 0.1 },
+    })),
+  };
+  return { manifest, manifestContext, context, sample };
+}
+const captureStructuralPoint = (f = structuralGeometryFixture()) =>
+  transactionContracts.captureFightingActualRecipeGeometrySample(
+    f.sample,
+    f.context,
+  );
+
+describe('A2 point structural contracts — not source authentication or production admission', () => {
+  it('captures exact pinned source membership, companions and all existing geometry fields', () => {
+    const f = structuralGeometryFixture();
+    const m = transactionContracts.captureFightingGeometryManifest(
+      f.manifest,
+      f.manifestContext,
+    );
+    const captured = captureStructuralPoint(f);
+    expect(m).toEqual(f.manifest);
+    expect(captured).toEqual(f.sample);
+    expect(captured.hitShapes.map((s) => s.shapeId)).toEqual([
+      'primary',
+      'companion',
+    ]);
+    expect(captured.support[0]?.desiredWorld).toEqual([0, 0, 0]);
+    expect(Object.isFrozen(captured)).toBe(true);
+  });
+  it('detaches and freezes every nested point, pin, support and shape', () => {
+    const f = structuralGeometryFixture();
+    const captured = captureStructuralPoint(f);
+    const m = transactionContracts.captureFightingGeometryManifest(
+      f.manifest,
+      f.manifestContext,
+    );
+    Reflect.set(f.sample.soles[0]?.points[0]?.local ?? {}, 'x', 999);
+    Reflect.set(f.sample.support[0] ?? {}, 'errorM', 999);
+    Reflect.set(
+      f.manifest.sources[0]?.provenance ?? {},
+      'sourceSha256',
+      '9'.repeat(64),
+    );
+    expect(captured.soles[0]?.points[0]?.local.x).toBe(0);
+    expect(captured.support[0]?.errorM).toBe(0);
+    expect(m.sources[0]?.provenance.sourceSha256).toBe('1'.repeat(64));
+    expect(Object.isFrozen(captured.soles[1]?.points[1]?.local)).toBe(true);
+    expect(Object.isFrozen(m.sources[0]?.soles[0]?.members)).toBe(true);
+  });
+  it.each([
+    'sourceSha256',
+    'evaluatorSha256',
+    'calibrationSha256',
+    'mappingSha256',
+    'sourceClosureSha256',
+    'qualificationEvidenceSha256',
+  ])(
+    'rejects a mismatching independent %s pin without claiming to hash source bytes',
+    (field) => {
+      const f = structuralGeometryFixture();
+      Reflect.set(
+        f.manifest.sources[0]?.provenance ?? {},
+        field,
+        '9'.repeat(64),
+      );
+      expect(() => captureStructuralPoint(f)).toThrow();
+    },
+  );
+  it.each([
+    'missing',
+    'extra',
+    'duplicate',
+    'reordered',
+    'foreign-source',
+    'foreign-surface',
+    'global-index',
+    'nonfinite',
+  ])('rejects %s actual sole membership/data', (mode) => {
+    const f = structuralGeometryFixture();
+    const sole = f.sample.soles[0];
+    if (!sole) throw Error('fixture sole');
+    if (mode === 'missing') Reflect.set(sole, 'points', sole.points.slice(1));
+    if (mode === 'extra')
+      Reflect.set(sole, 'points', [...sole.points, { ...sole.points[0] }]);
+    if (mode === 'duplicate')
+      Reflect.set(sole, 'points', [sole.points[0], sole.points[0]]);
+    if (mode === 'reordered')
+      Reflect.set(sole, 'points', [...sole.points].reverse());
+    if (mode === 'foreign-source')
+      Reflect.set(f.manifest.variants[0] ?? {}, 'sourceBindingId', 'unknown');
+    if (mode === 'foreign-surface') Reflect.set(sole, 'surfaceId', 'unknown');
+    if (mode === 'global-index')
+      Reflect.set(sole.points[0] ?? {}, 'vertexIndex', 14707);
+    if (mode === 'nonfinite')
+      Reflect.set(sole.points[1]?.local ?? {}, 'y', NaN);
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('rejects out-of-bounds, duplicate or unpinned source members even when sample repeats them', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(
+      f.manifest.sources[0]?.soles[0]?.members[0] ?? {},
+      'vertexIndex',
+      4,
+    );
+    Reflect.set(f.sample.soles[0]?.points[0] ?? {}, 'vertexIndex', 4);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(g.manifest.sources[0]?.primitives[0] ?? {}, 'vertexCount', 0);
+    expect(() => captureStructuralPoint(g)).toThrow();
+  });
+  it.each([
+    'maxSources',
+    'maxVariants',
+    'maxPrimitivesPerSource',
+    'maxSolePoints',
+    'maxShapes',
+  ])('enforces external %s allocation bounds', (field) => {
+    const f = structuralGeometryFixture();
+    Reflect.set(
+      f.manifestContext.limits,
+      field,
+      field === 'maxSolePoints' || field === 'maxShapes' ? 1 : 0,
+    );
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('rejects unknown binding/clip/variant, ambiguous variants and malformed provenance', () => {
+    for (const field of ['bindingSetId', 'schema']) {
+      const f = structuralGeometryFixture();
+      Reflect.set(f.manifest, field, 'unknown');
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+    const f = structuralGeometryFixture();
+    Reflect.set(f.manifest, 'variants', [
+      ...f.manifest.variants,
+      { ...f.manifest.variants[0], geometryBindingId: 'ambiguous' },
+    ]);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(
+      g.manifestContext.sourcePins[0]?.provenance ?? {},
+      'sourceSha256',
+      'not-a-digest',
+    );
+    expect(() => captureStructuralPoint(g)).toThrow();
+  });
+  it('uses explicit selected posture and the D-supplied proxy, not a duplicated A numeric policy', () => {
+    for (const posture of ['standing', 'crouching', 'airborne'] as const) {
+      const f = structuralGeometryFixture();
+      Reflect.set(f.context.query, 'posture', posture);
+      Reflect.set(f.manifest.variants[0] ?? {}, 'posture', posture);
+      const proxyPosture = posture === 'crouching' ? 'crouching' : 'standing';
+      Reflect.set(f.context.expectedHurtProxy, 'posture', proxyPosture);
+      Reflect.set(f.sample.hurt, 'posture', proxyPosture);
+      // Unusual but identical consumer-authority capsule demonstrates A does not own its numbers.
+      Reflect.set(f.context.expectedHurtProxy.volume, 'radiusM', 0.42);
+      Reflect.set(f.sample.hurt.volume, 'radiusM', 0.42);
+      expect(captureStructuralPoint(f).hurt.posture).toBe(proxyPosture);
+      Reflect.set(f.sample.hurt.volume, 'radiusM', 0.43);
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+  });
+  it('preserves half-open catalog activity while retaining inactive endpoint geometry', () => {
+    for (const at of [0, 10, 49.999, 50, 100]) {
+      const f = structuralGeometryFixture();
+      Reflect.set(f.context.query, 'atMs', at);
+      Reflect.set(f.sample, 'atMs', at);
+      Reflect.set(f.sample, 'active', at >= 10 && at < 50);
+      expect(captureStructuralPoint(f).hitShapes).toHaveLength(2);
+      Reflect.set(f.sample, 'active', !(at >= 10 && at < 50));
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+  });
+  it('requires complete companions and rejects malformed catalog authority', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(f.sample, 'hitShapes', f.sample.hitShapes.slice(0, 1));
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(g.context.impacts[0] ?? {}, 'additionalShapeIds', ['unknown']);
+    expect(() => captureStructuralPoint(g)).toThrow();
+    const h = structuralGeometryFixture();
+    Reflect.set(h.context.impacts[0] ?? {}, 'endMs', 10);
+    expect(() => captureStructuralPoint(h)).toThrow();
+  });
+  it.each([
+    'atMs',
+    'clipId',
+    'geometryBindingId',
+    'durationMs',
+    'acceptedRoot',
+  ])('rejects sample/query %s disagreement', (field) => {
+    const f = structuralGeometryFixture();
+    Reflect.set(
+      f.sample,
+      field,
+      field === 'atMs'
+        ? 21
+        : field === 'durationMs'
+          ? 99
+          : field === 'acceptedRoot'
+            ? { x: 0, y: 1, z: 0 }
+            : 'unknown',
+    );
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('uses only the supplied normal-length tolerance, never an A epsilon', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(f.sample.soles[0]?.normal ?? {}, 'y', -1.00001);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    Reflect.set(f.context, 'normalLengthTolerance', 0.0001);
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+    Reflect.set(f.sample.soles[0]?.normal ?? {}, 'y', 0);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    Reflect.set(f.context, 'normalLengthTolerance', -1);
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('supports finite point coverage and periodic/constant tails without a new current clock', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(f.manifest.variants[0] ?? {}, 'coverage', {
+      kind: 'prefix-tail',
+      prefixEndMs: 100,
+      tail: { kind: 'periodic', periodMs: 2000, phaseOriginMs: 0 },
+    });
+    Reflect.set(f.context.query, 'atMs', 2000100);
+    Reflect.set(f.sample, 'atMs', 2000100);
+    Reflect.set(f.sample, 'active', false);
+    expect(captureStructuralPoint(f).atMs).toBe(2000100);
+    Reflect.set(f.manifest.variants[0] ?? {}, 'coverage', {
+      kind: 'prefix-tail',
+      prefixEndMs: 100,
+      tail: { kind: 'constant' },
+    });
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+    Reflect.set(f.manifest.variants[0] ?? {}, 'coverage', {
+      kind: 'finite',
+      fromMs: 0,
+      toMs: 100,
+    });
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('validates every sampled-support field and the immutable historical incoming entry', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(f.context.query, 'incoming', actualEntry(7));
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+    Reflect.set(f.sample.support[1] ?? {}, 'errorM', -1);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(g.context.query, 'incoming', false);
+    expect(() => captureStructuralPoint(g)).toThrow();
+  });
+  it('never invokes sample/context getters or inherited array iterators', () => {
+    let invoked = 0;
+    for (const target of ['sample', 'context', 'pins', 'array'] as const) {
+      const f = structuralGeometryFixture();
+      if (target === 'sample')
+        Object.defineProperty(f.sample, 'soles', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return [];
+          },
+        });
+      if (target === 'context')
+        Object.defineProperty(f.context, 'query', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return {};
+          },
+        });
+      if (target === 'pins')
+        Object.defineProperty(f.manifestContext, 'sourcePins', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return [];
+          },
+        });
+      if (target === 'array')
+        Object.setPrototypeOf(f.sample.soles, {
+          [Symbol.iterator]() {
+            invoked++;
+            return [][Symbol.iterator]();
+          },
+        });
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+    expect(invoked).toBe(0);
+  });
+  it('rejects sparse arrays, cycles, typed arrays, callbacks and false optional values atomically', () => {
+    for (const value of [new Float32Array(3), () => 0, false]) {
+      const f = structuralGeometryFixture();
+      Reflect.set(f.sample.soles[1]?.points[1] ?? {}, 'local', value);
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+    const f = structuralGeometryFixture();
+    Reflect.deleteProperty(f.sample.soles, '1');
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(g.sample.soles[1]?.points[1] ?? {}, 'local', g.sample);
+    expect(() => captureStructuralPoint(g)).toThrow();
+    const good = captureStructuralPoint();
+    expect(good.soles[1]?.points[1]?.local.y).toBe(0);
+  });
+});
+
+function structuralPointResources() {
+  const f = structuralGeometryFixture();
+  let creates = 0,
+    samples = 0,
+    disposals = 0;
+  const port: FightingActualRecipeSamplerPort = {
+    runId: run,
+    actorId: actor,
+    bindingSetId: f.manifest.bindingSetId,
+    sample() {
+      expect(this.actorId).toBe(actor);
+      samples++;
+      return f.sample;
+    },
+    dispose() {
+      expect(this.actorId).toBe(actor);
+      disposals++;
+    },
+  };
+  const factory: FightingActualRecipeSamplerFactory = {
+    runId: run,
+    bindingSetId: f.manifest.bindingSetId,
+    geometryManifest: f.manifest,
+    create(id) {
+      expect(this.runId).toBe(run);
+      expect(id).toBe(actor);
+      creates++;
+      return port;
+    },
+  };
+  return {
+    ...f,
+    port,
+    factory,
+    counts: () => ({ creates, samples, disposals }),
+    factoryContext: { runId: run, manifestContext: f.manifestContext },
+    portContext: {
+      runId: run,
+      actorId: actor,
+      bindingSetId: f.manifest.bindingSetId,
+    },
+  };
+}
+describe('A2 point NON-DTO resource preparation — no production admission', () => {
+  it('captures metadata and method references without invoking resources, preserving base compatibility and receivers', () => {
+    const f = structuralPointResources();
+    const factory =
+      transactionContracts.captureFightingActualRecipeSamplerFactory(
+        f.factory,
+        f.factoryContext,
+      );
+    const port = transactionContracts.captureFightingActualRecipeSamplerPort(
+      f.port,
+      f.portContext,
+    );
+    const legacyFactory: FightingRecipeSamplerFactory = factory;
+    const legacyPort: FightingRecipeSamplerPort = port;
+    expect(f.counts()).toEqual({ creates: 0, samples: 0, disposals: 0 });
+    Reflect.set(f.factory, 'create', () => {
+      throw Error('replaced create');
+    });
+    Reflect.set(f.port, 'sample', () => {
+      throw Error('replaced sample');
+    });
+    Reflect.set(f.port, 'dispose', () => {
+      throw Error('replaced dispose');
+    });
+    expect(legacyFactory.create(actor)).toBe(f.port);
+    expect(legacyPort.sample(f.context.query)).toBe(f.sample);
+    legacyPort.dispose();
+    expect(f.counts()).toEqual({ creates: 1, samples: 1, disposals: 1 });
+    Reflect.set(
+      f.manifest.sources[0]?.provenance ?? {},
+      'sourceSha256',
+      '9'.repeat(64),
+    );
+    expect(factory.geometryManifest.sources[0]?.provenance.sourceSha256).toBe(
+      '1'.repeat(64),
+    );
+    expect(Object.isFrozen(factory)).toBe(true);
+    expect(Object.isFrozen(port)).toBe(true);
+    expect('bindPrepared' in factory).toBe(false);
+    expect('interval' in port).toBe(false);
+  });
+  it.each(['runId', 'bindingSetId', 'create', 'geometryManifest'])(
+    'rejects foreign or malformed factory %s before invoking methods',
+    (field) => {
+      const f = structuralPointResources();
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerFactory(
+          f.factory,
+          f.factoryContext,
+        ),
+      ).not.toThrow();
+      Reflect.set(
+        f.factory,
+        field,
+        field === 'geometryManifest' ? false : 'unknown',
+      );
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerFactory(
+          f.factory,
+          f.factoryContext,
+        ),
+      ).toThrow();
+      expect(f.counts()).toEqual({ creates: 0, samples: 0, disposals: 0 });
+    },
+  );
+  it.each(['runId', 'actorId', 'bindingSetId', 'sample', 'dispose'])(
+    'rejects foreign or malformed lease %s',
+    (field) => {
+      const f = structuralPointResources();
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerPort(
+          f.port,
+          f.portContext,
+        ),
+      ).not.toThrow();
+      Reflect.set(f.port, field, 'unknown');
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerPort(
+          f.port,
+          f.portContext,
+        ),
+      ).toThrow();
+      expect(f.counts()).toEqual({ creates: 0, samples: 0, disposals: 0 });
+    },
+  );
+  it('rejects resource/context accessors without invoking them and rejects unrecognized qualification fields', () => {
+    let invoked = 0;
+    for (const target of ['create', 'manifest', 'sample', 'context'] as const) {
+      const f = structuralPointResources();
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerFactory(
+          f.factory,
+          f.factoryContext,
+        ),
+      ).not.toThrow();
+      expect(() =>
+        transactionContracts.captureFightingActualRecipeSamplerPort(
+          f.port,
+          f.portContext,
+        ),
+      ).not.toThrow();
+      if (target === 'create')
+        Object.defineProperty(f.factory, 'create', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return () => f.port;
+          },
+        });
+      if (target === 'manifest')
+        Object.defineProperty(f.factory, 'geometryManifest', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return f.manifest;
+          },
+        });
+      if (target === 'sample')
+        Object.defineProperty(f.port, 'sample', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return () => f.sample;
+          },
+        });
+      if (target === 'context')
+        Object.defineProperty(f.factoryContext, 'manifestContext', {
+          enumerable: true,
+          get() {
+            invoked++;
+            return f.manifestContext;
+          },
+        });
+      if (target === 'sample')
+        expect(() =>
+          transactionContracts.captureFightingActualRecipeSamplerPort(
+            f.port,
+            f.portContext,
+          ),
+        ).toThrow();
+      else
+        expect(() =>
+          transactionContracts.captureFightingActualRecipeSamplerFactory(
+            f.factory,
+            f.factoryContext,
+          ),
+        ).toThrow();
+    }
+    expect(invoked).toBe(0);
+    const f = structuralPointResources();
+    Reflect.set(f.factory, 'qualified', true);
+    expect(() =>
+      transactionContracts.captureFightingActualRecipeSamplerFactory(
+        f.factory,
+        f.factoryContext,
+      ),
+    ).toThrow();
+  });
+  it('rejects live capabilities in point DTOs, and A1 factory cannot masquerade as an actual point resource', () => {
+    const f = structuralPointResources();
+    Reflect.set(f.manifest, 'sample', f.port.sample);
+    expect(() =>
+      transactionContracts.captureFightingGeometryManifest(
+        f.manifest,
+        f.manifestContext,
+      ),
+    ).toThrow();
+    const g = structuralPointResources();
+    Reflect.deleteProperty(g.factory, 'geometryManifest');
+    expect(() =>
+      transactionContracts.captureFightingActualRecipeSamplerFactory(
+        g.factory,
+        g.factoryContext,
+      ),
+    ).toThrow();
+  });
+});
+
+describe('A2 point source mapping and support-only controls', () => {
+  it('rejects a different unique 53-bone order or name under the same source pin', () => {
+    const f = structuralGeometryFixture();
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+    Reflect.set(f.sample, 'pose', [...f.sample.pose].reverse());
+    expect(() => captureStructuralPoint(f)).toThrow();
+    const g = structuralGeometryFixture();
+    Reflect.set(g.sample.pose[0] ?? {}, 'name', 'another-rig-bone');
+    expect(() => captureStructuralPoint(g)).toThrow();
+  });
+  it('captures an inactive support-only periodic Ready point without fake hit shapes', () => {
+    const f = structuralGeometryFixture();
+    for (const source of [
+      f.manifest.sources[0],
+      f.manifestContext.sourcePins[0],
+    ]) {
+      if (!source) throw Error('source fixture');
+      Reflect.set(source, 'shapeIds', []);
+      Reflect.set(source, 'durationMs', 0);
+    }
+    Reflect.set(f.manifest.variants[0] ?? {}, 'phase', 'neutral');
+    Reflect.set(f.manifest.variants[0] ?? {}, 'coverage', {
+      kind: 'prefix-tail',
+      prefixEndMs: 0,
+      tail: { kind: 'periodic', periodMs: 2000, phaseOriginMs: 0 },
+    });
+    Reflect.set(f.context.query, 'phase', 'neutral');
+    Reflect.set(f.context.query, 'atMs', 0);
+    Reflect.set(f.context, 'impacts', []);
+    Reflect.set(f.sample, 'durationMs', 0);
+    Reflect.set(f.sample, 'atMs', 0);
+    Reflect.set(f.sample, 'hitShapes', []);
+    Reflect.set(f.sample, 'active', false);
+    expect(captureStructuralPoint(f).soles).toHaveLength(2);
+    Reflect.set(f.sample, 'active', true);
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('captures capsule companions without splitting their single impact and checks legacy alias membership', () => {
+    const f = structuralGeometryFixture();
+    const capsule = {
+      kind: 'capsule' as const,
+      start: { x: 0, y: 1, z: 1 },
+      end: { x: 1, y: 1.2, z: 2 },
+      radiusM: 0.1,
+    };
+    Reflect.set(f.sample.hitShapes[1] ?? {}, 'volume', capsule);
+    Reflect.set(f.sample, 'shape', capsule);
+    expect(captureStructuralPoint(f).hitShapes[1]?.volume.kind).toBe('capsule');
+    expect(f.context.impacts).toHaveLength(1);
+    Reflect.set(f.sample, 'shape', { ...capsule, radiusM: 0.2 });
+    expect(() => captureStructuralPoint(f)).toThrow();
+  });
+  it('rejects a claimed production qualification or unsupported numeric profile in point metadata', () => {
+    for (const field of ['qualified', 'eventNumberProfile', 'interval']) {
+      const f = structuralGeometryFixture();
+      Reflect.set(
+        f.manifest,
+        field,
+        field === 'eventNumberProfile' ? { p: 24 } : true,
+      );
+      expect(() => captureStructuralPoint(f)).toThrow();
+    }
+  });
+});
+
+describe('A2 point bounded catalog context', () => {
+  it('requires and enforces an explicit impact-count allocation cap independently of shape count', () => {
+    const f = structuralGeometryFixture();
+    Reflect.set(f.manifestContext.limits, 'maxImpacts', 1);
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+    const first = f.context.impacts[0];
+    if (!first) throw Error('impact fixture');
+    Reflect.set(f.context, 'impacts', [first, { ...first, impactIndex: 1 }]);
+    expect(() => captureStructuralPoint(f)).toThrow();
+    Reflect.set(f.manifestContext.limits, 'maxImpacts', 2);
+    expect(() => captureStructuralPoint(f)).not.toThrow();
+  });
+});
+
+// Local proxies below only vary live Get/descriptor observations. They do not
+// mutate global intrinsics and do not authenticate any real source geometry.
+describe('A2 point consistent own-data snapshots and captured callable dispatch', () => {
+  it('I1-A never publishes a late NaN from re-reading a validated sole component', () => {
+    const f = structuralGeometryFixture();
+    const point = f.sample.soles[0]?.points[0];
+    if (!point) throw Error('sole fixture');
+    let reads = 0;
+    Reflect.set(
+      point,
+      'local',
+      new Proxy(point.local, {
+        get(target, key, receiver) {
+          if (key === 'y') return ++reads < 3 ? 0 : NaN;
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+    );
+    const captured = captureStructuralPoint(f);
+    expect(captured.soles[0]?.points[0]?.local.y).toBe(0);
+    expect(reads).toBe(0);
+  });
+  it('I1-B binds the returned sample time to the same descriptor snapshot as validation', () => {
+    const f = structuralGeometryFixture();
+    let reads = 0;
+    f.sample = new Proxy(f.sample, {
+      get(target, key, receiver) {
+        if (key === 'atMs') return ++reads < 3 ? 20 : 21;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const captured = captureStructuralPoint(f);
+    expect(captured.atMs).toBe(20);
+    expect(reads).toBe(0);
+  });
+  it('I1-C holds the exact callable descriptor value rather than a later noncallable Get', () => {
+    const f = structuralPointResources();
+    let reads = 0;
+    const proxy = new Proxy(f.factory, {
+      get(target, key, receiver) {
+        if (key === 'create') return ++reads === 1 ? target.create : null;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const captured =
+      transactionContracts.captureFightingActualRecipeSamplerFactory(
+        proxy,
+        f.factoryContext,
+      );
+    expect(captured.create(actor)).toBe(f.port);
+    expect(reads).toBe(0);
+    expect(f.counts().creates).toBe(1);
+  });
+  it('I1-D never iterates a swapped unvalidated context impacts array', () => {
+    const f = structuralGeometryFixture();
+    let reads = 0,
+      iterations = 0;
+    const trusted = f.context.impacts,
+      swapped = [...trusted];
+    Object.defineProperty(swapped, Symbol.iterator, {
+      value() {
+        iterations++;
+        return trusted[Symbol.iterator]();
+      },
+    });
+    f.context = new Proxy(f.context, {
+      get(target, key, receiver) {
+        if (key === 'impacts') return ++reads < 3 ? trusted : swapped;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    expect(captureStructuralPoint(f).active).toBe(true);
+    expect(iterations).toBe(0);
+    expect(reads).toBe(0);
+  });
+  it.each(['create', 'sample', 'dispose'] as const)(
+    'I2-%s dispatches the captured callable rather than its mutable own call property',
+    (method) => {
+      const f = structuralPointResources();
+      const factory =
+        transactionContracts.captureFightingActualRecipeSamplerFactory(
+          f.factory,
+          f.factoryContext,
+        );
+      const port = transactionContracts.captureFightingActualRecipeSamplerPort(
+        f.port,
+        f.portContext,
+      );
+      const original = method === 'create' ? f.factory.create : f.port[method];
+      let hijacked = 0;
+      Object.defineProperty(original, 'call', {
+        value() {
+          hijacked++;
+          return method === 'create'
+            ? f.port
+            : method === 'sample'
+              ? f.sample
+              : undefined;
+        },
+      });
+      if (method === 'create') expect(factory.create(actor)).toBe(f.port);
+      else if (method === 'sample')
+        expect(port.sample(f.context.query)).toBe(f.sample);
+      else port.dispose();
+      expect(hijacked).toBe(0);
+      expect(f.counts()).toEqual({
+        creates: method === 'create' ? 1 : 0,
+        samples: method === 'sample' ? 1 : 0,
+        disposals: method === 'dispose' ? 1 : 0,
+      });
+    },
+  );
+  it('snapshots independent manifest pins, limits and query before any live property Get', () => {
+    const f = structuralGeometryFixture();
+    let reads = 0;
+    const noLiveReads = <T extends object>(value: T): T =>
+      new Proxy(value, {
+        get() {
+          reads++;
+          throw Error('live DTO Get');
+        },
+      });
+    Reflect.set(f.context, 'query', noLiveReads(f.context.query));
+    Reflect.set(
+      f.manifestContext,
+      'sourcePins',
+      noLiveReads(f.manifestContext.sourcePins),
+    );
+    Reflect.set(
+      f.manifestContext,
+      'limits',
+      noLiveReads(f.manifestContext.limits),
+    );
+    f.manifest = noLiveReads(f.manifest);
+    Reflect.set(f.context, 'manifest', f.manifest);
+    expect(
+      transactionContracts.captureFightingGeometryManifest(
+        f.manifest,
+        f.manifestContext,
+      ).sources,
+    ).toHaveLength(1);
+    expect(captureStructuralPoint(f).atMs).toBe(20);
+    expect(reads).toBe(0);
+  });
+  it('uses each object descriptor only once, including shared subtrees, and freezes only detached DTOs', () => {
+    const f = structuralGeometryFixture();
+    const point = f.sample.soles[0]?.points[0];
+    if (!point) throw Error('sole fixture');
+    let descriptors = 0;
+    const local = new Proxy(point.local, {
+      getOwnPropertyDescriptor(target, key) {
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (key === 'y' && descriptor)
+          return { ...descriptor, value: ++descriptors === 1 ? 0 : NaN };
+        return descriptor;
+      },
+    });
+    Reflect.set(point, 'local', local);
+    Reflect.set(f.sample, 'intendedRoot', local);
+    const captured = captureStructuralPoint(f);
+    expect(captured.soles[0]?.points[0]?.local.y).toBe(0);
+    expect(captured.intendedRoot.y).toBe(0);
+    expect(descriptors).toBe(1);
+    expect(Object.isFrozen(captured.intendedRoot)).toBe(true);
+    expect(Object.isFrozen(point.local)).toBe(false);
+  });
+  it.each(['sample', 'dispose'] as const)(
+    'retains the descriptor callable for lease %s despite a changing Get',
+    (method) => {
+      const f = structuralPointResources();
+      let reads = 0;
+      const proxy = new Proxy(f.port, {
+        get(target, key, receiver) {
+          if (key === method) return ++reads === 1 ? target[method] : null;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const captured =
+        transactionContracts.captureFightingActualRecipeSamplerPort(
+          proxy,
+          f.portContext,
+        );
+      if (method === 'sample')
+        expect(captured.sample(f.context.query)).toBe(f.sample);
+      else captured.dispose();
+      expect(reads).toBe(0);
+    },
+  );
+  it('captures resource/context identity from own data, but preserves the original receiver and caller-owned cleanup', () => {
+    const f = structuralPointResources();
+    let receiver: unknown,
+      reads = 0;
+    const failure = Error('actual dispose failure');
+    Reflect.set(f.port, 'dispose', function (this: unknown) {
+      receiver = this;
+      throw failure;
+    });
+    const proxy = new Proxy(f.port, {
+      get() {
+        reads++;
+        throw Error('live resource Get');
+      },
+    });
+    const context = new Proxy(f.portContext, {
+      get() {
+        reads++;
+        throw Error('live context Get');
+      },
+    });
+    const captured =
+      transactionContracts.captureFightingActualRecipeSamplerPort(
+        proxy,
+        context,
+      );
+    expect(captured.actorId).toBe(actor);
+    expect(() => captured.dispose()).toThrow(failure);
+    expect(receiver).toBe(proxy);
+    expect(reads).toBe(0);
+    expect(Object.isFrozen(f.port)).toBe(false);
+  });
+  it('rejects malformed descriptor snapshots without mutating inputs or an earlier accepted point', () => {
+    const f = structuralGeometryFixture(),
+      previous = captureStructuralPoint(f);
+    const original = structuredClone(f);
+    let getters = 0;
+    const bad = new Proxy(f.sample, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === 'atMs')
+          return {
+            enumerable: true,
+            configurable: true,
+            get() {
+              getters++;
+              return 20;
+            },
+          };
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    expect(() =>
+      transactionContracts.captureFightingActualRecipeGeometrySample(
+        bad,
+        f.context,
+      ),
+    ).toThrow();
+    expect(getters).toBe(0);
+    expect(f).toEqual(original);
+    expect(previous).toEqual(original.sample);
+  });
+});

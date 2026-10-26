@@ -7,7 +7,8 @@ import {
   type InputReleaseReason,
   type MovementBasisSnapshot,
 } from '../contracts';
-export type ControlAction = 'move' | 'punch' | 'kick' | 'jump';
+import { toGuardIntent } from './guardIntent';
+export type ControlAction = 'move' | 'punch' | 'kick' | 'jump' | 'guard';
 export interface PointerInput extends InputPort {
   pointerDown(
     pointerId: number,
@@ -22,6 +23,7 @@ export interface PointerInput extends InputPort {
 export function createPointerInput(
   context: InputModuleContext,
   selectedActor?: ActorId,
+  options: { readonly fightingVersion?: 3 } = {},
 ): PointerInput {
   let enabled = false;
   let disposed = false;
@@ -29,6 +31,7 @@ export function createPointerInput(
   let gesture = 0;
   const listeners = new Set<(command: GameCommand) => void>();
   const pointers = new Map<number, ControlAction>();
+  let guardActor: ActorId | null = null;
   let movement: {
     pointerId: number;
     x: number;
@@ -55,6 +58,7 @@ export function createPointerInput(
   const clear = () => {
     pointers.clear();
     movement = null;
+    guardActor = null;
   };
   return {
     subscribe(listener) {
@@ -73,15 +77,27 @@ export function createPointerInput(
         disposed ||
         pointers.has(pointerId) ||
         !Number.isFinite(x) ||
-        !Number.isFinite(y)
+        !Number.isFinite(y) ||
+        (action === 'guard' && options.fightingVersion !== 3)
       )
         return;
+      if (action === 'guard' && guardActor !== null) {
+        pointers.set(pointerId, action);
+        return;
+      }
+      const snapshot = selectedActor ? null : context.readSnapshot();
       const actorId =
         selectedActor ??
-        context.readSnapshot()?.actors.find((actor) => actor.color === 'white')
-          ?.actorId;
+        (snapshot?.runId === context.runId
+          ? snapshot.actors.find((actor) => actor.color === 'white')?.actorId
+          : undefined);
       if (!actorId) return;
-      if (action === 'move') {
+      if (action === 'guard') {
+        guardActor = actorId;
+        pointers.set(pointerId, action);
+        const intent = toGuardIntent(true, context, packet(), actorId);
+        if (intent) emit(intent);
+      } else if (action === 'move') {
         if (movement) return;
         const basis = context.movement.begin(
           `${context.runId}:gesture:${++gesture}`,
@@ -224,7 +240,19 @@ export function createPointerInput(
       }
     },
     pointerUp(pointerId, cancelled = false) {
+      const action = pointers.get(pointerId);
       pointers.delete(pointerId);
+      if (
+        action === 'guard' &&
+        guardActor !== null &&
+        ![...pointers.values()].includes('guard')
+      ) {
+        const actorId = guardActor;
+        guardActor = null;
+        const intent = toGuardIntent(false, context, packet(), actorId);
+        if (intent) emit(intent);
+        return;
+      }
       if (movement?.pointerId === pointerId) {
         const session = movement.basis.sessionId;
         movement = null;
