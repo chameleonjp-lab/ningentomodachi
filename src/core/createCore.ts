@@ -43,6 +43,24 @@ import {
   captureFightingCombatantState,
   captureFightingClock,
   captureFightingPolicy,
+  captureFightingSpatialTransactionPolicy,
+  captureFightingReadyDescriptor,
+  captureFightingBootstrap,
+  captureFightingSpatialTransactionResult,
+  captureFightingProjectInput,
+  captureFightingSpatialFrontier,
+  captureFightingSpatialCommitReceipt,
+  captureFightingEncounterReset,
+  type FightingAcceptedActorPrefix,
+  type FightingEncounterReset,
+  type FightingSpatialTransactionPort,
+  type FightingRecipeEntry,
+  captureFightingTransactionalClock,
+  captureFightingClockPoint,
+  type FightingClockPoint,
+  type FightingPoseHold,
+  type FightingSpatialTransactionPolicy,
+  type FightingReadyDescriptor,
   captureLegacyImpactProfile,
   captureFightingSpatialStepResult,
   type FightingPolicy,
@@ -81,13 +99,22 @@ export type FightingPoseKey =
   | 'hit-standing'
   | 'hit-crouching';
 /** Explicit Core-only admission. Real assets, spatial paths and public readiness are F/C/D gates. */
-export interface CoreFightingOptions {
+interface CoreFightingCommonOptions {
   readonly policy: FightingPolicy;
   readonly entries: readonly (FightingEntry & { readonly clipId: ClipId })[];
   readonly catalog: Pick<MotionCatalogPort, 'get' | 'list'>;
   readonly legacyImpactProfiles: readonly LegacyImpactProfile[];
   readonly poseClips: Readonly<Record<FightingPoseKey, ClipId>>;
 }
+export type CoreFightingOptions = CoreFightingCommonOptions &
+  (
+    | { readonly mode: 'core-evidence-only' }
+    | {
+        readonly mode: 'battle-transaction-v1';
+        readonly transactionPolicy: FightingSpatialTransactionPolicy;
+        readonly ready: () => FightingReadyDescriptor;
+      }
+  );
 const FIGHTING_TICK_MS = 1000 / 60;
 // Normalize only binary arithmetic roundoff (8 ULP), never a gameplay epsilon or TOI tick bucket.
 const sameClockPoint = (a: number, b: number) =>
@@ -101,6 +128,14 @@ const clockTicks = (ms: number) => {
 };
 const clockFloor = (ms: number) => Math.floor(clockTicks(ms));
 const clockRemaining = (ms: number) => Math.max(0, Math.ceil(clockTicks(ms)));
+/** Normalize cancellation roundoff using the original absolute operands, not a smaller difference. */
+const actionElapsed = (now: number, origin: number) => {
+  const elapsed = now - origin,
+    nearest = Math.round(elapsed / FIGHTING_TICK_MS);
+  return sameClockPoint(now, origin + nearest * FIGHTING_TICK_MS)
+    ? nearest * FIGHTING_TICK_MS
+    : elapsed;
+};
 // Captured finite components may still overflow products, lengths or subtraction.
 function horizontalUnit(x: number, z: number) {
   const scale = Math.max(Math.abs(x), Math.abs(z));
@@ -203,10 +238,28 @@ export function createCore(
   context: RunContext,
   options: CoreOptions,
 ): CorePort {
-  const random = createRandom(context.seed);
+  if (
+    options.fighting &&
+    options.fighting.mode !== 'core-evidence-only' &&
+    options.fighting.mode !== 'battle-transaction-v1'
+  )
+    throw new RangeError('Fighting requires an explicit supported Core mode');
+  if (options.fighting?.mode === 'battle-transaction-v1') {
+    captureFightingSpatialTransactionPolicy(options.fighting.transactionPolicy);
+    if (options.world?.vehicles.length || options.world?.objects.length)
+      throw new RangeError('Strict fighting requires an empty battle world');
+  }
+  let random = createRandom(context.seed);
   const fighting = options.fighting
     ? {
         ...options.fighting,
+        ...(options.fighting.mode === 'battle-transaction-v1'
+          ? {
+              transactionPolicy: captureFightingSpatialTransactionPolicy(
+                options.fighting.transactionPolicy,
+              ),
+            }
+          : {}),
         policy: captureFightingPolicy(options.fighting.policy),
         entries: immutableDto(options.fighting.entries),
         poseClips: immutableDto(options.fighting.poseClips),
@@ -215,14 +268,27 @@ export function createCore(
         ),
       }
     : null;
-  const fightingMetadata = new Map<ClipId, MotionDefinition>();
-  const profiles = new Map<string, LegacyImpactProfile>();
-  const fightingRuntime = new Map<ActorId, FightingRuntime>();
+  const strictMode = fighting?.mode === 'battle-transaction-v1';
+  const usedTransactions = new Set<string>();
+  const usedReceipts = new Set<string>();
+  let selecting = false;
+  let resolving = false;
+  let callbackRead: GameSnapshot | null = null;
+  let holdReason: FightingPoseHold['reason'] = 'prestep-intent';
+  let readyDescriptor: FightingReadyDescriptor | null = null;
+  let pending: {
+    request: SpatialStepRequest;
+    state: ReturnType<typeof checkpoint>;
+    read: GameSnapshot;
+  } | null = null;
+  let fightingMetadata = new Map<ClipId, MotionDefinition>();
+  let profiles = new Map<string, LegacyImpactProfile>();
+  let fightingRuntime = new Map<ActorId, FightingRuntime>();
   let epochSerial = 0;
   let fightingCursor = 0;
   let fightingRequest: SpatialStepRequest | null = null;
   let fightingResult: FightingSpatialStepResult | null = null;
-  const acceptedSlices = new Map<ActorId, FightingClockSlice[]>();
+  let acceptedSlices = new Map<ActorId, FightingClockSlice[]>();
 
   const world = createWorldLedger(
     context.runId,
@@ -427,7 +493,7 @@ export function createCore(
       move: denied('not-running'),
     },
   }));
-  const heat = new Map(actors.map((a) => [a.actorId, initialHeat()]));
+  let heat = new Map(actors.map((a) => [a.actorId, initialHeat()]));
   let snapshot: GameSnapshot = immutableDto({
     contractVersion: 1,
     revision: 0,
@@ -474,19 +540,19 @@ export function createCore(
     presentationSum = 0,
     presentationCompensation = 0;
   let spatial: SpatialSnapshot | null = null;
-  const pauses = new Set<PauseReason>();
-  const consumed = new Set<string>();
-  const hitTargets = new Set<string>();
-  const seenContacts = new Set<string>();
-  const seenCommands = new Set<CommandId>();
-  const seenActorSequences = new Map<string, CommandId>();
+  let pauses = new Set<PauseReason>();
+  let consumed = new Set<string>();
+  let hitTargets = new Set<string>();
+  let seenContacts = new Set<string>();
+  let seenCommands = new Set<CommandId>();
+  let seenActorSequences = new Map<string, CommandId>();
   let intents: GameplayCommand[] = [];
-  const moves = new Map<ActorId, GameplayCommand>();
-  const crouchOwners = new Map<
+  let moves = new Map<ActorId, GameplayCommand>();
+  let crouchOwners = new Map<
     ActorId,
     { sessionId: string; revision: number }
   >();
-  const closedCrouchSessions = new Set<string>();
+  let closedCrouchSessions = new Set<string>();
   function clearCrouch(id?: ActorId, close = false) {
     let changed = false;
     for (const [actor, owner] of crouchOwners) {
@@ -527,8 +593,214 @@ export function createCore(
     requireValue(actors.find((a) => a.actorId === id));
   const runtime = (id: ActorId) => requireValue(fightingRuntime.get(id));
   const stateOf = (id: ActorId) => requireValue(combatant(id).fighting);
-  const invalidPathAfter = new Map<ActorId, number>();
-  const appliedPhysical = new Set<string>();
+  let invalidPathAfter = new Map<ActorId, number>();
+  let appliedPhysical = new Set<string>();
+  /** Fully enumerated private draft. Epoch high-water marks remain reserved on failure. */
+  function checkpoint() {
+    return {
+      actors,
+      snapshot,
+      events: [...events],
+      sequence,
+      activation,
+      batchSerial,
+      disposed,
+      inStep,
+      processedReal,
+      stepRealFrom,
+      stepRealTo,
+      from,
+      end,
+      defeatedCount,
+      nextOpponent,
+      slowWindow,
+      pendingOpponent,
+      opponentTransitionEndsAt,
+      acceptedRealSum,
+      realCompensation,
+      presentationSum,
+      presentationCompensation,
+      spatial,
+      phaseBeforePause,
+      fightingCursor,
+      fightingRequest,
+      fightingResult,
+      crouchAvailable,
+      readyDescriptor,
+      heat: new Map(heat),
+      pauses: new Set(pauses),
+      consumed: new Set(consumed),
+      hitTargets: new Set(hitTargets),
+      seenContacts: new Set(seenContacts),
+      seenCommands: new Set(seenCommands),
+      seenActorSequences: new Map(seenActorSequences),
+      moves: new Map(moves),
+      crouchOwners: new Map(crouchOwners),
+      closedCrouchSessions: new Set(closedCrouchSessions),
+      invalidPathAfter: new Map(invalidPathAfter),
+      appliedPhysical: new Set(appliedPhysical),
+      metadata: new Map(metadata),
+      fightingMetadata: new Map(fightingMetadata),
+      profiles: new Map(profiles),
+      fightingRuntime: new Map(
+        [...fightingRuntime].map(([id, value]) => [id, { ...value }]),
+      ),
+      acceptedSlices: new Map(
+        [...acceptedSlices].map(([id, value]) => [id, [...value]]),
+      ),
+      intents: [...intents],
+      random: createRandom(random.read()),
+    };
+  }
+  function restoreState(state: ReturnType<typeof checkpoint>) {
+    ({
+      actors,
+      snapshot,
+      events,
+      sequence,
+      activation,
+      batchSerial,
+      disposed,
+      inStep,
+      processedReal,
+      stepRealFrom,
+      stepRealTo,
+      from,
+      end,
+      defeatedCount,
+      nextOpponent,
+      slowWindow,
+      pendingOpponent,
+      opponentTransitionEndsAt,
+      acceptedRealSum,
+      realCompensation,
+      presentationSum,
+      presentationCompensation,
+      spatial,
+      phaseBeforePause,
+      fightingCursor,
+      fightingRequest,
+      fightingResult,
+      crouchAvailable,
+      readyDescriptor,
+      heat,
+      pauses,
+      consumed,
+      hitTargets,
+      seenContacts,
+      seenCommands,
+      seenActorSequences,
+      moves,
+      crouchOwners,
+      closedCrouchSessions,
+      invalidPathAfter,
+      appliedPhysical,
+      metadata,
+      fightingMetadata,
+      profiles,
+      fightingRuntime,
+      acceptedSlices,
+      intents,
+      random,
+    } = state);
+  }
+  function guardMutation(cancel = false) {
+    if (resolving) throw new Error('Core busy resolving or preparing');
+    if (strictMode && pending && !cancel)
+      throw new Error('Core has a pending fighting transaction');
+  }
+  function point(id: ActorId, at: number): FightingClockPoint {
+    const r = runtime(id),
+      s = stateOf(id);
+    return captureFightingClockPoint({
+      runId: context.runId,
+      actorId: id,
+      stepTick: snapshot.clocks.tick,
+      atGameMs: gameTimeMs(at),
+      epochId: r.epochId,
+      clipId: r.clipId,
+      activationId: r.activationId,
+      motionMs: durationMs(r.motionMs),
+      phase: s.phase,
+      posture: s.posture,
+    });
+  }
+  function prepareReady() {
+    if (fighting?.mode !== 'battle-transaction-v1') return;
+    const descriptor = captureFightingReadyDescriptor(fighting.ready());
+    if (disposed || snapshot.phase !== 'loading')
+      throw new Error('Stale fighting preparation');
+    if (
+      descriptor.clipId !== fighting.poseClips.standing ||
+      descriptor.actors.some(
+        (a) => !actors.some((b) => b.actorId === a.actorId),
+      ) ||
+      !snapshot.residentActorIds?.every((id) =>
+        descriptor.actors.some((a) => a.actorId === id),
+      )
+    )
+      throw new RangeError(
+        'Ready descriptor does not match the admitted Core roster/clip',
+      );
+    readyDescriptor = descriptor;
+    const ids = requireValue(snapshot.residentActorIds);
+    const bootstrap = captureFightingBootstrap({
+      runId: context.runId,
+      descriptor,
+      residentActorIds: ids,
+      endpoints: ids.map((id) => point(id, 0)),
+      poseContexts: ids.map((id) => ({
+        runId: context.runId,
+        actorId: id,
+        stepTick: tick(0),
+        epochId: runtime(id).epochId,
+        commitId: `${context.runId}:bootstrap:${id}:${runtime(id).epochId}`,
+        entryKind: 'initial-ready' as const,
+        facingBasis: requireValue(
+          descriptor.actors.find((a) => a.actorId === id),
+        ).facingBasis,
+        acceptedRoot: { x: 0, z: 0 },
+        support: { ...descriptor.supportPlane, groundClearanceM: 0 },
+      })),
+    });
+    for (const endpoint of bootstrap.endpoints)
+      updateActor(endpoint.actorId, {
+        fightingClock: captureFightingTransactionalClock(
+          {
+            stepTick: tick(0),
+            activeEpochId: endpoint.epochId,
+            slices: [],
+            endpoint,
+          },
+          {
+            runId: context.runId,
+            actorId: endpoint.actorId,
+            stepTick: tick(0),
+            fromGameMs: gameTimeMs(0),
+            toGameMs: gameTimeMs(0),
+            queryMode: 'bootstrap',
+          },
+        ),
+        fightingPose: requireValue(
+          bootstrap.poseContexts.find((p) => p.actorId === endpoint.actorId),
+        ),
+      });
+    spatial = immutableDto({
+      runId: context.runId,
+      tick: tick(0),
+      vehicles: [],
+      actors: descriptor.actors
+        .filter((a) => ids.includes(a.actorId))
+        .map((a) => ({
+          actorId: a.actorId,
+          position: a.position,
+          facing: a.facingBasis,
+          velocity: { x: 0, y: 0, z: 0 },
+          grounded: true,
+          locomotion: 'idle' as const,
+        })),
+    });
+  }
   function poseKey(a: ActorState): FightingPoseKey | 'attack' {
     const s = requireValue(a.fighting);
     if (a.attack) return 'attack';
@@ -542,10 +814,14 @@ export function createCore(
     return s.posture;
   }
   function syncEpoch(id: ActorId) {
-    if (!fighting) return;
+    if (!fighting || (strictMode && !selecting)) return;
     const a = combatant(id),
       r = runtime(id);
-    if (a.fighting?.phase === 'defeated') return;
+    if (
+      a.fighting?.phase === 'defeated' ||
+      (strictMode && snapshot.phase === 'terminal')
+    )
+      return;
     const key = poseKey(a);
     const clip =
       key === 'attack'
@@ -571,6 +847,14 @@ export function createCore(
         (state.phase === 'blockstun' ? state.guardHeight : state.posture) ===
         'crouching',
     });
+    if (strictMode && !selecting && combatant(id).fightingClock?.endpoint)
+      updateActor(id, {
+        fightingPoseHold: {
+          reason: holdReason,
+          displayEpochId: requireValue(combatant(id).fightingClock?.endpoint)
+            .epochId,
+        },
+      });
     syncEpoch(id);
   }
   function heldPosture(id: ActorId): FightingCombatantState['posture'] {
@@ -618,7 +902,7 @@ export function createCore(
       before = stateOf(id);
     if (before.phase === 'defeated') return;
     let s = { ...before };
-    const age = r.actionMs - r.moveStart;
+    const age = actionElapsed(r.actionMs, r.moveStart);
     s.tick = clockFloor(r.actionMs);
     s.stopTicksRemaining = clockRemaining(r.stopUntil - at);
     s.stunTicksRemaining = reached(r.actionMs, r.stunUntil)
@@ -628,7 +912,7 @@ export function createCore(
       ? 0
       : clockRemaining(r.landingUntil - r.actionMs);
     if (s.buffer && r.bufferAt !== null) {
-      const ageTicks = clockFloor(r.actionMs - r.bufferAt);
+      const ageTicks = clockFloor(actionElapsed(r.actionMs, r.bufferAt));
       s.buffer = ageTicks > 6 ? null : { ...s.buffer, ageTicks };
       if (!s.buffer) r.bufferAt = null;
     }
@@ -694,8 +978,18 @@ export function createCore(
       s = stateOf(id);
     if (!reached(cursor, r.stopUntil)) return Math.min(limit, r.stopUntil);
     const actionDeadlines = [r.stunUntil, r.landingUntil];
-    if (a.attack)
-      actionDeadlines.push(r.moveStart + motionFor(a.attack.clipId).durationMs);
+    if (a.attack) {
+      const motion = motionFor(a.attack.clipId);
+      actionDeadlines.push(r.moveStart + motion.durationMs);
+      if (strictMode)
+        for (const impact of motion.impacts)
+          actionDeadlines.push(
+            r.moveStart + impact.startMs,
+            r.moveStart + impact.endMs,
+          );
+    }
+    if (strictMode && s.buffer && s.hitConfirmed && r.contactAt !== null)
+      actionDeadlines.push(r.contactAt + FIGHTING_TICK_MS);
     if (s.buffer && r.bufferAt !== null)
       actionDeadlines.push(r.bufferAt + 7 * FIGHTING_TICK_MS);
     for (const deadline of actionDeadlines)
@@ -727,6 +1021,8 @@ export function createCore(
   function advanceFightingThrough(at: number) {
     if (!fighting) return;
     for (const actor of actors) {
+      if (strictMode && !snapshot.residentActorIds?.includes(actor.actorId))
+        continue;
       const id = actor.actorId,
         r = runtime(id);
       let cursor = fightingCursor;
@@ -897,10 +1193,11 @@ export function createCore(
   function stopFighting(id: ActorId, at: number, count: number) {
     const r = runtime(id);
     r.stopUntil = Math.max(r.stopUntil, at + count * FIGHTING_TICK_MS);
-    invalidPathAfter.set(
-      id,
-      Math.min(invalidPathAfter.get(id) ?? Infinity, at),
-    );
+    if (!strictMode)
+      invalidPathAfter.set(
+        id,
+        Math.min(invalidPathAfter.get(id) ?? Infinity, at),
+      );
     setFighting(id, {
       ...stateOf(id),
       stopTicksRemaining: clockRemaining(r.stopUntil - at),
@@ -914,7 +1211,9 @@ export function createCore(
       s = stateOf(id),
       attack = combatant(id).attack;
     r.airborne = false;
-    const elapsed = attack ? r.actionMs - r.moveStart : r.motionMs;
+    const elapsed = attack
+      ? actionElapsed(r.actionMs, r.moveStart)
+      : r.motionMs;
     const remaining = attack
       ? motionFor(attack.clipId).durationMs - elapsed
       : 0;
@@ -1099,37 +1398,42 @@ export function createCore(
   }
   /** Planned coverage is a disposable simulation of known clock transitions, never accepted authority. */
   function planFightingClocks() {
-    const savedActors = actors;
-    const savedRuntime = new Map(
-      [...fightingRuntime].map(([id, r]) => [id, { ...r }]),
-    );
-    const savedHeat = new Map(heat);
-    for (const a of actors) acceptedSlices.set(a.actorId, []);
-    fightingCursor = from;
-    advanceFightingThrough(end);
-    const clocks = new Map(
-      actors.map((a) => [
-        a.actorId,
-        captureFightingClock({
-          stepTick: snapshot.clocks.tick,
-          activeEpochId: requireValue(acceptedSlices.get(a.actorId)?.at(-1))
-            .epochId,
-          slices: requireValue(acceptedSlices.get(a.actorId)),
-        }),
-      ]),
-    );
-    actors = savedActors;
-    fightingRuntime.clear();
-    heat.clear();
-    for (const [id, r] of savedRuntime) fightingRuntime.set(id, r);
-    for (const [id, h] of savedHeat) heat.set(id, h);
-    // Published planned epochs are already issued identities. Never recycle one
-    // for a different accepted reaction when contact invalidates that plan.
+    const saved = checkpoint();
+    let clocks: Map<ActorId, import('../contracts').FightingClock>;
+    try {
+      for (const a of actors) acceptedSlices.set(a.actorId, []);
+      fightingCursor = from;
+      if (strictMode)
+        for (const id of requireValue(snapshot.residentActorIds)) syncEpoch(id);
+      advanceFightingThrough(end);
+      clocks = new Map(
+        actors
+          .filter(
+            (a) =>
+              !strictMode || snapshot.residentActorIds?.includes(a.actorId),
+          )
+          .map((a) => {
+            const slices = requireValue(acceptedSlices.get(a.actorId));
+            const endpoint = strictMode ? point(a.actorId, end) : undefined;
+            return [
+              a.actorId,
+              captureFightingClock({
+                stepTick: snapshot.clocks.tick,
+                activeEpochId:
+                  endpoint?.epochId ?? requireValue(slices.at(-1)).epochId,
+                slices,
+                ...(endpoint ? { endpoint } : {}),
+              }),
+            ];
+          }),
+      );
+    } finally {
+      restoreState(saved);
+    }
     for (const a of actors) {
       acceptedSlices.set(a.actorId, []);
-      updateActor(a.actorId, {
-        fightingClock: requireValue(clocks.get(a.actorId)),
-      });
+      const clock = clocks.get(a.actorId);
+      if (clock) updateActor(a.actorId, { fightingClock: clock });
     }
     fightingCursor = from;
   }
@@ -1332,7 +1636,7 @@ export function createCore(
         const posture = command.active ? 'crouching' : 'standing';
         setFighting(a.actorId, {
           ...s,
-          posture,
+          posture: strictMode && s.phase === 'blockstun' ? s.posture : posture,
           guardHeight:
             s.phase === 'blockstun'
               ? s.guardHeight
@@ -1639,6 +1943,17 @@ export function createCore(
         accept(c);
   }
   function handle(command: CoreCommand) {
+    guardMutation();
+    holdReason =
+      command.type === 'PauseRequested'
+        ? 'pause'
+        : command.type === 'Backgrounded'
+          ? 'background'
+          : command.type === 'InputsReleased'
+            ? 'inputs-released'
+            : command.type === 'MovementSessionEnded'
+              ? 'session-ended'
+              : 'prestep-intent';
     if (
       disposed ||
       command.runId !== context.runId ||
@@ -1648,8 +1963,20 @@ export function createCore(
     switch (command.type) {
       case 'AssetsReady':
         if (snapshot.phase === 'loading') {
-          prepareCatalog();
-          progress('ready');
+          const saved = checkpoint();
+          resolving = true;
+          callbackRead = snapshot;
+          try {
+            prepareCatalog();
+            prepareReady();
+            progress('ready');
+          } catch (error) {
+            restoreState(saved);
+            throw error;
+          } finally {
+            resolving = false;
+            callbackRead = null;
+          }
         }
         break;
       case 'StartRequested':
@@ -1749,11 +2076,16 @@ export function createCore(
     );
     const impact = motion.impacts[index];
     const elapsed = fighting
-      ? runtime(actor.actorId).actionMs - runtime(actor.actorId).moveStart
+      ? actionElapsed(
+          runtime(actor.actorId).actionMs,
+          runtime(actor.actorId).moveStart,
+        )
       : at - attack.startedAt;
     if (
       !impact ||
-      (fighting && at > (invalidPathAfter.get(actor.actorId) ?? Infinity)) ||
+      (fighting &&
+        !strictMode &&
+        at > (invalidPathAfter.get(actor.actorId) ?? Infinity)) ||
       (fighting
         ? !reached(elapsed, impact.startMs)
         : elapsed < impact.startMs) ||
@@ -1844,6 +2176,9 @@ export function createCore(
     batch: ReturnType<typeof batchId>,
     lastCauses: Map<ActorId, DamageCause>,
   ) {
+    const livingEpochs = strictMode
+      ? new Map([...fightingRuntime].map(([id, r]) => [id, { ...r }]))
+      : null;
     const eventReal = realAt(at);
     const eventPresentation = presentationTimeMs(
       snapshot.clocks.presentationTimeMs -
@@ -1916,6 +2251,15 @@ export function createCore(
         updateActor(a.actorId, { attack: null });
       }
     if (lost || defeatedCount === 4) {
+      if (livingEpochs)
+        for (const [id, before] of livingEpochs) {
+          const r = runtime(id);
+          r.epochId = before.epochId;
+          r.clipId = before.clipId;
+          r.activationId = before.activationId;
+          r.motionMs = before.motionMs;
+          r.poseKey = before.poseKey;
+        }
       const result = {
         outcome: lost ? ('defeat' as const) : ('clear' as const),
         finalizedAt: gameTimeMs(at),
@@ -2180,6 +2524,7 @@ export function createCore(
             consumed.has(c.source.impactId) ||
             hitTargets.has(key) ||
             (fighting &&
+              !strictMode &&
               at > (invalidPathAfter.get(target.actorId) ?? Infinity))
           )
             continue;
@@ -2396,7 +2741,9 @@ export function createCore(
               source,
               applyFightingTransition(s, {
                 type: 'hit-confirmed',
-                contactAgeTicks: clockFloor(r.actionMs - r.moveStart),
+                contactAgeTicks: clockFloor(
+                  actionElapsed(r.actionMs, r.moveStart),
+                ),
               }),
             );
             r.contactAt = r.actionMs;
@@ -2406,6 +2753,7 @@ export function createCore(
           }
           stopFighting(source, at, decision.stopTicks);
         }
+        const reactedTargets = new Set<ActorId>();
         for (const reaction of accepted) {
           const { target, decision } = reaction,
             r = runtime(target);
@@ -2442,6 +2790,15 @@ export function createCore(
           r.contactAt = null;
           r.bufferAt = null;
           setFighting(target, next);
+          if (
+            strictMode &&
+            decision.kind === 'blocked' &&
+            !reactedTargets.has(target)
+          ) {
+            r.epochId = `${context.runId}:epoch:${++epochSerial}`;
+            r.motionMs = 0;
+          }
+          reactedTargets.add(target);
           stopFighting(target, at, decision.stopTicks);
         }
       }
@@ -2491,16 +2848,522 @@ export function createCore(
         publish({ presentation: { kind: 'results' } });
     }
   }
+  function equalData(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object')
+      return false;
+    if (Array.isArray(a) || Array.isArray(b))
+      return (
+        Array.isArray(a) &&
+        Array.isArray(b) &&
+        a.length === b.length &&
+        a.every((v, i) => equalData(v, b[i]))
+      );
+    const aa = Object.entries(a).sort(([x], [y]) => compare(x, y)),
+      bb = Object.entries(b).sort(([x], [y]) => compare(x, y));
+    return (
+      aa.length === bb.length &&
+      aa.every(
+        ([key, value], i) => key === bb[i]?.[0] && equalData(value, bb[i]?.[1]),
+      )
+    );
+  }
+  function completeTransaction(
+    input: import('../contracts').SpatialStepResult,
+  ): CoreOutput {
+    if (!pending || !fighting || fighting.mode !== 'battle-transaction-v1')
+      throw new Error('No pending fighting transaction');
+    const admitted = pending,
+      committed = checkpoint();
+    let port: FightingSpatialTransactionPort | null = null;
+    resolving = true;
+    callbackRead = admitted.read;
+    selecting = true;
+    try {
+      const envelope = captureFightingSpatialTransactionResult(
+        input,
+        admitted.request,
+      );
+      if (usedTransactions.has(envelope.transaction.transactionId))
+        throw new Error('Fighting transaction was already attempted');
+      usedTransactions.add(envelope.transaction.transactionId);
+      port = envelope.transaction;
+      const descriptor = requireValue(readyDescriptor);
+      if (envelope.initialPrefix.bindingSetId !== descriptor.bindingSetId)
+        throw new RangeError('Foreign installed fighting binding');
+      for (const p of envelope.initialPrefix.actors) {
+        const a = requireValue(
+          admitted.read.actors.find((a) => a.actorId === p.actor.actorId),
+        );
+        if (
+          !equalData(p.endpoint, a.fightingClock?.endpoint) ||
+          !equalData(p.poseContext, a.fightingPose)
+        )
+          throw new RangeError(
+            'Initial prefix differs from accepted Core authority',
+          );
+        const prior = spatial?.actors.find(
+          (a) => a.actorId === p.actor.actorId,
+        );
+        if (!prior || !equalData(prior, p.actor))
+          throw new RangeError(
+            'Initial physical prefix differs from accepted state',
+          );
+      }
+      restoreState(admitted.state);
+      restoreState(checkpoint()); // clone the pending baseline before any mutation
+      for (const a of actors) acceptedSlices.set(a.actorId, []);
+      fightingCursor = from;
+      snapshot = {
+        ...snapshot,
+        clocks: { ...snapshot.clocks, gameTimeMs: gameTimeMs(from) },
+      };
+      let prefix: readonly FightingAcceptedActorPrefix[] =
+        envelope.initialPrefix.actors;
+      let revision = 0,
+        acceptedProjectionId: string | null = null,
+        settle = true;
+      let sameTimeCount = 0,
+        previousAt = from,
+        previousEvents: readonly DomainEvent[] = [];
+      const occurrences = new Set<string>(),
+        seams = new Set<string>(),
+        projections = new Set<string>();
+      const resets: FightingEncounterReset[] = [];
+      const defeatSamples = new Map<ActorId, FightingRecipeEntry>();
+      for (const p of prefix)
+        if (p.pose.defeatEntry)
+          defeatSamples.set(p.actor.actorId, p.pose.defeatEntry);
+      const initialActorIds = requireValue(
+        admitted.request.snapshot.residentActorIds,
+      );
+      let reset: FightingEncounterReset | undefined;
+      const residents = () => requireValue(snapshot.residentActorIds);
+      const settleRuntime = () => {
+        for (const id of residents()) {
+          syncFighting(id, fightingCursor);
+          syncEpoch(id);
+        }
+        receiveFighting(requireValue(actors[0]).actorId, [], fightingCursor);
+        for (const id of residents()) syncEpoch(id);
+      };
+      const dueReset = () => {
+        processedReal = realAt(fightingCursor);
+        const outgoingActorIds = [...residents()],
+          previous = snapshot.currentOpponentId;
+        advanceEncounter();
+        if (snapshot.currentOpponentId === previous) return;
+        const ids = residents();
+        for (const id of ids) {
+          const r = runtime(id);
+          r.airborne = false;
+          r.stopUntil = fightingCursor;
+          r.stunUntil = r.actionMs;
+          r.landingUntil = r.actionMs;
+          r.epochId = `${context.runId}:epoch:${++epochSerial}`;
+          r.clipId = descriptor.clipId;
+          r.activationId = null;
+          r.motionMs = 0;
+          r.poseKey = 'standing';
+          setFighting(id, {
+            ...createFightingCombatant(),
+            tick: clockFloor(r.actionMs),
+          });
+          if (!outgoingActorIds.includes(id)) acceptedSlices.set(id, []);
+        }
+        reset = captureFightingEncounterReset(
+          {
+            resetId: `${port?.transactionId}:reset:${resets.length}`,
+            atGameMs: gameTimeMs(fightingCursor),
+            readyDescriptor: descriptor,
+            outgoingActorIds,
+            residentActorIds: ids,
+            endpoints: ids.map((id) => point(id, fightingCursor)),
+          },
+          {
+            version: 1,
+            transactionId: requireValue(port).transactionId,
+            runId: context.runId,
+            stepTick: snapshot.clocks.tick,
+            fromGameMs: gameTimeMs(from),
+            toGameMs: gameTimeMs(end),
+          },
+        );
+        resets.push(reset);
+        settle = true;
+      };
+      while (true) {
+        dueReset();
+        settleRuntime();
+        if (revision >= fighting.transactionPolicy.maxFrontiers)
+          throw new RangeError('Fighting frontier budget exhausted');
+        let horizon = end;
+        if (settle) horizon = fightingCursor;
+        else {
+          for (const id of residents())
+            horizon = nextFightingBoundary(id, fightingCursor, horizon);
+          if (
+            pendingOpponent &&
+            opponentTransitionEndsAt !== null &&
+            stepRealTo > stepRealFrom
+          ) {
+            const encounterAt =
+              from +
+              ((opponentTransitionEndsAt - stepRealFrom) * (end - from)) /
+                (stepRealTo - stepRealFrom);
+            if (encounterAt > fightingCursor)
+              horizon = Math.min(horizon, encounterAt);
+          }
+        }
+        const selectedPoses = residents().map((id) => {
+          const p = point(id, fightingCursor);
+          return {
+            actorId: id,
+            epochId: p.epochId,
+            phase: p.phase,
+            posture: p.posture,
+          };
+        });
+        const queryActors = actors.map((a) => {
+          if (!residents().includes(a.actorId)) return a;
+          const r = runtime(a.actorId),
+            frozen =
+              snapshot.phase === 'terminal' ||
+              a.defeated ||
+              !reached(fightingCursor, r.stopUntil);
+          const slices =
+            horizon > fightingCursor
+              ? [
+                  createFightingClockSlice({
+                    actorId: a.actorId,
+                    epochId: r.epochId,
+                    clipId: r.clipId,
+                    activationId: r.activationId,
+                    fromGameMs: gameTimeMs(fightingCursor),
+                    toGameMs: gameTimeMs(horizon),
+                    fromMotionMs: durationMs(r.motionMs),
+                    frozen,
+                  }),
+                ]
+              : [];
+          const endpoint = {
+            ...point(a.actorId, horizon),
+            motionMs: durationMs(
+              r.motionMs + (frozen ? 0 : horizon - fightingCursor),
+            ),
+          };
+          const { fightingPoseHold: _hold, ...rest } = a;
+          return {
+            ...rest,
+            fightingClock: captureFightingTransactionalClock(
+              {
+                stepTick: snapshot.clocks.tick,
+                activeEpochId: r.epochId,
+                slices,
+                endpoint,
+              },
+              {
+                runId: context.runId,
+                actorId: a.actorId,
+                stepTick: snapshot.clocks.tick,
+                fromGameMs: gameTimeMs(fightingCursor),
+                toGameMs: gameTimeMs(horizon),
+                queryMode: settle ? 'settle' : 'interval',
+              },
+            ),
+          };
+        });
+        const query = captureFightingProjectInput({
+          version: 1,
+          transactionId: port.transactionId,
+          runId: port.runId,
+          stepTick: port.stepTick,
+          fromGameMs: port.fromGameMs,
+          toGameMs: port.toGameMs,
+          revision,
+          acceptedProjectionId,
+          queryMode: settle ? 'settle' : 'interval',
+          cursorGameMs: gameTimeMs(fightingCursor),
+          horizonGameMs: gameTimeMs(horizon),
+          acceptedPrefix: prefix,
+          selectedPoses,
+          snapshot: { ...snapshot, actors: queryActors },
+          acceptedEvents: revision === 0 ? [] : previousEvents,
+          settledOccurrenceIds: [...occurrences],
+          settledPhysicalSeamIds: [...seams],
+          ...(reset ? { encounterReset: reset } : {}),
+        });
+        const frontier = captureFightingSpatialFrontier(port.project(query), {
+          query,
+          request: admitted.request,
+          policy: fighting.transactionPolicy,
+        });
+        if (projections.has(frontier.projectionId))
+          throw new RangeError('Repeated fighting projection');
+        projections.add(frontier.projectionId);
+        sameTimeCount =
+          frontier.atGameMs === previousAt ? sameTimeCount + 1 : 1;
+        if (sameTimeCount > fighting.transactionPolicy.maxSameTimeFrontiers)
+          throw new RangeError('Fighting same-time frontier budget exhausted');
+        previousAt = frontier.atGameMs;
+        for (const p of frontier.acceptedPrefix) {
+          const prior = prefix.find((a) => a.actor.actorId === p.actor.actorId);
+          if (!reset && p.pose.entryKind === 'initial-ready')
+            throw new RangeError(
+              'Step frontier cannot mint bootstrap authority',
+            );
+          if (
+            !reset &&
+            prior &&
+            p.pose.source.epochId !== prior.endpoint.epochId &&
+            !equalData(p.pose.incoming, prior.pose.sample)
+          )
+            throw new RangeError(
+              'Epoch transition must retain its actual outgoing sample',
+            );
+          if (
+            !reset &&
+            prior &&
+            p.pose.source.epochId === prior.endpoint.epochId &&
+            p.pose.entryKind !== 'encounter-reset' &&
+            !equalData(
+              p.pose.incoming,
+              prior.pose.incoming ?? prior.pose.sample,
+            )
+          )
+            throw new RangeError('Epoch incoming changed during continuation');
+          if (
+            !reset &&
+            prior &&
+            p.pose.source.epochId === prior.endpoint.epochId &&
+            !equalData(p.pose.facingBasis, prior.pose.facingBasis)
+          )
+            throw new RangeError('Accepted epoch facing basis changed');
+          const defeat = defeatSamples.get(p.actor.actorId);
+          if (!defeat && p.pose.defeatEntry !== undefined)
+            throw new RangeError('Unaccepted defeat provenance');
+          if (defeat && !equalData(defeat, p.pose.defeatEntry))
+            throw new RangeError(
+              'Defeat entry changed from actual living sample',
+            );
+        }
+        const eventStart = events.length;
+        if (snapshot.phase !== 'terminal')
+          snapshot = {
+            ...snapshot,
+            clocks: { ...snapshot.clocks, gameTimeMs: frontier.atGameMs },
+          };
+        fightingResult = frontier.result;
+        appliedPhysical.clear();
+        // Validate physical state transitions against current accepted runtime, not original plan.
+        const airborne = new Map(
+          residents().map((id) => [id, runtime(id).airborne]),
+        );
+        for (const physical of physicalTransitions(frontier.result)) {
+          const id = physical.witness.actorId;
+          if (
+            !airborne.has(id) ||
+            (physical.kind === 'takeoff' ? airborne.get(id) : !airborne.get(id))
+          )
+            throw new RangeError('Invalid current physical seam history');
+          airborne.set(id, physical.kind === 'takeoff');
+        }
+        completeAttacksThrough(frontier.atGameMs);
+        if (
+          frontier.kind === 'contacts' &&
+          query.selectedPoses.some((selected) => {
+            const current = point(selected.actorId, fightingCursor);
+            return (
+              selected.epochId !== current.epochId ||
+              selected.phase !== current.phase ||
+              selected.posture !== current.posture
+            );
+          })
+        )
+          throw new RangeError(
+            'Contact at a changed selection boundary requires resampling',
+          );
+        spatial = frontier.result.snapshot;
+        prefix = frontier.acceptedPrefix.map((p) => {
+          const classification = requireValue(
+            query.selectedPoses.find((s) => s.actorId === p.actor.actorId),
+          );
+          return {
+            ...p,
+            endpoint: captureFightingClockPoint({
+              runId: context.runId,
+              actorId: p.actor.actorId,
+              stepTick: snapshot.clocks.tick,
+              atGameMs: frontier.atGameMs,
+              epochId: p.pose.source.epochId,
+              clipId: p.pose.source.clipId,
+              activationId: p.pose.source.activationId,
+              motionMs: p.pose.source.motionMs,
+              phase: classification.phase,
+              posture: classification.posture,
+            }),
+          };
+        });
+        if (
+          frontier.kind === 'contacts' &&
+          snapshot.phase === 'running' &&
+          snapshot.presentation.kind !== 'opponent-defeat'
+        )
+          resolve(frontier.result.candidates);
+        for (const p of prefix)
+          if (
+            combatant(p.actor.actorId).defeated &&
+            !defeatSamples.has(p.actor.actorId)
+          )
+            defeatSamples.set(p.actor.actorId, p.pose.sample);
+        for (const id of frontier.occurrenceIds) occurrences.add(id);
+        for (const id of frontier.physicalSeamIds) seams.add(id);
+        settleRuntime();
+        acceptedProjectionId = frontier.projectionId;
+        revision++;
+        previousEvents = events
+          .slice(eventStart)
+          .filter((e) => e.at === frontier.atGameMs);
+        const changed = prefix.some(
+          (p) => !equalData(p.endpoint, point(p.actor.actorId, fightingCursor)),
+        );
+        const wasReset = reset !== undefined;
+        reset = undefined;
+        if (
+          frontier.kind === 'boundary' &&
+          query.queryMode === 'settle' &&
+          !changed
+        ) {
+          settle = false;
+          if (fightingCursor === end) break;
+        } else
+          settle =
+            changed ||
+            frontier.kind !== 'boundary' ||
+            query.queryMode === 'interval' ||
+            wasReset;
+      }
+      processedReal = stepRealTo;
+      fightingResult = null;
+      fightingRequest = null;
+      for (const id of residents()) {
+        const endpoint = point(id, end),
+          slices = requireValue(acceptedSlices.get(id));
+        const a = combatant(id),
+          { fightingPoseHold: _hold, fightingPose: _old, ...rest } = a;
+        actors = actors.map((a) =>
+          a.actorId === id
+            ? {
+                ...rest,
+                fightingClock: captureFightingClock(
+                  {
+                    stepTick: snapshot.clocks.tick,
+                    activeEpochId: endpoint.epochId,
+                    slices,
+                    endpoint,
+                  },
+                  {
+                    actorId: id,
+                    stepTick: snapshot.clocks.tick,
+                    fromGameMs: slices[0]?.fromGameMs ?? gameTimeMs(end),
+                    toGameMs: gameTimeMs(end),
+                  },
+                ),
+              }
+            : a,
+        );
+      }
+      // Retired contexts must not remain reusable current pose authority.
+      actors = actors.map((a) => {
+        if (residents().includes(a.actorId)) return a;
+        const {
+          fightingPose: _pose,
+          fightingPoseHold: _hold,
+          fightingClock: _clock,
+          ...rest
+        } = a;
+        return rest;
+      });
+      publish();
+      advancePresentation();
+      const finishOutput = immutableDto({ snapshot, events });
+      const rawReceipt = port.finish({
+        acceptedProjectionId: requireValue(acceptedProjectionId),
+        output: finishOutput,
+      });
+      const receiptIdentity = Object.getOwnPropertyDescriptor(
+        rawReceipt,
+        'receiptId',
+      );
+      if (
+        receiptIdentity &&
+        Object.hasOwn(receiptIdentity, 'value') &&
+        typeof receiptIdentity.value === 'string'
+      ) {
+        if (usedReceipts.has(receiptIdentity.value))
+          throw new RangeError('Fighting receipt ID already issued');
+        usedReceipts.add(receiptIdentity.value);
+      }
+      const receipt = captureFightingSpatialCommitReceipt(rawReceipt, {
+        header: {
+          version: 1,
+          transactionId: port.transactionId,
+          runId: port.runId,
+          stepTick: port.stepTick,
+          fromGameMs: port.fromGameMs,
+          toGameMs: port.toGameMs,
+        },
+        acceptedProjectionId: requireValue(acceptedProjectionId),
+        output: finishOutput,
+        acceptedPrefix: prefix,
+        initialPrefix: envelope.initialPrefix,
+        ...(resets.length ? { residency: { initialActorIds, resets } } : {}),
+      });
+      for (const pose of receipt.poseContexts)
+        updateActor(pose.actorId, { fightingPose: pose });
+      spatial = receipt.snapshot;
+      snapshot = immutableDto({ ...snapshot, actors });
+      const output = immutableDto({ snapshot, events });
+      events = [];
+      inStep = false;
+      pending = null;
+      return output;
+    } catch (error) {
+      let abortError: unknown;
+      try {
+        port?.abort();
+      } catch (failure) {
+        abortError = failure;
+      } finally {
+        restoreState(committed);
+      }
+      if (abortError !== undefined)
+        throw new AggregateError(
+          [error, abortError],
+          error instanceof Error
+            ? error.message
+            : 'Fighting transaction failed; abort also failed',
+        );
+      throw error;
+    } finally {
+      resolving = false;
+      callbackRead = null;
+      selecting = false;
+    }
+  }
   function drain(): CoreOutput {
+    guardMutation();
     const output = immutableDto({ snapshot, events });
     events = [];
     return output;
   }
   return {
     handle,
-    read: () => snapshot,
+    read: () => callbackRead ?? pending?.read ?? snapshot,
     drain,
     handleInputBatch(input) {
+      guardMutation();
+      holdReason = 'prestep-intent';
       if (disposed) return;
       if (
         input.runId !== context.runId ||
@@ -2510,54 +3373,78 @@ export function createCore(
       batch(input.commands);
     },
     beginStep(step) {
+      guardMutation();
       if (disposed || inStep || snapshot.phase !== 'running')
         throw new Error('Core not ready for a fixed step');
       if (!Number.isFinite(step.durationMs) || step.durationMs <= 0)
         throw new RangeError('Step must be positive');
-      advanceEncounter();
-      if (options.enemyAi) batch(options.enemyAi(snapshot, spatial));
-      inStep = true;
-      stepRealFrom = processedReal;
-      const proposedReal = processedReal + step.durationMs;
-      stepRealTo =
-        proposedReal <= snapshot.clocks.activeRealTimeMs + 1e-7
-          ? proposedReal
-          : snapshot.clocks.activeRealTimeMs;
-      from = snapshot.clocks.gameTimeMs;
-      const slowOverlap = slowWindow
-        ? Math.max(
-            0,
-            Math.min(stepRealTo, slowWindow.to) -
-              Math.max(stepRealFrom, slowWindow.from),
-          )
-        : 0;
-      const scaled = step.durationMs - slowOverlap * 0.75;
-      end = from + scaled;
-      if (fighting) from = end - scaled;
-      publish({
-        clocks: {
-          ...snapshot.clocks,
-          tick: tick(snapshot.clocks.tick + 1),
-          gameTimeMs: gameTimeMs(end),
-        },
-      });
-      if (fighting) {
-        invalidPathAfter.clear();
-        appliedPhysical.clear();
-        planFightingClocks();
-        publish();
+      const saved = strictMode ? checkpoint() : null;
+      if (strictMode) {
+        resolving = true;
+        callbackRead = snapshot;
+        selecting = true;
       }
-      const accepted = [...moves.values(), ...intents];
-      intents = [];
-      const request = immutableDto({
-        snapshot,
-        step: { durationMs: durationMs(scaled) },
-        intents: accepted,
-      });
-      if (fighting) fightingRequest = request;
-      return request;
+      try {
+        if (!strictMode) advanceEncounter();
+        if (options.enemyAi) batch(options.enemyAi(snapshot, spatial));
+        inStep = true;
+        stepRealFrom = processedReal;
+        const proposedReal = processedReal + step.durationMs;
+        stepRealTo =
+          proposedReal <= snapshot.clocks.activeRealTimeMs + 1e-7
+            ? proposedReal
+            : snapshot.clocks.activeRealTimeMs;
+        from = snapshot.clocks.gameTimeMs;
+        const slowOverlap = slowWindow
+          ? Math.max(
+              0,
+              Math.min(stepRealTo, slowWindow.to) -
+                Math.max(stepRealFrom, slowWindow.from),
+            )
+          : 0;
+        const scaled = step.durationMs - slowOverlap * 0.75;
+        end = from + scaled;
+        if (fighting && !strictMode) from = end - scaled;
+        publish({
+          clocks: {
+            ...snapshot.clocks,
+            tick: tick(snapshot.clocks.tick + 1),
+            gameTimeMs: gameTimeMs(end),
+          },
+        });
+        if (fighting) {
+          invalidPathAfter.clear();
+          appliedPhysical.clear();
+          planFightingClocks();
+          publish();
+        }
+        const accepted = [...moves.values(), ...intents];
+        intents = [];
+        const request = immutableDto({
+          snapshot,
+          step: { durationMs: durationMs(strictMode ? end - from : scaled) },
+          intents: accepted,
+        });
+        if (fighting) fightingRequest = request;
+        if (strictMode && saved) {
+          pending = { request, state: checkpoint(), read: saved.snapshot };
+          restoreState(saved);
+        }
+        return request;
+      } catch (error) {
+        if (saved) restoreState(saved);
+        throw error;
+      } finally {
+        if (strictMode) {
+          resolving = false;
+          callbackRead = null;
+          selecting = false;
+        }
+      }
     },
     completeStep(result) {
+      if (resolving) throw new Error('Core busy resolving');
+      if (strictMode) return completeTransaction(result);
       if (
         !inStep ||
         result.snapshot.runId !== context.runId ||
@@ -2601,6 +3488,7 @@ export function createCore(
       return drain();
     },
     present(elapsed) {
+      guardMutation();
       durationMs(elapsed);
       if (
         disposed ||
@@ -2632,6 +3520,9 @@ export function createCore(
       advancePresentation();
     },
     fail(message) {
+      guardMutation(true);
+      pending = null;
+      holdReason = 'error';
       if (disposed) return;
       inStep = false;
       resetFighting('switch');
@@ -2642,6 +3533,8 @@ export function createCore(
       emit({ type: 'FoundationError', message });
     },
     dispose() {
+      guardMutation(true);
+      pending = null;
       if (disposed) return;
       resetFighting('switch');
       disposed = true;
@@ -2650,6 +3543,16 @@ export function createCore(
       closedCrouchSessions.clear();
       moves.clear();
       intents = [];
+      if (strictMode)
+        actors = actors.map((a) => {
+          const {
+            fightingPose: _pose,
+            fightingPoseHold: _hold,
+            fightingClock: _clock,
+            ...rest
+          } = a;
+          return rest;
+        });
       progress('stopped');
       events = [];
       consumed.clear();

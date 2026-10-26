@@ -1,6 +1,18 @@
 import { describe, expect, test } from 'vitest';
 import {
   actorId,
+  worldObjectId,
+  type FightingReadyDescriptor,
+  type FightingRecipeEntry,
+  type FightingProjectInput,
+  type FightingSpatialFrontier,
+  type FightingSpatialTransactionResult,
+  type FightingInitialPrefix,
+  type FightingEncounterReset,
+  type FightingPoseContext,
+  type FightingSpatialCommitReceipt,
+  captureFightingInitialPrefix,
+  captureFightingSpatialFrontier,
   runId,
   clipId,
   commandId,
@@ -20,7 +32,12 @@ import {
   type SpatialStepRequest,
 } from '../../src/contracts';
 import { createCore, type CoreOptions } from '../../src/core/createCore';
-import { recordCore, replayCore } from '../../src/core/replay';
+import {
+  recordCore,
+  replayCore,
+  replayIntentProvider,
+  recordIntentProvider,
+} from '../../src/core/replay';
 import { requireValue } from '../../src/core/invariant';
 import { fixtureCatalog, reference, run } from './fixtures/scenarios';
 
@@ -89,6 +106,7 @@ function config(level: HitLevel = 'mid'): CoreOptions {
       get: (id) => definitions.find((m) => m.clipId === id),
     },
     fighting: {
+      mode: 'core-evidence-only',
       policy: {
         version: 3,
         hpPerNormalizedPoint: 5,
@@ -1608,4 +1626,2527 @@ test('fail clears committed fighting attack and guard/buffer ownership before di
   expect(actor(core).attack).toBeNull();
   expect(actor(core).fighting?.buffer).toBeNull();
   expect(actor(core, 'blue').fighting?.guardHeld).toBe(false);
+});
+
+describe('explicit Core fighting transaction admission', () => {
+  function strictOptions(): CoreOptions {
+    const base = config();
+    return {
+      ...base,
+      fighting: {
+        ...requireValue(base.fighting),
+        mode: 'battle-transaction-v1',
+        transactionPolicy: {
+          mode: 'battle-transaction-v1',
+          maxFrontiers: 100,
+          maxSameTimeFrontiers: 20,
+        },
+        ready: (): FightingReadyDescriptor => {
+          throw new Error('not prepared');
+        },
+      },
+    };
+  }
+  test('strict mode rejects a configured nonempty battle world before catalog callbacks', () => {
+    const options = strictOptions();
+    expect(() =>
+      createCore(
+        { runId: run, seed: 1 },
+        {
+          ...options,
+          world: {
+            vehicles: [],
+            objects: [{ objectId: worldObjectId('forbidden'), durability: 10 }],
+          },
+        },
+      ),
+    ).toThrow(/world/i);
+  });
+  test('strict mode validates positive safe-integer work budgets before callbacks', () => {
+    for (const maxFrontiers of [
+      0,
+      -1,
+      1.5,
+      Infinity,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      const options = strictOptions(),
+        f = requireValue(options.fighting);
+      if (f.mode !== 'battle-transaction-v1') throw new Error('fixture mode');
+      expect(() =>
+        createCore(
+          { runId: run, seed: 1 },
+          {
+            ...options,
+            fighting: {
+              ...f,
+              transactionPolicy: { ...f.transactionPolicy, maxFrontiers },
+            },
+          },
+        ),
+      ).toThrow();
+    }
+  });
+  test('strict ready getter is lazy and cannot be called in the constructor', () => {
+    expect(() =>
+      createCore({ runId: run, seed: 1 }, strictOptions()),
+    ).not.toThrow();
+  });
+});
+
+function transactionSetup(
+  customize?: (options: CoreOptions) => CoreOptions,
+  runIdentity = run,
+) {
+  let core: CorePort;
+  const base = config();
+  const options: CoreOptions = {
+    ...base,
+    fighting: {
+      ...requireValue(base.fighting),
+      mode: 'battle-transaction-v1',
+      transactionPolicy: {
+        mode: 'battle-transaction-v1',
+        maxFrontiers: 100,
+        maxSameTimeFrontiers: 20,
+      },
+      ready: () => ({
+        version: 1,
+        bindingSetId: 'synthetic-only-binding',
+        clipId: poseClips.standing,
+        supportPlane: { supportId: 'synthetic-floor', planeY: 0 },
+        surfaceToleranceM: 0,
+        actors: core.read().actors.map((a, i) => ({
+          actorId: a.actorId,
+          position: { x: 0, y: 0, z: i * 2 },
+          facingBasis: { x: 0, y: 0, z: i ? -1 : 1 },
+        })),
+      }),
+    },
+  };
+  core = createCore(
+    { runId: runIdentity, seed: 42 },
+    customize ? customize(options) : options,
+  );
+  return core;
+}
+function startTransactionCore() {
+  const core = transactionSetup();
+  core.handle({ type: 'AssetsReady', runId: run });
+  core.handle({ type: 'StartRequested', runId: run });
+  core.drain();
+  return core;
+}
+
+describe('strict ready and non-step selected pose authority', () => {
+  test('initial ready before first interval; Start while paused does not rebootstrap', () => {
+    const core = transactionSetup();
+    core.handle({ type: 'Backgrounded', runId: run });
+    core.handle({ type: 'AssetsReady', runId: run });
+    const ready = core.read();
+    for (const a of ready.actors.filter((a) =>
+      ready.residentActorIds?.includes(a.actorId),
+    )) {
+      expect(a.fightingClock?.slices).toEqual([]);
+      expect(a.fightingClock?.endpoint).toMatchObject({
+        atGameMs: 0,
+        motionMs: 0,
+        phase: 'neutral',
+        posture: 'standing',
+      });
+      expect(a.fightingPose).toMatchObject({
+        entryKind: 'initial-ready',
+        acceptedRoot: { x: 0, z: 0 },
+      });
+    }
+    expect(ready.actors[2]?.fightingPose).toBeUndefined();
+    core.handle({ type: 'StartRequested', runId: run });
+    expect(core.read().phase).toBe('paused');
+    expect(actor(core).fightingPose).toEqual(ready.actors[0]?.fightingPose);
+    expect(actor(core).fightingClock).toEqual(ready.actors[0]?.fightingClock);
+  });
+  test('direct input and release hold the accepted point/context while neutral guard clears', () => {
+    const core = startTransactionCore(),
+      before = actor(core);
+    input(core, [packet(core, 'guard')]);
+    expect(actor(core).fighting?.guardHeld).toBe(true);
+    expect(actor(core).fightingPoseHold?.displayEpochId).toBe(
+      before.fightingClock?.endpoint?.epochId,
+    );
+    core.handle({ type: 'InputsReleased', runId: run });
+    expect(actor(core).fighting).toMatchObject({
+      guardHeld: false,
+      guardHeight: null,
+      buffer: null,
+    });
+    expect(actor(core).fightingClock).toEqual(before.fightingClock);
+    expect(actor(core).fightingPose).toEqual(before.fightingPose);
+    expect(actor(core).fightingPoseHold?.reason).toBe('inputs-released');
+  });
+  test('ready callback sees loading and every reentrant mutator rejects before side effects', () => {
+    let core: CorePort;
+    core = transactionSetup((options) => {
+      const f = requireValue(options.fighting);
+      if (f.mode !== 'battle-transaction-v1') throw new Error('fixture mode');
+      return {
+        ...options,
+        fighting: {
+          ...f,
+          ready: () => {
+            const before = core.read();
+            expect(before.phase).toBe('loading');
+            for (const mutate of [
+              () =>
+                core.handle({
+                  type: 'QualityChanged',
+                  runId: runId('foreign'),
+                  quality: 'standard',
+                }),
+              () => core.present(durationMs(0)),
+              () => core.drain(),
+              () => core.fail('reentry'),
+              () => core.dispose(),
+              () => core.beginStep({ durationMs: durationMs(T) }),
+            ])
+              expect(mutate).toThrow(/busy|resolv|prepar/i);
+            expect(core.read()).toEqual(before);
+            return f.ready();
+          },
+        },
+      };
+    });
+    core.handle({ type: 'AssetsReady', runId: run });
+    expect(core.read().phase).toBe('ready');
+  });
+  test('strict pending begin is invisible and forbids interleavings while rejecting DTO-only completion', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const before = core.read();
+    const request = core.beginStep({ durationMs: durationMs(T) });
+    expect(core.read()).toEqual(before);
+    expect(request.snapshot.clocks.tick).toBe(before.clocks.tick + 1);
+    for (const mutate of [
+      () => core.present(durationMs(0)),
+      () => core.drain(),
+      () => core.handle({ type: 'InputsReleased', runId: run }),
+      () => input(core, []),
+    ])
+      expect(mutate).toThrow();
+    expect(() => core.completeStep(result(request))).toThrow(/transaction/i);
+    expect(core.read()).toEqual(before);
+    core.fail('cancel pending');
+    expect(core.read().phase).toBe('error');
+  });
+});
+
+/** Structural synthetic pose only: never actual robot/sole/hurt sampling evidence. */
+function syntheticEntry(
+  clip: import('../../src/contracts').ClipId,
+  atMs: number,
+): FightingRecipeEntry {
+  return {
+    recipeVersion: 'actual53-ik-surface-v1',
+    clipId: clip,
+    atMs,
+    pose: Array.from({ length: 53 }, (_, i) => ({
+      name: `synthetic-bone-${i}`,
+      position: [0, 0, 0] as const,
+      quaternion: [0, 0, 0, 1] as const,
+      scale: [1, 1, 1] as const,
+    })),
+    support: (['L', 'R'] as const).map((side) => ({
+      side,
+      planted: true,
+      local: [0, 0, 0] as const,
+      worldRotation: [0, 0, 0, 1] as const,
+    })),
+  };
+}
+let transactionSerial = 0;
+const syntheticInstalled = new WeakMap<
+  CorePort,
+  import('../../src/contracts').SpatialSnapshot
+>();
+function syntheticTransaction(
+  core: CorePort,
+  request: SpatialStepRequest,
+  hooks: {
+    project?: (
+      query: FightingProjectInput,
+      frontier: FightingSpatialFrontier,
+    ) => FightingSpatialFrontier;
+    finish?: (
+      receipt: FightingSpatialCommitReceipt,
+    ) => FightingSpatialCommitReceipt;
+    abort?: () => void;
+    raw?: boolean;
+  } = {},
+) {
+  const header = {
+    version: 1 as const,
+    transactionId: `synthetic-tx-${++transactionSerial}`,
+    runId: run,
+    stepTick: request.snapshot.clocks.tick,
+    fromGameMs: requireValue(
+      request.snapshot.actors.find((a) =>
+        request.snapshot.residentActorIds?.includes(a.actorId),
+      )?.fightingClock?.slices[0],
+    ).fromGameMs,
+    toGameMs: request.snapshot.clocks.gameTimeMs,
+  };
+  const resident = requireValue(core.read().residentActorIds);
+  const initialPrefix: FightingInitialPrefix = captureFightingInitialPrefix(
+    {
+      runId: run,
+      bindingSetId: 'synthetic-only-binding',
+      actors: resident.map((id, i) => {
+        const a = requireValue(
+            core.read().actors.find((a) => a.actorId === id),
+          ),
+          endpoint = requireValue(a.fightingClock?.endpoint),
+          poseContext = requireValue(a.fightingPose);
+        return {
+          endpoint,
+          poseContext,
+          actor: syntheticInstalled
+            .get(core)
+            ?.actors.find((a) => a.actorId === id) ?? {
+            actorId: id,
+            position: { x: 0, y: 0, z: i * 2 },
+            facing: poseContext.facingBasis,
+            velocity: { x: 0, y: 0, z: 0 },
+            grounded: true,
+            locomotion: 'idle' as const,
+          },
+          pose: {
+            source: {
+              kind:
+                poseContext.entryKind === 'initial-ready'
+                  ? ('bootstrap' as const)
+                  : ('installed' as const),
+              commitId: poseContext.commitId,
+              actorId: id,
+              epochId: endpoint.epochId,
+              clipId: endpoint.clipId,
+              activationId: endpoint.activationId,
+              atGameMs: endpoint.atGameMs,
+              motionMs: endpoint.motionMs,
+            },
+            facingBasis: poseContext.facingBasis,
+            acceptedRoot: poseContext.acceptedRoot,
+            support: poseContext.support,
+            sample: syntheticEntry(endpoint.clipId, endpoint.motionMs),
+            entryKind: poseContext.entryKind,
+            ...('incoming' in poseContext
+              ? { incoming: poseContext.incoming }
+              : {}),
+            ...(poseContext.defeatEntry
+              ? { defeatEntry: poseContext.defeatEntry }
+              : {}),
+          },
+        };
+      }),
+    },
+    header,
+    resident,
+  );
+  const queries: FightingProjectInput[] = [],
+    resets: FightingEncounterReset[] = [];
+  let last: FightingSpatialFrontier | null = null;
+  let state: 'open' | 'prepared' | 'aborted' = 'open';
+  const value: FightingSpatialTransactionResult = {
+    kind: 'fighting-spatial-transaction-v1',
+    initialPrefix,
+    snapshot: {
+      runId: run,
+      tick: header.stepTick,
+      actors: initialPrefix.actors.map((p) => p.actor),
+      vehicles: [],
+    },
+    candidates: [],
+    transaction: {
+      ...header,
+      project(q) {
+        if (state !== 'open') throw new Error('synthetic port is not open');
+        queries.push(q);
+        if (q.encounterReset) resets.push(q.encounterReset);
+        const prefix = requireValue(q.snapshot.residentActorIds).map((id) => {
+          const a = requireValue(
+              q.snapshot.actors.find((a) => a.actorId === id),
+            ),
+            endpoint = requireValue(a.fightingClock?.endpoint),
+            previous = q.acceptedPrefix.find((p) => p.actor.actorId === id);
+          const spawn = q.encounterReset?.readyDescriptor.actors.find(
+            (a) => a.actorId === id,
+          );
+          const physical = spawn
+            ? {
+                actorId: id,
+                position: spawn.position,
+                facing: spawn.facingBasis,
+                velocity: { x: 0, y: 0, z: 0 },
+                grounded: true,
+                locomotion: 'idle' as const,
+              }
+            : requireValue(previous).actor;
+          const transition = previous?.endpoint.epochId !== endpoint.epochId;
+          const resetOrigin =
+            !!spawn ||
+            (!transition && previous?.pose.entryKind === 'encounter-reset');
+          return {
+            actor: physical,
+            pose: {
+              source: {
+                kind: 'query' as const,
+                transactionId: header.transactionId,
+                queryRevision: q.revision,
+                actorId: id,
+                epochId: endpoint.epochId,
+                clipId: endpoint.clipId,
+                activationId: endpoint.activationId,
+                atGameMs: q.horizonGameMs,
+                motionMs: endpoint.motionMs,
+              },
+              facingBasis: physical.facing,
+              acceptedRoot: transition
+                ? { x: 0, z: 0 }
+                : requireValue(previous).pose.acceptedRoot,
+              support: spawn
+                ? {
+                    ...requireValue(q.encounterReset).readyDescriptor
+                      .supportPlane,
+                    groundClearanceM: 0,
+                  }
+                : requireValue(previous).pose.support,
+              sample: syntheticEntry(endpoint.clipId, endpoint.motionMs),
+              entryKind: resetOrigin
+                ? ('encounter-reset' as const)
+                : transition
+                  ? ('epoch-transition' as const)
+                  : ('continuous' as const),
+              ...(!resetOrigin
+                ? {
+                    incoming: transition
+                      ? requireValue(previous).pose.sample
+                      : (previous?.pose.incoming ??
+                        requireValue(previous).pose.sample),
+                  }
+                : {}),
+              ...(a.defeated
+                ? {
+                    defeatEntry:
+                      previous?.pose.defeatEntry ??
+                      requireValue(previous).pose.sample,
+                  }
+                : {}),
+            },
+          };
+        });
+        const frontier: FightingSpatialFrontier = {
+          projectionId: `${header.transactionId}:projection:${q.revision}`,
+          revision: q.revision,
+          atGameMs: q.horizonGameMs,
+          kind: 'boundary',
+          occurrenceIds: [],
+          physicalSeamIds: [],
+          acceptedPrefix: prefix,
+          result: {
+            snapshot: {
+              runId: run,
+              tick: header.stepTick,
+              actors: prefix.map((p) => p.actor),
+              vehicles: [],
+            },
+            candidates: [],
+            fighting: {
+              stepTick: header.stepTick,
+              takeoffs: [],
+              landings: [],
+              contacts: [],
+            },
+          },
+        };
+        last = hooks.project ? hooks.project(q, frontier) : frontier;
+        if (hooks.raw) return last;
+        return captureFightingSpatialFrontier(last, {
+          query: q,
+          request,
+          policy: {
+            mode: 'battle-transaction-v1',
+            maxFrontiers: 100,
+            maxSameTimeFrontiers: 20,
+          },
+        });
+      },
+      finish(input) {
+        if (state !== 'open') throw new Error('synthetic finish duplicate');
+        state = 'prepared';
+        const receiptId = `${header.transactionId}:receipt`,
+          accepted = requireValue(last);
+        const poseContexts: FightingPoseContext[] = accepted.acceptedPrefix.map(
+          (p) => ({
+            runId: run,
+            actorId: p.actor.actorId,
+            stepTick: header.stepTick,
+            epochId: p.pose.source.epochId,
+            commitId: receiptId,
+            facingBasis: p.pose.facingBasis,
+            acceptedRoot: p.pose.acceptedRoot,
+            support: p.pose.support,
+            ...(p.pose.entryKind === 'encounter-reset'
+              ? { entryKind: 'encounter-reset' as const }
+              : {
+                  entryKind:
+                    p.pose.entryKind === 'epoch-transition'
+                      ? ('epoch-transition' as const)
+                      : ('continuous' as const),
+                  incoming: requireValue(p.pose.incoming),
+                }),
+            ...(p.pose.defeatEntry ? { defeatEntry: p.pose.defeatEntry } : {}),
+          }),
+        );
+        const receipt: FightingSpatialCommitReceipt = {
+          ...header,
+          receiptId,
+          acceptedProjectionId: input.acceptedProjectionId,
+          outputRevision: input.output.snapshot.revision,
+          snapshot: accepted.result.snapshot,
+          endpoints: requireValue(input.output.snapshot.residentActorIds).map(
+            (id) =>
+              requireValue(
+                input.output.snapshot.actors.find((a) => a.actorId === id)
+                  ?.fightingClock?.endpoint,
+              ),
+          ),
+          poseContexts,
+          ...(resets.length
+            ? { residency: { initialActorIds: resident, resets } }
+            : {}),
+        };
+        return hooks.finish ? hooks.finish(receipt) : receipt;
+      },
+      abort() {
+        state = 'aborted';
+        hooks.abort?.();
+      },
+    },
+  };
+  return {
+    value,
+    queries,
+    state: () => state,
+    physical: () => requireValue(last).result.snapshot,
+  };
+}
+
+describe('synthetic strict transaction isolation and receipt lifecycle', () => {
+  test('accepted empty transaction uses endpoint clocks and receipt contexts, never proposal authority', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const request = core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(core, request);
+    const output = core.completeStep(tx.value);
+    expect(tx.state()).toBe('prepared');
+    expect(tx.queries.length).toBeGreaterThanOrEqual(2);
+    expect(output.snapshot.clocks.gameTimeMs).toBe(T);
+    expect(actor(core).fightingPose?.commitId).toBe(
+      `${tx.value.transaction.transactionId}:receipt`,
+    );
+    expect(actor(core).fightingClock?.endpoint?.atGameMs).toBe(T);
+    expect(() => core.completeStep(tx.value)).toThrow();
+  });
+  test('late project throw is atomic and fresh retry services exactly the same pending begin', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch')]);
+    core.present(durationMs(10 * T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(10 * T) });
+    const broken = syntheticTransaction(core, request, {
+      project: (q, f) => {
+        if (q.revision === 2) throw new Error('late synthetic fault');
+        return f;
+      },
+    });
+    expect(() => core.completeStep(broken.value)).toThrow(
+      'late synthetic fault',
+    );
+    expect(broken.state()).toBe('aborted');
+    expect(core.read()).toEqual(before);
+    const retry = syntheticTransaction(core, request);
+    const output = core.completeStep(retry.value);
+    expect(output.snapshot.clocks.tick).toBe(request.snapshot.clocks.tick);
+    expect(
+      output.events.filter((e) => e.type === 'AttackAccepted'),
+    ).toHaveLength(1);
+  });
+  test('read during project stays precompletion and every mutator rejects even foreign/no-op requests', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(core, request, {
+      project: (_q, f) => {
+        expect(core.read()).toEqual(before);
+        for (const change of [
+          () =>
+            core.handle({
+              type: 'QualityChanged',
+              runId: runId('foreign'),
+              quality: 'standard',
+            }),
+          () => core.present(durationMs(0)),
+          () => core.drain(),
+          () => core.fail('bad'),
+          () => core.dispose(),
+          () => core.beginStep({ durationMs: durationMs(T) }),
+          () => core.completeStep(result(request)),
+          () => input(core, []),
+        ])
+          expect(change).toThrow(/busy|resolv/i);
+        return f;
+      },
+    });
+    core.completeStep(tx.value);
+  });
+  test('malformed finish aborts prepared scratch and cannot clear a held pose', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'guard')]);
+    core.present(durationMs(T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(core, request, {
+      finish: (r) => ({ ...r, outputRevision: r.outputRevision + 1 }),
+    });
+    expect(() => core.completeStep(tx.value)).toThrow();
+    expect(tx.state()).toBe('aborted');
+    expect(core.read()).toEqual(before);
+    const retry = syntheticTransaction(core, request);
+    core.completeStep(retry.value);
+    expect(actor(core).fightingPoseHold).toBeUndefined();
+  });
+});
+
+describe('pure transaction replay and recorder rejection', () => {
+  function recorded() {
+    const r = recordCore(transactionSetup());
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    return r;
+  }
+  test('capability envelopes never enter DTO cloning; transaction tape replays complete queries', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(() => structuredClone(r.read())).not.toThrow();
+    const replayed = replayCore(transactionSetup(), r.read());
+    expect(replayed.outputs).toEqual(r.outputs());
+    expect(replayed.snapshot).toEqual(r.core.read());
+    const changed = structuredClone(r.read());
+    const entry = changed.find((e) => e.kind === 'transaction');
+    if (entry?.kind !== 'transaction')
+      throw new Error('missing transaction tape');
+    const interaction = entry.value.interactions.find(
+      (i) => i.kind === 'project',
+    );
+    if (interaction?.kind !== 'project') throw new Error('missing query');
+    Object.assign(interaction.input, {
+      settledOccurrenceIds: ['forged-query'],
+    });
+    expect(() => replayCore(transactionSetup(), changed)).toThrow(/mismatch/i);
+  });
+  test('failed project and invalid prepared receipt plus abort replay before same-begin fresh retry', () => {
+    const r = recorded();
+    input(r.core, [packet(r.core, 'punch')]);
+    r.core.present(durationMs(10 * T));
+    const request = r.core.beginStep({ durationMs: durationMs(10 * T) });
+    const one = syntheticTransaction(r.core, request, {
+      project: (q, f) => {
+        if (q.revision === 2) throw new Error('recorded-fault');
+        return f;
+      },
+    });
+    expect(() => r.core.completeStep(one.value)).toThrow('recorded-fault');
+    const two = syntheticTransaction(r.core, request, {
+      finish: (receipt) => ({
+        ...receipt,
+        outputRevision: receipt.outputRevision + 1,
+      }),
+    });
+    expect(() => r.core.completeStep(two.value)).toThrow();
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(r.read().filter((e) => e.kind === 'begin')).toHaveLength(1);
+    expect(r.read().filter((e) => e.kind === 'transaction')).toHaveLength(3);
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+  test('rejected recorder callback reentry adds no command/drain/fail/dispose tape entries', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) }),
+      before = r.read().length;
+    const tx = syntheticTransaction(r.core, request, {
+      project: (_q, f) => {
+        for (const mutate of [
+          () => r.core.drain(),
+          () => r.core.dispose(),
+          () => r.core.fail('x'),
+          () => r.core.handle({ type: 'InputsReleased', runId: run }),
+          () => r.core.present(durationMs(0)),
+        ])
+          expect(mutate).toThrow(/record|busy/i);
+        return f;
+      },
+    });
+    r.core.completeStep(tx.value);
+    expect(r.read()).toHaveLength(before + 1);
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+  test('unrecordable return is distinct from a port throw and replay preserves the abort', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(r.core, request, {
+      raw: true,
+      project: (_q, f) => ({ ...f, nonDto: () => undefined }),
+    });
+    expect(() => r.core.completeStep(tx.value)).toThrow(/record/i);
+    const entry = r.read().find((e) => e.kind === 'transaction');
+    if (entry?.kind !== 'transaction') throw new Error('missing transaction');
+    expect(entry.value.interactions[0]?.outcome.kind).toBe(
+      'unrecordable-return',
+    );
+    expect(entry.value.interactions.at(-1)?.kind).toBe('abort');
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+  test('replay AI provider explicitly rejects unused surplus decisions', () => {
+    const provider = replayIntentProvider([[], []]);
+    provider(transactionSetup().read(), null);
+    expect(() => provider.assertConsumed()).toThrow(/surplus|unused/i);
+    provider(transactionSetup().read(), null);
+    expect(() => provider.assertConsumed()).not.toThrow();
+  });
+});
+
+function retimeSynthetic(
+  q: FightingProjectInput,
+  f: FightingSpatialFrontier,
+  at: number,
+): FightingSpatialFrontier {
+  const acceptedPrefix = f.acceptedPrefix.map((p) => {
+    const clock = requireValue(
+      q.snapshot.actors.find((a) => a.actorId === p.actor.actorId)
+        ?.fightingClock,
+    );
+    const slice = clock.slices.find(
+      (s) => at >= s.fromGameMs && at < s.toGameMs,
+    );
+    const motion = slice
+      ? slice.fromMotionMs +
+        ((slice.toMotionMs - slice.fromMotionMs) * (at - slice.fromGameMs)) /
+          (slice.toGameMs - slice.fromGameMs)
+      : requireValue(clock.endpoint).motionMs;
+    return {
+      ...p,
+      pose: {
+        ...p.pose,
+        source: {
+          ...p.pose.source,
+          atGameMs: gameTimeMs(at),
+          motionMs: durationMs(motion),
+        },
+        sample: syntheticEntry(p.pose.source.clipId, motion),
+      },
+    };
+  });
+  return { ...f, atGameMs: gameTimeMs(at), acceptedPrefix };
+}
+function syntheticBodies(
+  q: FightingProjectInput,
+  f: FightingSpatialFrontier,
+  at: number,
+  pairs: readonly (readonly [ActorColor, ActorColor])[],
+): FightingSpatialFrontier {
+  const timed = retimeSynthetic(q, f, at);
+  const candidates = pairs.map(([source, target], i) => {
+    const a = requireValue(q.snapshot.actors.find((a) => a.color === source)),
+      b = requireValue(q.snapshot.actors.find((a) => a.color === target)),
+      attack = requireValue(a.attack);
+    return {
+      kind: 'body-hit' as const,
+      runId: run,
+      contactId: contactId(
+        `synthetic:${q.transactionId}:${q.revision}:${i}:${source}`,
+      ),
+      at: gameTimeMs(at),
+      interval: { from: q.cursorGameMs, to: q.horizonGameMs },
+      point: { x: 0, y: 1, z: 1 },
+      evidence: 'overlap' as const,
+      source: {
+        actorId: a.actorId,
+        activationId: attack.activationId,
+        impactId: requireValue(attack.impactBindings[0]).impactId,
+      },
+      targetActorId: b.actorId,
+    };
+  });
+  return {
+    ...timed,
+    kind: 'contacts',
+    occurrenceIds: candidates.map((c) => `occurrence:${c.contactId}`),
+    result: {
+      ...timed.result,
+      candidates,
+      fighting: {
+        ...timed.result.fighting,
+        contacts: candidates.map((c) => {
+          const source = requireValue(
+              timed.result.snapshot.actors.find(
+                (a) => a.actorId === c.source.actorId,
+              ),
+            ),
+            target = requireValue(
+              timed.result.snapshot.actors.find(
+                (a) => a.actorId === c.targetActorId,
+              ),
+            );
+          return {
+            contactId: c.contactId,
+            atGameMs: c.at,
+            sourceActorId: source.actorId,
+            targetActorId: target.actorId,
+            sourcePosition: source.position,
+            targetPosition: target.position,
+            sourceFacing: source.facing,
+            targetFacing: target.facing,
+          };
+        }),
+      },
+    },
+  };
+}
+function transactionStep(
+  core: CorePort,
+  ms: number,
+  hooks: Parameters<typeof syntheticTransaction>[2] = {},
+) {
+  core.present(durationMs(ms));
+  const request = core.beginStep({ durationMs: durationMs(ms) }),
+    tx = syntheticTransaction(core, request, hooks);
+  const output = core.completeStep(tx.value);
+  syntheticInstalled.set(core, tx.physical());
+  return { output, tx, request };
+}
+
+describe('strict accepted combat and boundary regressions', () => {
+  test('later valid revised contact is not rejected by the obsolete speculative tail blacklist', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch'), packet(core, 'punch')]);
+    const hit = new Set<string>();
+    const { output, tx } = transactionStep(core, 50 * T, {
+      project: (q, f) => {
+        const white = requireValue(
+          q.snapshot.actors.find((a) => a.color === 'white'),
+        );
+        if (
+          q.queryMode === 'interval' &&
+          white.fighting?.phase === 'active' &&
+          white.attack &&
+          !hit.has(white.attack.activationId)
+        ) {
+          hit.add(white.attack.activationId);
+          return syntheticBodies(
+            q,
+            f,
+            q.cursorGameMs +
+              Math.min(T / 4, (q.horizonGameMs - q.cursorGameMs) / 2),
+            [['white', 'blue']],
+          );
+        }
+        return f;
+      },
+    });
+    expect(hit.size).toBe(2);
+    expect(output.events.filter((e) => e.type === 'HpChanged')).toHaveLength(2);
+    expect(
+      tx.queries.some(
+        (q) =>
+          q.selectedPoses.some((p) => p.phase === 'active') && q.revision > 4,
+      ),
+    ).toBe(true);
+    expect(actor(core, 'blue').hp).toBeLessThan(450);
+  });
+  test('complete tied body batch preserves a trade independently of candidate permutation', () => {
+    const runTrade = (reverse: boolean) => {
+      const core = startTransactionCore();
+      input(core, [packet(core, 'punch'), packet(core, 'punch', 'blue')]);
+      let hit = false;
+      const { output } = transactionStep(core, 30 * T, {
+        project: (q, f) => {
+          if (
+            !hit &&
+            q.queryMode === 'interval' &&
+            q.snapshot.actors[0]?.fighting?.phase === 'active'
+          ) {
+            hit = true;
+            return syntheticBodies(
+              q,
+              f,
+              q.cursorGameMs + T / 4,
+              reverse
+                ? [
+                    ['blue', 'white'],
+                    ['white', 'blue'],
+                  ]
+                : [
+                    ['white', 'blue'],
+                    ['blue', 'white'],
+                  ],
+            );
+          }
+          return f;
+        },
+      });
+      return {
+        hp: output.snapshot.actors.map((a) => a.hp),
+        damage: output.events
+          .filter((e) => e.type === 'HpChanged')
+          .map((e) => e.actualHpLost)
+          .sort(),
+      };
+    };
+    const forward = runTrade(false),
+      reverse = runTrade(true);
+    expect(forward).toEqual(reverse);
+    expect(forward.hp[0]).toBe(400);
+    expect(forward.hp[1]).toBeLessThan(500);
+  });
+  test('new accepted block forces a fresh epoch even for the identical guard clip and preserves its locked defense', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'guard'), packet(core, 'punch', 'blue')]);
+    let hit = false;
+    const { tx } = transactionStep(core, T, {
+      project: (q, f) => {
+        if (!hit && q.queryMode === 'interval') {
+          hit = true;
+          return syntheticBodies(q, f, T / 4, [
+            ['blue', 'white'],
+            ['blue', 'white'],
+          ]);
+        }
+        return f;
+      },
+    });
+    const guard = tx.queries.find((q) => q.queryMode === 'settle')
+      ?.selectedPoses[0]?.epochId;
+    const blocked = actor(core);
+    expect(blocked.fighting?.phase).toBe('blockstun');
+    expect(blocked.fightingClock?.endpoint?.epochId).not.toBe(guard);
+    expect(blocked.fightingClock?.endpoint?.clipId).toBe(
+      poseClips['guard-standing'],
+    );
+    core.handle({ type: 'InputsReleased', runId: run });
+    expect(actor(core).fighting).toMatchObject({
+      guardHeld: false,
+      guardHeight: 'standing',
+      phase: 'blockstun',
+    });
+    expect(actor(core).fightingClock).toEqual(blocked.fightingClock);
+    expect(actor(core).fightingPose).toEqual(blocked.fightingPose);
+    transactionStep(core, 20 * T);
+    expect(actor(core).fighting).toMatchObject({
+      guardHeld: false,
+      guardHeight: null,
+      phase: 'neutral',
+    });
+  });
+  test('attack end at E selects an endpoint epoch without epsilon coverage and next step continues it', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch')]);
+    const total =
+      (FIGHTING_MOVE_SPECS.p_short.startupTicks +
+        FIGHTING_MOVE_SPECS.p_short.activeTicks +
+        FIGHTING_MOVE_SPECS.p_short.recoveryTicks) *
+      T;
+    transactionStep(core, total);
+    const clock = requireValue(actor(core).fightingClock);
+    expect(clock.slices.at(-1)?.epochId).not.toBe(clock.endpoint?.epochId);
+    expect(clock.endpoint?.motionMs).toBe(0);
+    expect(actor(core).attack).toBeNull();
+    transactionStep(core, T);
+    expect(actor(core).fightingClock?.slices[0]?.epochId).toBe(
+      clock.endpoint?.epochId,
+    );
+    expect(actor(core).fightingClock?.slices[0]?.fromMotionMs).toBe(0);
+  });
+  test('global and same-time work budgets abort atomically rather than return a partial success', () => {
+    for (const policy of [
+      { maxFrontiers: 1, maxSameTimeFrontiers: 20 },
+      { maxFrontiers: 100, maxSameTimeFrontiers: 1 },
+    ]) {
+      const core = transactionSetup((options) => {
+        const f = requireValue(options.fighting);
+        if (f.mode !== 'battle-transaction-v1') throw new Error('mode');
+        return {
+          ...options,
+          fighting: {
+            ...f,
+            transactionPolicy: { ...f.transactionPolicy, ...policy },
+          },
+        };
+      });
+      core.handle({ type: 'AssetsReady', runId: run });
+      core.handle({ type: 'StartRequested', runId: run });
+      core.drain();
+      input(core, [packet(core, 'punch', 'blue')]);
+      core.present(durationMs(T));
+      const before = core.read(),
+        request = core.beginStep({ durationMs: durationMs(T) });
+      let contacts = 0;
+      const tx = syntheticTransaction(core, request, {
+        project: (q, f) =>
+          q.queryMode === 'settle' && contacts++ < 2
+            ? syntheticBodies(q, f, q.cursorGameMs, [['blue', 'white']])
+            : f,
+      });
+      expect(() => core.completeStep(tx.value)).toThrow(/budget/i);
+      expect(core.read()).toEqual(before);
+      expect(tx.state()).toBe('aborted');
+    }
+  });
+  test('late project throw after accepted damage/heat/events leaves retry and private counters deterministic', () => {
+    const execute = (fault: boolean) => {
+      const core = startTransactionCore();
+      input(core, [packet(core, 'punch', 'blue')]);
+      core.present(durationMs(30 * T));
+      const before = core.read(),
+        request = core.beginStep({ durationMs: durationMs(30 * T) });
+      let hit = false;
+      const project = (q: FightingProjectInput, f: FightingSpatialFrontier) => {
+        if (!hit && q.queryMode === 'interval') {
+          hit = true;
+          return syntheticBodies(q, f, q.cursorGameMs + T / 4, [
+            ['blue', 'white'],
+          ]);
+        }
+        if (fault && q.revision === 3) throw new Error('after damage');
+        return f;
+      };
+      if (fault) {
+        const broken = syntheticTransaction(core, request, { project });
+        expect(() => core.completeStep(broken.value)).toThrow('after damage');
+        expect(core.read()).toEqual(before);
+        hit = false;
+      }
+      fault = false;
+      const output = core.completeStep(
+        syntheticTransaction(core, request, { project }).value,
+      );
+      return {
+        hp: output.snapshot.actors.map((a) => a.hp),
+        heat: output.snapshot.actors.map((a) => a.heat),
+        events: output.events.map((e) => [e.type, e.sequence]),
+      };
+    };
+    expect(execute(true)).toEqual(execute(false));
+  });
+});
+
+function syntheticPhysical(
+  q: FightingProjectInput,
+  f: FightingSpatialFrontier,
+  at: number,
+  kinds: readonly ('takeoff' | 'landing')[],
+  color: ActorColor = 'white',
+): FightingSpatialFrontier {
+  const timed = retimeSynthetic(q, f, at),
+    id = requireValue(q.snapshot.actors.find((a) => a.color === color)).actorId;
+  const prefix = timed.acceptedPrefix.map((p) =>
+    p.actor.actorId !== id
+      ? p
+      : { ...p, actor: { ...p.actor, grounded: kinds.includes('landing') } },
+  );
+  const p = requireValue(prefix.find((p) => p.actor.actorId === id));
+  return {
+    ...timed,
+    kind: 'physical',
+    physicalSeamIds: kinds.map((k) => `${q.revision}:${k}:${id}`),
+    acceptedPrefix: prefix,
+    result: {
+      ...timed.result,
+      snapshot: {
+        ...timed.result.snapshot,
+        actors: prefix.map((p) => p.actor),
+      },
+      fighting: {
+        ...timed.result.fighting,
+        takeoffs: kinds.includes('takeoff')
+          ? [
+              {
+                actorId: id,
+                atGameMs: gameTimeMs(at),
+                position: p.actor.position,
+              },
+            ]
+          : [],
+        landings: kinds.includes('landing')
+          ? [
+              {
+                actorId: id,
+                atGameMs: gameTimeMs(at),
+                position: p.actor.position,
+                supportId: p.pose.support.supportId,
+                airborneActivationId: p.pose.source.activationId,
+              },
+            ]
+          : [],
+      },
+    },
+  };
+}
+
+describe('strict physical, encounter and lifecycle boundaries', () => {
+  test('landing at E is endpoint-only, half-open, and does not restart on the next first slice', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'jump')]);
+    let tookOff = false,
+      landed = false;
+    transactionStep(core, T, {
+      project: (q, f) => {
+        if (!tookOff) {
+          tookOff = true;
+          return syntheticPhysical(q, f, 0, ['takeoff']);
+        }
+        if (!landed && q.queryMode === 'interval' && q.horizonGameMs === T) {
+          landed = true;
+          return syntheticPhysical(q, f, T, ['landing']);
+        }
+        return f;
+      },
+    });
+    const clock = requireValue(actor(core).fightingClock);
+    expect(clock.endpoint).toMatchObject({
+      atGameMs: T,
+      motionMs: 0,
+      phase: 'landing',
+      posture: 'standing',
+    });
+    expect(clock.slices.at(-1)?.epochId).not.toBe(clock.endpoint?.epochId);
+    transactionStep(core, T);
+    expect(actor(core).fightingClock?.slices[0]?.epochId).toBe(
+      clock.endpoint?.epochId,
+    );
+    expect(actor(core).fightingClock?.slices[0]?.fromMotionMs).toBe(0);
+  });
+  test('takeoff then landing then resampled body at same exact time adds no elapsed action tick', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'jump'), packet(core, 'punch', 'blue')]);
+    let physical = false,
+      contact = false;
+    const { tx } = transactionStep(core, T, {
+      project: (q, f) => {
+        if (!physical) {
+          physical = true;
+          return syntheticPhysical(q, f, 0, ['landing', 'takeoff']);
+        }
+        if (!contact && q.cursorGameMs === 0) {
+          contact = true;
+          expect(q.selectedPoses[0]?.phase).toBe('landing');
+          return syntheticBodies(q, f, 0, [['blue', 'white']]);
+        }
+        return f;
+      },
+    });
+    expect(
+      tx.queries
+        .slice(0, 3)
+        .every((q) => q.cursorGameMs === 0 && q.horizonGameMs === 0),
+    ).toBe(true);
+    expect(actor(core).fighting?.tick).toBe(0);
+    expect(actor(core).hp).toBe(400);
+  });
+  test('receipt position, not speculative proposal, is the next AI physical authority', () => {
+    const observed: (number | null)[] = [];
+    const core = transactionSetup((o) => ({
+      ...o,
+      enemyAi: (_s, p) => {
+        observed.push(p?.actors[0]?.position.x ?? null);
+        return [];
+      },
+    }));
+    core.handle({ type: 'AssetsReady', runId: run });
+    core.handle({ type: 'StartRequested', runId: run });
+    core.drain();
+    const { tx } = transactionStep(core, T, {
+      project: (q, f) => {
+        if (q.queryMode !== 'interval') return f;
+        const prefix = f.acceptedPrefix.map((p) => ({
+          ...p,
+          actor: { ...p.actor, position: { ...p.actor.position, x: 3 } },
+          pose: { ...p.pose, acceptedRoot: { x: 3, z: 0 } },
+        }));
+        return {
+          ...f,
+          acceptedPrefix: prefix,
+          result: {
+            ...f.result,
+            snapshot: {
+              ...f.result.snapshot,
+              actors: prefix.map((p) => p.actor),
+            },
+          },
+        };
+      },
+    });
+    expect(tx.value.snapshot.actors[0]?.position.x).toBe(0);
+    transactionStep(core, T);
+    expect(observed).toEqual([0, 3]);
+  });
+  test('late receipt accessor is rejected without executing it and abort failures still restore the pending state', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(T) });
+    let reads = 0;
+    const tx = syntheticTransaction(core, request, {
+      finish: (receipt) =>
+        Object.defineProperty({ ...receipt }, 'receiptId', {
+          enumerable: true,
+          get() {
+            reads++;
+            return 'forged';
+          },
+        }),
+      abort: () => {
+        throw new Error('abort failed');
+      },
+    });
+    expect(() => core.completeStep(tx.value)).toThrow();
+    expect(reads).toBe(0);
+    expect(core.read()).toEqual(before);
+    expect(tx.state()).toBe('aborted');
+    core.completeStep(syntheticTransaction(core, request).value);
+  });
+  test('error retains accepted pose with an explicit hold; disposal clears reusable authority without a living epoch', () => {
+    const core = startTransactionCore();
+    transactionStep(core, T);
+    const accepted = actor(core);
+    core.fail('before next completion');
+    expect(actor(core).fightingClock).toEqual(accepted.fightingClock);
+    expect(actor(core).fightingPose).toEqual(accepted.fightingPose);
+    expect(actor(core).fightingPoseHold?.reason).toBe('error');
+    core.dispose();
+    expect(actor(core).fightingPose).toBeUndefined();
+    expect(actor(core).fightingClock).toBeUndefined();
+    expect(actor(core).fightingPoseHold).toBeUndefined();
+  });
+  test('all four opponents use explicit unswept reset provenance and exact-end new residency', () => {
+    const core = transactionSetup((o) => ({
+      ...o,
+      fighting: {
+        ...requireValue(o.fighting),
+        policy: {
+          ...requireValue(o.fighting).policy,
+          hpPerNormalizedPoint: 100,
+        },
+      },
+    }));
+    core.handle({ type: 'AssetsReady', runId: run });
+    core.handle({ type: 'StartRequested', runId: run });
+    core.drain();
+    const opponentIds: string[] = [],
+      resetIds: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const opponent = requireValue(core.read().currentOpponentId);
+      opponentIds.push(opponent);
+      input(core, [packet(core, 'punch')]);
+      let hit = false;
+      const { output, tx: combatTx } = transactionStep(core, 10 * T, {
+        project: (q, f) => {
+          if (
+            !hit &&
+            q.queryMode === 'interval' &&
+            q.snapshot.actors[0]?.fighting?.phase === 'active'
+          ) {
+            hit = true;
+            const color = requireValue(
+              q.snapshot.actors.find((a) => a.actorId === opponent),
+            ).color;
+            return syntheticBodies(q, f, q.cursorGameMs + T / 4, [
+              ['white', color],
+            ]);
+          }
+          return f;
+        },
+      });
+      if (i === 3) {
+        expect(output.snapshot.result?.outcome).toBe('clear');
+        break;
+      }
+      const defeat = output.events.find((e) => e.type === 'ActorDefeated');
+      if (!defeat)
+        throw new Error(
+          JSON.stringify({
+            iteration: i,
+            hit,
+            hp: output.snapshot.actors.map((a) => a.hp),
+            events: output.events.map((e) => e.type),
+            state: output.snapshot.actors[0]?.fighting,
+            queries: combatTx.queries.map((q) => [
+              q.cursorGameMs,
+              q.horizonGameMs,
+              q.queryMode,
+              q.snapshot.actors[0]?.fighting?.phase,
+              q.snapshot.actors[0]?.fighting?.moveAgeTicks,
+            ]),
+          }),
+        );
+      const remaining = defeat.at + 1625 - output.snapshot.clocks.gameTimeMs;
+      const transition = transactionStep(core, remaining);
+      const resets = transition.tx.queries.flatMap((q) =>
+        q.encounterReset ? [q.encounterReset] : [],
+      );
+      expect(resets).toHaveLength(1);
+      resetIds.push(requireValue(resets[0]).resetId);
+      expect(actor(core).fightingPose?.entryKind).toBe('encounter-reset');
+      expect(actor(core).fightingPose?.acceptedRoot).toEqual({ x: 0, z: 0 });
+      expect(
+        core.read().actors.find((a) => a.actorId === opponent)?.fightingPose,
+      ).toBeUndefined();
+    }
+    expect(new Set(opponentIds).size).toBe(4);
+    expect(new Set(resetIds).size).toBe(3);
+    const clock = requireValue(actor(core).fightingClock);
+    expect(clock.endpoint?.atGameMs).toBeGreaterThanOrEqual(
+      core.read().clocks.gameTimeMs,
+    );
+    expect(clock.slices.at(-1)?.frozen).toBe(true);
+  });
+});
+
+describe('strict rejection, ties and replay completeness', () => {
+  test('forbidden proposal candidates and foreign/nonresident physical membership reject before any callback', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(core, request, {
+      project: () => {
+        throw new Error('must not project');
+      },
+    });
+    const extra = requireValue(before.actors[2]);
+    expect(() =>
+      core.completeStep({
+        ...tx.value,
+        snapshot: {
+          ...tx.value.snapshot,
+          actors: [
+            ...tx.value.snapshot.actors,
+            {
+              ...requireValue(tx.value.snapshot.actors[0]),
+              actorId: extra.actorId,
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+    const forbidden = {
+      kind: 'destruction' as const,
+      runId: run,
+      contactId: contactId('forbidden-world'),
+      at: gameTimeMs(0),
+      interval: { from: gameTimeMs(0), to: gameTimeMs(T) },
+      point: { x: 0, y: 0, z: 0 },
+      evidence: 'overlap' as const,
+      sourceActorId: requireValue(before.actors[0]).actorId,
+      targetId: worldObjectId('forbidden'),
+      launchId: null,
+      contactSpeedMps: 0,
+    };
+    expect(() =>
+      core.completeStep({ ...tx.value, candidates: [forbidden] }),
+    ).toThrow();
+    expect(tx.queries).toHaveLength(0);
+    expect(core.read()).toEqual(before);
+    core.completeStep(syntheticTransaction(core, request).value);
+  });
+  test('repeated no-progress projection IDs abort with no partial clock acceptance', () => {
+    const core = startTransactionCore();
+    core.present(durationMs(T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(T) });
+    let first: string | null = null;
+    const tx = syntheticTransaction(core, request, {
+      project: (_q, f) => {
+        first ??= f.projectionId;
+        return { ...f, projectionId: first };
+      },
+    });
+    expect(() => core.completeStep(tx.value)).toThrow(/frontier|projection/i);
+    expect(tx.state()).toBe('aborted');
+    expect(core.read()).toEqual(before);
+  });
+  test('ignored geometric occurrence settles without consuming impact; changed geometry can hit on re-entry', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'crouch'), packet(core, 'punch', 'blue')]);
+    let stage = 0;
+    const { output, tx } = transactionStep(core, T, {
+      project: (q, f) => {
+        if (stage === 0 && q.queryMode === 'interval') {
+          stage++;
+          return syntheticBodies(q, f, T / 4, [['blue', 'white']]);
+        }
+        if (stage === 1) {
+          stage++;
+          return syntheticPhysical(q, f, q.cursorGameMs, ['takeoff']);
+        }
+        if (stage === 2) {
+          stage++;
+          return syntheticBodies(q, f, q.cursorGameMs, [['blue', 'white']]);
+        }
+        return f;
+      },
+    });
+    expect(output.events.filter((e) => e.type === 'HpChanged')).toHaveLength(1);
+    expect(actor(core).hp).toBe(400);
+    expect(tx.queries.at(-1)?.settledOccurrenceIds).toHaveLength(2);
+  });
+  test('complete clash batch consumes before tied bodies in either candidate order', () => {
+    for (const reverse of [false, true]) {
+      const core = startTransactionCore();
+      input(core, [packet(core, 'punch'), packet(core, 'punch', 'blue')]);
+      let hit = false;
+      const { output } = transactionStep(core, 10 * T, {
+        project: (q, f) => {
+          if (
+            !hit &&
+            q.queryMode === 'interval' &&
+            q.snapshot.actors[0]?.fighting?.phase === 'active'
+          ) {
+            hit = true;
+            const bodies = syntheticBodies(q, f, q.cursorGameMs + T / 4, [
+              ['white', 'blue'],
+              ['blue', 'white'],
+            ]);
+            const first = bodies.result.candidates[0],
+              second = bodies.result.candidates[1];
+            if (first?.kind !== 'body-hit' || second?.kind !== 'body-hit')
+              throw new Error('fixture body');
+            const clash = {
+              kind: 'clash' as const,
+              runId: run,
+              contactId: contactId(`clash:${q.transactionId}`),
+              at: first.at,
+              interval: first.interval,
+              point: first.point,
+              evidence: 'overlap' as const,
+              first: first.source,
+              second: second.source,
+            };
+            const candidates = reverse
+              ? [...bodies.result.candidates, clash].reverse()
+              : [...bodies.result.candidates, clash];
+            return {
+              ...bodies,
+              occurrenceIds: candidates.map((c) => `occurrence:${c.contactId}`),
+              result: { ...bodies.result, candidates },
+            };
+          }
+          return f;
+        },
+      });
+      expect(
+        output.events.filter((e) => e.type === 'ClashResolved'),
+      ).toHaveLength(1);
+      expect(output.events.filter((e) => e.type === 'HpChanged')).toHaveLength(
+        0,
+      );
+      expect(actor(core).hp).toBe(500);
+    }
+  });
+  test('stale original-plan landing activation rejects after a hit; corrected current-suffix witness retries same begin', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch'), packet(core, 'punch', 'blue')]);
+    core.present(durationMs(10 * T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(10 * T) }),
+      old = requireValue(actor(core).attack).activationId;
+    const attempt = (stale: boolean) => {
+      let stage = 0;
+      return syntheticTransaction(core, request, {
+        project: (q, f) => {
+          if (stage === 0) {
+            stage++;
+            return syntheticPhysical(q, f, q.cursorGameMs, ['takeoff']);
+          }
+          if (stage === 1 && q.queryMode === 'interval') {
+            stage++;
+            return syntheticBodies(q, f, T / 4, [['blue', 'white']]);
+          }
+          if (stage === 2 && q.queryMode === 'interval') {
+            stage++;
+            const landing = syntheticPhysical(q, f, 2 * T, ['landing']);
+            return stale
+              ? {
+                  ...landing,
+                  result: {
+                    ...landing.result,
+                    fighting: {
+                      ...landing.result.fighting,
+                      landings: landing.result.fighting.landings.map((w) => ({
+                        ...w,
+                        airborneActivationId: old,
+                      })),
+                    },
+                  },
+                }
+              : landing;
+          }
+          return f;
+        },
+      });
+    };
+    const broken = attempt(true);
+    expect(() => core.completeStep(broken.value)).toThrow(/Landing|suffix/i);
+    expect(core.read()).toEqual(before);
+    core.completeStep(attempt(false).value);
+    expect(actor(core).fighting?.posture).toBe('standing');
+  });
+  test('mutual KO retains complete trade and frozen original-E clocks despite terminal K', () => {
+    const core = transactionSetup((o) => ({
+      ...o,
+      fighting: {
+        ...requireValue(o.fighting),
+        policy: {
+          ...requireValue(o.fighting).policy,
+          hpPerNormalizedPoint: 100,
+        },
+      },
+    }));
+    core.handle({ type: 'AssetsReady', runId: run });
+    core.handle({ type: 'StartRequested', runId: run });
+    core.drain();
+    for (let i = 0; i < 4; i++) {
+      input(core, [packet(core, 'punch', 'blue')]);
+      let hit = false;
+      transactionStep(core, 2200, {
+        project: (q, f) => {
+          if (!hit && q.queryMode === 'interval') {
+            hit = true;
+            return syntheticBodies(q, f, q.cursorGameMs + T / 4, [
+              ['blue', 'white'],
+            ]);
+          }
+          return f;
+        },
+      });
+    }
+    expect(actor(core).hp).toBe(100);
+    input(core, [packet(core, 'punch'), packet(core, 'punch', 'blue')]);
+    let hit = false;
+    const { output, request } = transactionStep(core, 10 * T, {
+      project: (q, f) => {
+        if (
+          !hit &&
+          q.queryMode === 'interval' &&
+          q.snapshot.actors[0]?.fighting?.phase === 'active'
+        ) {
+          hit = true;
+          return syntheticBodies(q, f, q.cursorGameMs + T / 4, [
+            ['white', 'blue'],
+            ['blue', 'white'],
+          ]);
+        }
+        return f;
+      },
+    });
+    expect(output.snapshot.result?.outcome).toBe('defeat');
+    expect(
+      output.events.filter((e) => e.type === 'ActorDefeated'),
+    ).toHaveLength(2);
+    expect(output.events.filter((e) => e.type === 'HpChanged')).toHaveLength(2);
+    for (const a of output.snapshot.actors.filter((a) =>
+      output.snapshot.residentActorIds?.includes(a.actorId),
+    )) {
+      expect(a.fightingClock?.endpoint?.atGameMs).toBe(
+        request.snapshot.clocks.gameTimeMs,
+      );
+      expect(a.fightingClock?.slices.at(-1)?.frozen).toBe(true);
+      expect(a.fightingPose?.defeatEntry).toBeDefined();
+    }
+    expect(output.snapshot.clocks.gameTimeMs).toBeLessThan(
+      request.snapshot.clocks.gameTimeMs,
+    );
+  });
+  test('missing, extra, reordered and duplicate replay interactions are rejected', () => {
+    const r = recordCore(transactionSetup());
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    transactionStep(r.core, T);
+    const tape = r.read(),
+      entry = requireValue(tape.find((e) => e.kind === 'transaction'));
+    if (entry.kind !== 'transaction') throw new Error('transaction');
+    const calls = entry.value.interactions,
+      first = requireValue(calls[0]),
+      second = requireValue(calls[1]);
+    for (const interactions of [
+      calls.slice(1),
+      [first, first, ...calls.slice(1)],
+      [second, first, ...calls.slice(2)],
+      [
+        ...calls,
+        {
+          kind: 'abort' as const,
+          outcome: { kind: 'returned' as const, value: null },
+        },
+      ],
+    ]) {
+      const changed = tape.map((e) =>
+        e === entry
+          ? {
+              kind: 'transaction' as const,
+              value: { ...entry.value, interactions },
+            }
+          : e,
+      );
+      expect(() => replayCore(transactionSetup(), changed)).toThrow();
+    }
+  });
+  test('AI runs once per begin across failed completion and tape replay consumes exactly the recorded commands', () => {
+    const ai = recordIntentProvider((snapshot) => [
+      {
+        type: 'AttackRequested',
+        runId: run,
+        actorId: requireValue(snapshot.currentOpponentId),
+        category: 'punch',
+        input: { commandId: commandId('strict-ai-1'), sequence: 1 },
+      },
+    ]);
+    const r = recordCore(
+      transactionSetup((o) => ({ ...o, enemyAi: ai.decide })),
+    );
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const failed = syntheticTransaction(r.core, request, {
+      project: (q, f) => {
+        if (q.revision === 2) throw new Error('ai retry');
+        return f;
+      },
+    });
+    expect(() => r.core.completeStep(failed.value)).toThrow('ai retry');
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(ai.read()).toHaveLength(1);
+    const replayAi = replayIntentProvider(ai.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).outputs,
+    ).toEqual(r.outputs());
+    expect(() => replayAi.assertConsumed()).not.toThrow();
+    expect(replayAi.readConsumed()).toBe(1);
+  });
+});
+
+describe('strict held publications and exact selection seams', () => {
+  test('a contact at a logical right boundary must be resampled in the new phase before body resolution', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch')]);
+    core.present(durationMs(10 * T));
+    const before = core.read(),
+      request = core.beginStep({ durationMs: durationMs(10 * T) });
+    let injected = false;
+    const tx = syntheticTransaction(core, request, {
+      project: (q, f) => {
+        if (
+          !injected &&
+          q.queryMode === 'interval' &&
+          q.snapshot.actors[0]?.fighting?.phase === 'startup'
+        ) {
+          injected = true;
+          return syntheticBodies(q, f, q.horizonGameMs, [['white', 'blue']]);
+        }
+        return f;
+      },
+    });
+    expect(() => core.completeStep(tx.value)).toThrow(
+      /classification|resampl|boundary/i,
+    );
+    expect(core.read()).toEqual(before);
+    let hit = false;
+    core.completeStep(
+      syntheticTransaction(core, request, {
+        project: (q, f) => {
+          if (
+            !hit &&
+            q.queryMode === 'interval' &&
+            q.snapshot.actors[0]?.fighting?.phase === 'active'
+          ) {
+            hit = true;
+            return syntheticBodies(q, f, q.cursorGameMs, [['white', 'blue']]);
+          }
+          return f;
+        },
+      }).value,
+    );
+    expect(actor(core, 'blue').hp).toBe(450);
+  });
+  test('legal buffered move can start exactly at E with zero motion and no endpoint body ownership', () => {
+    const core = startTransactionCore();
+    input(core, [packet(core, 'punch'), packet(core, 'punch')]);
+    let hit = false;
+    transactionStep(core, 12.25 * T, {
+      project: (q, f) => {
+        if (
+          !hit &&
+          q.queryMode === 'interval' &&
+          q.snapshot.actors[0]?.fighting?.phase === 'active'
+        ) {
+          hit = true;
+          return syntheticBodies(q, f, 5.25 * T, [['white', 'blue']]);
+        }
+        return f;
+      },
+    });
+    const a = actor(core);
+    expect(a.attack?.fighting).toMatchObject({
+      kind: 'v3',
+      stage: 2,
+      moveId: 'p_body',
+    });
+    expect(a.fightingClock?.endpoint?.motionMs).toBe(0);
+    expect(a.fightingClock?.slices.at(-1)?.epochId).not.toBe(
+      a.fightingClock?.endpoint?.epochId,
+    );
+  });
+  test.each(['guard', 'crouch', 'attack', 'blockstun', 'hitstun'] as const)(
+    'pause/background/releases preserve %s accepted pose and release held state',
+    (state) => {
+      for (const release of [
+        'PauseRequested',
+        'Backgrounded',
+        'InputsReleased',
+      ] as const) {
+        const core = startTransactionCore();
+        if (state === 'guard' || state === 'blockstun')
+          input(core, [packet(core, 'guard')]);
+        if (state === 'crouch') input(core, [packet(core, 'crouch')]);
+        if (state === 'attack')
+          input(core, [packet(core, 'punch'), packet(core, 'punch')]);
+        if (state === 'blockstun' || state === 'hitstun')
+          input(core, [packet(core, 'punch', 'blue')]);
+        let hit = false;
+        transactionStep(core, T, {
+          project: (q, f) => {
+            if (
+              (state === 'blockstun' || state === 'hitstun') &&
+              !hit &&
+              q.queryMode === 'interval'
+            ) {
+              hit = true;
+              return syntheticBodies(q, f, T / 4, [['blue', 'white']]);
+            }
+            return f;
+          },
+        });
+        const accepted = actor(core);
+        core.handle(
+          release === 'PauseRequested'
+            ? { type: release, runId: run, reason: 'manual' }
+            : { type: release, runId: run },
+        );
+        expect(actor(core).fightingClock).toEqual(accepted.fightingClock);
+        expect(actor(core).fightingPose).toEqual(accepted.fightingPose);
+        expect(actor(core).fighting).toMatchObject({
+          guardHeld: false,
+          buffer: null,
+        });
+        if (state === 'blockstun')
+          expect(actor(core).fighting?.guardHeight).toBe('standing');
+        else expect(actor(core).fighting?.guardHeight).toBeNull();
+        core.handle({
+          type: 'QualityChanged',
+          runId: run,
+          quality: 'standard',
+        });
+        core.present(durationMs(0));
+        core.drain();
+        expect(actor(core).fightingClock).toEqual(accepted.fightingClock);
+        if (release === 'PauseRequested')
+          core.handle({
+            type: 'ResumeRequested',
+            runId: run,
+            reason: 'manual',
+          });
+        expect(actor(core).fightingPose).toEqual(accepted.fightingPose);
+      }
+    },
+  );
+  test('session ending and jump-induced crouch release hold the selected old crouch until receipt', () => {
+    for (const jump of [false, true]) {
+      const core = startTransactionCore();
+      input(core, [packet(core, 'crouch')]);
+      transactionStep(core, T);
+      const accepted = actor(core);
+      if (jump) input(core, [packet(core, 'jump')]);
+      else
+        core.handle({
+          type: 'MovementSessionEnded',
+          runId: run,
+          sessionId: 'c:white',
+        });
+      expect(actor(core).fighting?.posture).toBe('standing');
+      expect(actor(core).fightingClock).toEqual(accepted.fightingClock);
+      expect(actor(core).fightingPose).toEqual(accepted.fightingPose);
+      transactionStep(core, T);
+      expect(actor(core).fightingPoseHold).toBeUndefined();
+      expect(actor(core).fightingClock?.endpoint?.posture).toBe('standing');
+    }
+  });
+  test('a new run owns fresh actor, epoch and bootstrap IDs with no reused authority', () => {
+    const first = transactionSetup(undefined, runId('fresh-a')),
+      second = transactionSetup(undefined, runId('fresh-b'));
+    first.handle({ type: 'AssetsReady', runId: runId('fresh-a') });
+    second.handle({ type: 'AssetsReady', runId: runId('fresh-b') });
+    expect(actor(first).actorId).not.toBe(actor(second).actorId);
+    expect(actor(first).fightingClock?.endpoint?.epochId).not.toBe(
+      actor(second).fightingClock?.endpoint?.epochId,
+    );
+    expect(actor(first).fightingPose?.commitId).not.toBe(
+      actor(second).fightingPose?.commitId,
+    );
+  });
+});
+
+describe('strict source provenance cannot be forged by a finite DTO', () => {
+  test.each(['basis', 'incoming', 'defeat'] as const)(
+    'rejects a forged %s in an otherwise valid first settlement',
+    (forgery) => {
+      const core = startTransactionCore();
+      core.present(durationMs(T));
+      const before = core.read();
+      const request = core.beginStep({ durationMs: durationMs(T) });
+      const tx = syntheticTransaction(core, request, {
+        project: (_q, frontier) => ({
+          ...frontier,
+          acceptedPrefix: frontier.acceptedPrefix.map((p, index) =>
+            index
+              ? p
+              : {
+                  ...p,
+                  pose: {
+                    ...p.pose,
+                    ...(forgery === 'basis'
+                      ? { facingBasis: { x: 1, y: 0, z: 0 } }
+                      : {}),
+                    ...(forgery === 'incoming'
+                      ? { incoming: syntheticEntry(poseClips.airborne, 3) }
+                      : {}),
+                    ...(forgery === 'defeat'
+                      ? { defeatEntry: syntheticEntry(poseClips.airborne, 3) }
+                      : {}),
+                  },
+                },
+          ),
+        }),
+      });
+      expect(() => core.completeStep(tx.value)).toThrow(
+        /basis|incoming|defeat/i,
+      );
+      expect(core.read()).toEqual(before);
+      expect(tx.state()).toBe('aborted');
+      core.completeStep(syntheticTransaction(core, request).value);
+    },
+  );
+});
+
+test('recorder snapshots public capability methods without changing their receiver or alias semantics', () => {
+  const r = recordCore(transactionSetup());
+  r.core.handle({ type: 'AssetsReady', runId: run });
+  r.core.handle({ type: 'StartRequested', runId: run });
+  r.core.drain();
+  r.core.present(durationMs(T));
+  const request = r.core.beginStep({ durationMs: durationMs(T) });
+  const tx = syntheticTransaction(r.core, request, {
+    project: (_query, frontier) => {
+      Object.assign(tx.value.transaction, {
+        project() {
+          throw new Error('substituted resource method');
+        },
+      });
+      return frontier;
+    },
+  });
+  expect(() => r.core.completeStep(tx.value)).not.toThrow();
+  expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(r.outputs());
+});
+
+test('fighting admission rejects an omitted explicit evidence/transaction mode at runtime', () => {
+  const options = config();
+  Reflect.deleteProperty(requireValue(options.fighting), 'mode');
+  expect(() => createCore({ runId: run, seed: 42 }, options)).toThrow(/mode/i);
+});
+
+test('failed prepared receipt IDs stay reserved and issued epoch IDs are never recycled on retry', () => {
+  const core = startTransactionCore();
+  input(core, [packet(core, 'punch')]);
+  core.present(durationMs(T));
+  const before = core.read(),
+    request = core.beginStep({ durationMs: durationMs(T) });
+  const fixedReceipt = (receipt: FightingSpatialCommitReceipt) => ({
+    ...receipt,
+    receiptId: 'reserved-prepared-receipt',
+    poseContexts: receipt.poseContexts.map((p) => ({
+      ...p,
+      commitId: 'reserved-prepared-receipt',
+    })),
+  });
+  const first = syntheticTransaction(core, request, {
+    finish: (receipt) => ({
+      ...fixedReceipt(receipt),
+      outputRevision: receipt.outputRevision + 1,
+    }),
+  });
+  expect(() => core.completeStep(first.value)).toThrow();
+  const firstEpoch = first.queries[0]?.selectedPoses[0]?.epochId;
+  const second = syntheticTransaction(core, request, { finish: fixedReceipt });
+  expect(() => core.completeStep(second.value)).toThrow(/receipt ID/i);
+  expect(second.queries[0]?.selectedPoses[0]?.epochId).not.toBe(firstEpoch);
+  expect(core.read()).toEqual(before);
+  const third = syntheticTransaction(core, request);
+  core.completeStep(third.value);
+  expect(third.queries[0]?.selectedPoses[0]?.epochId).not.toBe(
+    second.queries[0]?.selectedPoses[0]?.epochId,
+  );
+});
+
+describe('recorder ordinary operation outcomes and admission guards', () => {
+  function recorded(customize?: (options: CoreOptions) => CoreOptions) {
+    const r = recordCore(transactionSetup(customize));
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    return r;
+  }
+  test('pending present rejection is an explicit failure, never a successful replay command', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const before = r.core.read(),
+      entries = r.read().length;
+    expect(() => r.core.present(durationMs(0))).toThrow(/pending/);
+    expect(r.core.read()).toEqual(before);
+    expect(r.read().slice(entries)).toEqual([
+      {
+        kind: 'failed',
+        operation: { kind: 'present', value: 0 },
+        diagnostic: {
+          name: 'Error',
+          message: 'Core has a pending fighting transaction',
+        },
+      },
+    ]);
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    const replayed = replayCore(transactionSetup(), r.read());
+    expect(replayed.outputs).toEqual(r.outputs());
+    expect(replayed.snapshot).toEqual(r.core.read());
+  });
+  test('pending rejection after an aborted completion does not prevent explicit error publication replay', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(r.core, request, {
+      project: () => {
+        throw new Error('pending project fault');
+      },
+    });
+    expect(() => r.core.completeStep(tx.value)).toThrow(
+      'pending project fault',
+    );
+    expect(() => r.core.present(durationMs(0))).toThrow(/pending/);
+    r.core.fail('cancel pending');
+    const error = r.core.drain();
+    expect(error.snapshot.phase).toBe('error');
+    expect(error.events.some((e) => e.type === 'FoundationError')).toBe(true);
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+  test.each(['AI', 'ready'] as const)(
+    '%s callback reentry is rejected before recording any nested mutation, while reads remain allowed',
+    (callback) => {
+      let r: ReturnType<typeof recordCore>;
+      let visits = 0;
+      const check = () => {
+        visits++;
+        const before = r.read(),
+          snapshot = r.core.read();
+        for (const mutate of [
+          () => r.core.fail('rejected callback fail'),
+          () => r.core.dispose(),
+          () => r.core.drain(),
+          () => r.core.present(durationMs(0)),
+          () => r.core.handle({ type: 'InputsReleased', runId: run }),
+          () => input(r.core, []),
+          () => r.core.beginStep({ durationMs: durationMs(T) }),
+          () =>
+            r.core.completeStep({
+              snapshot: { runId: run, tick: tick(0), actors: [], vehicles: [] },
+              candidates: [],
+            }),
+        ])
+          expect(mutate).toThrow(/busy/i);
+        expect(r.read()).toEqual(before);
+        expect(r.core.read()).toEqual(snapshot);
+      };
+      r = recordCore(
+        transactionSetup((o) => {
+          const fighting = o.fighting;
+          if (fighting?.mode !== 'battle-transaction-v1')
+            throw new Error('fixture mode');
+          return {
+            ...o,
+            enemyAi:
+              callback === 'AI'
+                ? () => {
+                    check();
+                    return [];
+                  }
+                : false,
+            fighting: {
+              ...fighting,
+              ready: () => {
+                if (callback === 'ready') check();
+                return fighting.ready();
+              },
+            },
+          };
+        }),
+      );
+      r.core.handle({ type: 'AssetsReady', runId: run });
+      r.core.handle({ type: 'StartRequested', runId: run });
+      r.core.drain();
+      r.core.present(durationMs(T));
+      const request = r.core.beginStep({ durationMs: durationMs(T) });
+      r.core.completeStep(syntheticTransaction(r.core, request).value);
+      expect(visits).toBe(1);
+      expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+        r.outputs(),
+      );
+    },
+  );
+  test('failed AI begin retains its thrown decision and replays the later successful begin exactly', () => {
+    let calls = 0;
+    const ai = recordIntentProvider(() => {
+      if (calls++ === 0) throw new TypeError('AI admission fault');
+      return [];
+    });
+    const r = recorded((o) => ({ ...o, enemyAi: ai.decide }));
+    r.core.present(durationMs(T));
+    const before = r.core.read();
+    expect(() => r.core.beginStep({ durationMs: durationMs(T) })).toThrow(
+      'AI admission fault',
+    );
+    expect(r.core.read()).toEqual(before);
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(ai.read()).toEqual([
+      {
+        kind: 'threw',
+        diagnostic: { name: 'TypeError', message: 'AI admission fault' },
+      },
+      [],
+    ]);
+    expect(r.read().filter((e) => e.kind === 'begin')).toHaveLength(1);
+    expect(() => structuredClone([r.read(), ai.read()])).not.toThrow();
+    const replayAi = replayIntentProvider(ai.read());
+    const replayed = replayCore(
+      transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+      r.read(),
+    );
+    expect(replayed.outputs).toEqual(r.outputs());
+    expect(replayed.snapshot).toEqual(r.core.read());
+    expect(replayAi.readConsumed()).toBe(2);
+    expect(() => replayAi.assertConsumed()).not.toThrow();
+    // A live callback cannot be reconstructed from absent external decision evidence.
+    expect(() => replayCore(transactionSetup(), r.read())).toThrow(
+      /ordinary.*failure.*mismatch/i,
+    );
+  });
+  test('returned AI decisions survive rejected batches; Core rollback does not delete external decisions or consume rejected command IDs', () => {
+    let calls = 0;
+    const ai = recordIntentProvider((snapshot) => {
+      const id = requireValue(snapshot.currentOpponentId);
+      const command: GameplayCommand = {
+        type: 'AttackRequested',
+        runId: run,
+        actorId: id,
+        category: 'punch',
+        input: { commandId: commandId('retained-ai'), sequence: 1 },
+      };
+      return calls++ === 0
+        ? [command, { ...command, category: 'kick' }]
+        : [command];
+    });
+    const r = recorded((o) => ({ ...o, enemyAi: ai.decide }));
+    r.core.present(durationMs(T));
+    const before = r.core.read();
+    expect(() => r.core.beginStep({ durationMs: durationMs(T) })).toThrow(
+      /Conflicting command identity/,
+    );
+    expect(r.core.read()).toEqual(before);
+    expect(ai.read()).toHaveLength(1);
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const out = r.core.completeStep(
+      syntheticTransaction(r.core, request).value,
+    );
+    expect(out.events.filter((e) => e.type === 'AttackAccepted')).toHaveLength(
+      1,
+    );
+    expect(ai.read()).toHaveLength(2);
+    // Rejected pre-AI operations must not consume an external decision.
+    const count = ai.read().length;
+    expect(() => r.core.beginStep({ durationMs: durationMs(0) })).toThrow(
+      /positive/,
+    );
+    expect(ai.read()).toHaveLength(count);
+    const replayAi = replayIntentProvider(ai.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).outputs,
+    ).toEqual(r.outputs());
+    expect(() => replayAi.assertConsumed()).not.toThrow();
+  });
+  test('failed ready preparation is replayed rather than dropping its reserved bootstrap epochs', () => {
+    const customize = () => {
+      let calls = 0;
+      return (o: CoreOptions): CoreOptions => {
+        const fighting = o.fighting;
+        if (fighting?.mode !== 'battle-transaction-v1')
+          throw new Error('fixture mode');
+        return {
+          ...o,
+          fighting: {
+            ...fighting,
+            ready: () => {
+              if (calls++ === 0) throw new Error('ready admission fault');
+              return fighting.ready();
+            },
+          },
+        };
+      };
+    };
+    const r = recordCore(transactionSetup(customize()));
+    const before = r.core.read();
+    expect(() => r.core.handle({ type: 'AssetsReady', runId: run })).toThrow(
+      'ready admission fault',
+    );
+    expect(r.core.read()).toEqual(before);
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    expect(actor(r.core).fightingPose?.epochId).not.toBe(
+      actor(startTransactionCore()).fightingPose?.epochId,
+    );
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    const replayed = replayCore(transactionSetup(customize()), r.read());
+    expect(replayed.outputs).toEqual(r.outputs());
+    expect(replayed.snapshot).toEqual(r.core.read());
+  });
+  test.each(['fail', 'dispose'] as const)(
+    'explicit %s after aborted completion remains accepted and replayable',
+    (operation) => {
+      const r = recorded();
+      r.core.present(durationMs(T));
+      const request = r.core.beginStep({ durationMs: durationMs(T) });
+      const tx = syntheticTransaction(r.core, request, {
+        project: () => {
+          throw new Error('explicit cleanup');
+        },
+      });
+      expect(() => r.core.completeStep(tx.value)).toThrow('explicit cleanup');
+      if (operation === 'fail') {
+        r.core.fail('cancel');
+        r.core.drain();
+      } else r.core.dispose();
+      const replayed = replayCore(transactionSetup(), r.read());
+      expect(replayed.outputs).toEqual(r.outputs());
+      expect(replayed.snapshot).toEqual(r.core.read());
+    },
+  );
+  test('unrecordable finish followed by explicit error cleanup still replays', () => {
+    const r = recorded();
+    r.core.present(durationMs(T));
+    const request = r.core.beginStep({ durationMs: durationMs(T) });
+    const tx = syntheticTransaction(r.core, request, {
+      raw: true,
+      finish: (receipt) => ({ ...receipt, bad: () => undefined }),
+    });
+    expect(() => r.core.completeStep(tx.value)).toThrow(/non-recordable/);
+    r.core.fail('cancel unrecordable finish');
+    r.core.drain();
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+});
+
+describe('recorder capture and outcome guard lifetime', () => {
+  test('captured ordinary inputs define the call once; getter reentry cannot insert a lifecycle command', () => {
+    const r = recordCore(transactionSetup());
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    r.core.present(durationMs(T));
+    let reads = 0;
+    const step = {
+      get durationMs() {
+        expect(() => r.core.fail('capture reentry')).toThrow(/busy/i);
+        return durationMs(++reads === 1 ? T : 2 * T);
+      },
+    };
+    const request = r.core.beginStep(step);
+    expect(reads).toBe(1);
+    expect(request.step.durationMs).toBe(T);
+    r.core.completeStep(syntheticTransaction(r.core, request).value);
+    expect(replayCore(transactionSetup(), r.read()).outputs).toEqual(
+      r.outputs(),
+    );
+  });
+  test('a failed input capture adds no operation and releases the recorder guard', () => {
+    const r = recordCore(transactionSetup());
+    const before = r.read();
+    expect(() =>
+      r.core.handle({
+        type: 'AssetsReady',
+        get runId(): typeof run {
+          expect(() => r.core.dispose()).toThrow(/busy/i);
+          throw new Error('input capture fault');
+        },
+      }),
+    ).toThrow('input capture fault');
+    expect(r.read()).toEqual(before);
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    expect(replayCore(transactionSetup(), r.read()).snapshot).toEqual(
+      r.core.read(),
+    );
+  });
+  test('diagnostic extraction stays guarded, records only name/message and validates failure mismatches', () => {
+    let r: ReturnType<typeof recordCore>;
+    const error = new Error('diagnostic fault');
+    Object.defineProperty(error, 'name', {
+      get() {
+        expect(() => r.core.fail('diagnostic reentry')).toThrow(/busy/i);
+        return 'AdmissionError';
+      },
+    });
+    Object.assign(error, { privatePayload: () => 'not tape data' });
+    const ai = recordIntentProvider(() => {
+      throw error;
+    });
+    r = recordCore(transactionSetup((o) => ({ ...o, enemyAi: ai.decide })));
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.present(durationMs(T));
+    let failure: unknown;
+    try {
+      r.core.beginStep({ durationMs: durationMs(T) });
+    } catch (caught) {
+      failure = caught;
+    }
+    expect(failure === error).toBe(true);
+    expect(ai.read()).toEqual([
+      {
+        kind: 'threw',
+        diagnostic: { name: 'AdmissionError', message: 'diagnostic fault' },
+      },
+    ]);
+    r.core.fail('outside cleanup');
+    r.core.drain();
+    const replayAi = replayIntentProvider(ai.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).outputs,
+    ).toEqual(r.outputs());
+    expect(() => replayAi.assertConsumed()).not.toThrow();
+    const changed = structuredClone(r.read());
+    const rejected = changed.find((e) => e.kind === 'failed');
+    if (rejected?.kind !== 'failed')
+      throw new Error('expected failed operation');
+    Object.assign(rejected.diagnostic, { message: 'forged failure' });
+    expect(() =>
+      replayCore(
+        transactionSetup((o) => ({
+          ...o,
+          enemyAi: replayIntentProvider(ai.read()),
+        })),
+        changed,
+      ),
+    ).toThrow(/ordinary.*failure.*mismatch/i);
+  });
+});
+
+describe('propagated recorder failure observation', () => {
+  function recorded(ai: Exclude<CoreOptions['enemyAi'], false | undefined>) {
+    const r = recordCore(transactionSetup((o) => ({ ...o, enemyAi: ai })));
+    r.core.handle({ type: 'AssetsReady', runId: run });
+    r.core.handle({ type: 'StartRequested', runId: run });
+    r.core.drain();
+    r.core.present(durationMs(T));
+    return r;
+  }
+  function failBegin(r: ReturnType<typeof recordCore>, error: Error) {
+    let caught: unknown;
+    try {
+      r.core.beginStep({ durationMs: durationMs(T) });
+    } catch (failure) {
+      caught = failure;
+    }
+    // Do not inspect/format the Error: doing so would read its live accessors.
+    expect(caught === error).toBe(true);
+  }
+  function failedDiagnostics(r: ReturnType<typeof recordCore>) {
+    return r
+      .read()
+      .flatMap((entry) => (entry.kind === 'failed' ? [entry.diagnostic] : []));
+  }
+  test.each(['name', 'message'] as const)(
+    'changing Error.%s is observed once per propagated failure, not once per recorder',
+    (field) => {
+      let reads = 0,
+        calls = 0;
+      const error = new Error('stable message');
+      Object.defineProperty(error, field, {
+        get() {
+          return `Observed${++reads}`;
+        },
+      });
+      const ai = recordIntentProvider(() => {
+        if (calls++ < 2) throw error;
+        return [];
+      });
+      const r = recorded(ai.decide),
+        before = r.core.read();
+      failBegin(r, error);
+      expect(reads).toBe(1);
+      expect(r.core.read()).toEqual(before);
+      failBegin(r, error);
+      expect(reads).toBe(2);
+      const expected =
+        field === 'name'
+          ? [
+              { name: 'Observed1', message: 'stable message' },
+              { name: 'Observed2', message: 'stable message' },
+            ]
+          : [
+              { name: 'Error', message: 'Observed1' },
+              { name: 'Error', message: 'Observed2' },
+            ];
+      expect(failedDiagnostics(r)).toEqual(expected);
+      expect(ai.read()).toEqual(
+        expected.map((diagnostic) => ({ kind: 'threw', diagnostic })),
+      );
+      const request = r.core.beginStep({ durationMs: durationMs(T) });
+      r.core.completeStep(syntheticTransaction(r.core, request).value);
+      const replayAi = replayIntentProvider(ai.read());
+      const replayed = replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      );
+      expect(replayed.outputs).toEqual(r.outputs());
+      expect(replayed.snapshot).toEqual(r.core.read());
+      expect(replayAi.readConsumed()).toBe(3);
+      replayAi.assertConsumed();
+      expect(reads).toBe(2);
+      expect(() => structuredClone([r.read(), ai.read()])).not.toThrow();
+    },
+  );
+  test('changing name and message retain one guarded observation and original Error identity through nested AI recorders', () => {
+    let names = 0,
+      messages = 0;
+    let r: ReturnType<typeof recordCore>;
+    const error = new Error();
+    Object.defineProperties(error, {
+      name: {
+        get() {
+          expect(() => r.core.fail('name reentry')).toThrow(/busy/i);
+          return `Name${++names}`;
+        },
+      },
+      message: {
+        get() {
+          expect(() => r.core.dispose()).toThrow(/busy/i);
+          return `Message${++messages}`;
+        },
+      },
+    });
+    const inner = recordIntentProvider(() => {
+      throw error;
+    });
+    const outer = recordIntentProvider(inner.decide);
+    r = recorded(outer.decide);
+    failBegin(r, error);
+    expect([names, messages]).toEqual([1, 1]);
+    const outcome = {
+      kind: 'threw',
+      diagnostic: { name: 'Name1', message: 'Message1' },
+    };
+    expect(inner.read()).toEqual([outcome]);
+    expect(outer.read()).toEqual([outcome]);
+    expect(failedDiagnostics(r)).toEqual([outcome.diagnostic]);
+    r.core.fail('outside cleanup');
+    r.core.drain();
+    const replayAi = replayIntentProvider(outer.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).outputs,
+    ).toEqual(r.outputs());
+    replayAi.assertConsumed();
+  });
+  test('reusing one Error in separate recorders and standalone AI invocations never reuses another occurrence diagnostic', () => {
+    let names = 0;
+    const error = new Error('reused');
+    Object.defineProperty(error, 'name', {
+      get() {
+        return `Occurrence${++names}`;
+      },
+    });
+    const standalone = recordIntentProvider(() => {
+      throw error;
+    });
+    for (let i = 0; i < 2; i++) {
+      let caught: unknown;
+      try {
+        standalone.decide(transactionSetup().read(), null);
+      } catch (failure) {
+        caught = failure;
+      }
+      expect(caught === error).toBe(true);
+    }
+    expect(standalone.read()).toEqual([
+      { kind: 'threw', diagnostic: { name: 'Occurrence1', message: 'reused' } },
+      { kind: 'threw', diagnostic: { name: 'Occurrence2', message: 'reused' } },
+    ]);
+    for (const name of ['Occurrence3', 'Occurrence4']) {
+      const ai = recordIntentProvider(() => {
+        throw error;
+      });
+      const r = recorded(ai.decide);
+      failBegin(r, error);
+      expect(failedDiagnostics(r)).toEqual([{ name, message: 'reused' }]);
+      expect(ai.read()).toEqual([
+        { kind: 'threw', diagnostic: { name, message: 'reused' } },
+      ]);
+      r.core.dispose();
+      const replayAi = replayIntentProvider(ai.read());
+      expect(
+        replayCore(
+          transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+          r.read(),
+        ).snapshot,
+      ).toEqual(r.core.read());
+      replayAi.assertConsumed();
+    }
+    expect(names).toBe(4);
+  });
+  test('a swallowed child failure cannot override a replacement error recorded by its parent', () => {
+    const childError = new TypeError('child'),
+      replacement = new RangeError('replacement');
+    const inner = recordIntentProvider(() => {
+      throw childError;
+    });
+    const outer = recordIntentProvider((snapshot, spatial) => {
+      try {
+        inner.decide(snapshot, spatial);
+      } catch {}
+      throw replacement;
+    });
+    const r = recorded(outer.decide);
+    failBegin(r, replacement);
+    expect(inner.read()).toEqual([
+      { kind: 'threw', diagnostic: { name: 'TypeError', message: 'child' } },
+    ]);
+    expect(outer.read()).toEqual([
+      {
+        kind: 'threw',
+        diagnostic: { name: 'RangeError', message: 'replacement' },
+      },
+    ]);
+    expect(failedDiagnostics(r)).toEqual([
+      { name: 'RangeError', message: 'replacement' },
+    ]);
+    r.core.fail('cleanup');
+    r.core.drain();
+    const replayAi = replayIntentProvider(outer.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).outputs,
+    ).toEqual(r.outputs());
+    replayAi.assertConsumed();
+  });
+  test('a successful observed invocation clears an earlier swallowed failure before the same Error is raised again', () => {
+    let names = 0,
+      calls = 0;
+    const error = new Error('re-raised');
+    Object.defineProperty(error, 'name', {
+      get() {
+        return `Raise${++names}`;
+      },
+    });
+    const inner = recordIntentProvider(() => {
+      if (calls++ === 0) throw error;
+      return [];
+    });
+    const outer = recordIntentProvider((snapshot, spatial) => {
+      try {
+        inner.decide(snapshot, spatial);
+      } catch {}
+      inner.decide(snapshot, spatial);
+      throw error;
+    });
+    const r = recorded(outer.decide);
+    failBegin(r, error);
+    expect(names).toBe(2);
+    expect(inner.read()).toEqual([
+      { kind: 'threw', diagnostic: { name: 'Raise1', message: 're-raised' } },
+      [],
+    ]);
+    expect(outer.read()).toEqual([
+      { kind: 'threw', diagnostic: { name: 'Raise2', message: 're-raised' } },
+    ]);
+    expect(failedDiagnostics(r)).toEqual([
+      { name: 'Raise2', message: 're-raised' },
+    ]);
+    r.core.dispose();
+    const replayAi = replayIntentProvider(outer.read());
+    expect(
+      replayCore(
+        transactionSetup((o) => ({ ...o, enemyAi: replayAi })),
+        r.read(),
+      ).snapshot,
+    ).toEqual(r.core.read());
+    replayAi.assertConsumed();
+  });
 });
