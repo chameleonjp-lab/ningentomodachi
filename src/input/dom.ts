@@ -1,6 +1,8 @@
 import type { InputReleaseReason } from '../contracts';
 import type { ControlAction, PointerInput } from './PointerInput';
-export type ControlElements = Readonly<Record<ControlAction, HTMLElement>>;
+export type ControlElements = Readonly<
+  Record<Exclude<ControlAction, 'guard'>, HTMLElement> & { guard?: HTMLElement }
+>;
 /** Listeners and browser-default suppression are scoped to game controls, not the page. */
 export function bindPointerControls(
   input: PointerInput,
@@ -11,6 +13,7 @@ export function bindPointerControls(
   let disposed = false;
   let accessibilityPointer = -1;
   const captured = new Map<number, HTMLElement>();
+  const keyboard = new Map<HTMLElement, Map<string, number>>();
   const release = (id: number) => {
     const element = captured.get(id);
     captured.delete(id);
@@ -21,6 +24,7 @@ export function bindPointerControls(
     }
   };
   const releaseAll = () => {
+    keyboard.clear();
     for (const id of [...captured.keys()]) release(id);
   };
   const cancel = (reason: InputReleaseReason) => {
@@ -66,6 +70,8 @@ export function bindPointerControls(
         e.preventDefault();
         captured.set(e.pointerId, element);
         input.pointerDown(e.pointerId, action, e.clientX, e.clientY);
+        // A synchronous host release/dispose must not reacquire OS ownership.
+        if (disposed || captured.get(e.pointerId) !== element) return;
         try {
           element.setPointerCapture?.(e.pointerId);
         } catch {
@@ -84,15 +90,45 @@ export function bindPointerControls(
         // Native click detail=0 covers keyboard and assistive activation. Pointer click detail>0 is already handled.
         listen(element, 'click', (event) => {
           if ((event as MouseEvent).detail !== 0) return;
+          if (keyboard.get(element)?.size) return;
           const id = accessibilityPointer--;
           input.pointerDown(id, action, 0, 0);
           input.pointerUp(id);
         });
         listen(element, 'keydown', (event) => {
           const key = event as KeyboardEvent;
+          if (action === 'guard' && (key.key === ' ' || key.key === 'Enter')) {
+            key.preventDefault();
+            let owners = keyboard.get(element);
+            if (key.repeat || owners?.has(key.key)) return;
+            if (!owners) {
+              owners = new Map();
+              keyboard.set(element, owners);
+            }
+            const id = accessibilityPointer--;
+            owners.set(key.key, id);
+            input.pointerDown(id, action, 0, 0);
+            return;
+          }
           if (key.repeat && (key.key === ' ' || key.key === 'Enter'))
             key.preventDefault();
         });
+        if (action === 'guard') {
+          listen(element, 'keyup', (event) => {
+            const key = event as KeyboardEvent;
+            if (key.key !== ' ' && key.key !== 'Enter') return;
+            key.preventDefault();
+            const owners = keyboard.get(element);
+            const id = owners?.get(key.key);
+            owners?.delete(key.key);
+            if (id !== undefined) input.pointerUp(id);
+          });
+          listen(element, 'focusout', () => {
+            const owners = keyboard.get(element);
+            keyboard.delete(element);
+            for (const id of owners?.values() ?? []) input.pointerUp(id, true);
+          });
+        }
       }
     }
     listen(document, 'pointermove', (event) => {
