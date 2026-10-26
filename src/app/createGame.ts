@@ -75,6 +75,7 @@ interface ActiveRun {
   started: boolean;
   deliveredSequence: number;
   gate: boolean | null;
+  opponentId: GameSnapshot['currentOpponentId'];
   unsubscribe: Unsubscribe;
 }
 function isGameplay(command: GameCommand): command is GameplayCommand {
@@ -242,15 +243,29 @@ export function createGame<Node>(
       run.prepared &&
       output.snapshot.phase === 'running' &&
       output.snapshot.pauseReasons.length === 0;
-    if (run.gate !== enabled) {
-      if (run.gate === true && !enabled)
-        releaseInput(
-          run,
-          output.snapshot.phase === 'terminal' ? 'terminal' : 'pause',
-        );
-      run.gate = enabled;
+    const previousGate = run.gate;
+    const gateChanged = previousGate !== enabled;
+    const encounterChanged =
+      previousGate === true &&
+      run.opponentId !== output.snapshot.currentOpponentId &&
+      output.snapshot.actors.some((actor) => actor.fighting !== undefined);
+    // Record accepted continuity before release can synchronously publish again.
+    // Initial ready -> first opponent has no open input gate to invalidate.
+    run.opponentId = output.snapshot.currentOpponentId;
+    run.gate = enabled;
+    if (previousGate === true && (!enabled || encounterChanged))
+      releaseInput(
+        run,
+        enabled
+          ? 'interruption'
+          : output.snapshot.phase === 'terminal'
+            ? 'terminal'
+            : 'pause',
+      );
+    if (active !== run || disposed) return;
+    // A release callback may already have published a newer pause/resume gate.
+    if (gateChanged && run.gate === enabled)
       run.input.setGate(Object.freeze({ runId: run.context.runId, enabled }));
-    }
     emitHost();
   }
   function cleanup(run: ActiveRun) {
@@ -710,6 +725,7 @@ export function createGame<Node>(
           started: false,
           deliveredSequence: 0,
           gate: null,
+          opponentId: null,
           abort,
           disposables: resources,
           loop: createFrameLoop(ports, loopOptions, {
