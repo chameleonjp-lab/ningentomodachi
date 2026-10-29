@@ -4162,3 +4162,141 @@ export function captureFightingActualRecipeSamplerPort(
     dispose: () => Reflect.apply(dispose, input, []),
   });
 }
+
+/** Structural transport only. Valid metadata is NOT source authentication,
+ * an interval capability, a prepared binding, or permission to enable production.
+ * F must supply independently authenticated expected evidence; copying caller
+ * metadata into that context does not authenticate it. Domain digests identify
+ * external reviewed scope, not an executable geometry law. */
+export interface FightingGeometryAdmissionMetadata {
+  readonly schema: 'fighting-geometry-admission-metadata-v1';
+  readonly bindingSetId: string;
+  readonly manifestDigest: string;
+  readonly sourceClosureDigest: string;
+  readonly lawImplementations: readonly {
+    readonly lawId: string;
+    readonly implementationDigest: string;
+    readonly numericBackendId: string;
+    readonly numericProfileDigest: string;
+  }[];
+  readonly admittedDomainDigests: readonly string[];
+  readonly limits: {
+    readonly maxIntervalCalls: number;
+    readonly maxRefinementDepth: number;
+    readonly maxBranchSplits: number;
+    readonly maxEvaluations: number;
+  };
+  readonly normalAcceptance: { readonly maxAngularErrorRad: number };
+  readonly eventNumberProfile: {
+    readonly precision: 53;
+    readonly rounding: 'nearest-ties-even';
+    readonly maxTimestampErrorMs: number;
+    readonly maxWorldWitnessErrorM: number;
+    readonly numericBackendId: string;
+  };
+  readonly qualificationEvidenceDigest: string;
+}
+export interface FightingGeometryAdmissionMetadataContext {
+  readonly expected: FightingGeometryAdmissionMetadata;
+}
+/** Capture both sides once, validate both, then require exact tuple identity.
+ * No automatic defaults, fuzzy equality, capability branding or new registry. */
+export function captureFightingGeometryAdmissionMetadata(
+  input: unknown,
+  context: { readonly expected: unknown },
+): FightingGeometryAdmissionMetadata {
+  const captured = pointSnapshot({ input, context });
+  exactFields(captured.context, ['expected']);
+  const validate = (value: unknown): FightingGeometryAdmissionMetadata => {
+    exactFields(value, [
+      'schema',
+      'bindingSetId',
+      'manifestDigest',
+      'sourceClosureDigest',
+      'lawImplementations',
+      'admittedDomainDigests',
+      'limits',
+      'normalAcceptance',
+      'eventNumberProfile',
+      'qualificationEvidenceDigest',
+    ]);
+    // exactFields checks own-data before this structural narrowing.
+    const v = value as FightingGeometryAdmissionMetadata;
+    if (v.schema !== 'fighting-geometry-admission-metadata-v1')
+      throw new RangeError('Unknown geometry admission metadata schema');
+    text(v.bindingSetId);
+    pointDigest(v.manifestDigest);
+    pointDigest(v.sourceClosureDigest);
+    pointDigest(v.qualificationEvidenceDigest);
+    exactFields(v.limits, [
+      'maxIntervalCalls',
+      'maxRefinementDepth',
+      'maxBranchSplits',
+      'maxEvaluations',
+    ]);
+    for (const key of [
+      'maxIntervalCalls',
+      'maxRefinementDepth',
+      'maxBranchSplits',
+      'maxEvaluations',
+    ] as const)
+      pointInteger(v.limits[key], true);
+    exactFields(v.normalAcceptance, ['maxAngularErrorRad']);
+    if (
+      finite(v.normalAcceptance.maxAngularErrorRad) < 0 ||
+      v.normalAcceptance.maxAngularErrorRad > Math.PI
+    )
+      throw new RangeError('Invalid measured normal angular error');
+    exactFields(v.eventNumberProfile, [
+      'precision',
+      'rounding',
+      'maxTimestampErrorMs',
+      'maxWorldWitnessErrorM',
+      'numericBackendId',
+    ]);
+    const profile = v.eventNumberProfile;
+    if (profile.precision !== 53 || profile.rounding !== 'nearest-ties-even')
+      throw new RangeError(
+        'Only explicit binary64 p53 nearest-even metadata is supported',
+      );
+    text(profile.numericBackendId);
+    if (
+      finite(profile.maxTimestampErrorMs) < 0 ||
+      finite(profile.maxWorldWitnessErrorM) < 0
+    )
+      throw new RangeError('Invalid measured representation error');
+    denseArray(v.lawImplementations);
+    if (!v.lawImplementations.length)
+      throw new RangeError('Missing admitted law identity');
+    uniqueIds(
+      v.lawImplementations.map((law) => {
+        exactFields(law, [
+          'lawId',
+          'implementationDigest',
+          'numericBackendId',
+          'numericProfileDigest',
+        ]);
+        pointDigest(law.implementationDigest);
+        pointDigest(law.numericProfileDigest);
+        if (text(law.numericBackendId) !== profile.numericBackendId)
+          throw new RangeError(
+            'Law and event profile use different numeric backends',
+          );
+        return text(law.lawId);
+      }),
+    );
+    denseArray(v.admittedDomainDigests);
+    if (!v.admittedDomainDigests.length)
+      throw new RangeError('Missing admitted domain identity');
+    uniqueIds(v.admittedDomainDigests.map(pointDigest));
+    return v;
+  };
+  const expected = validate(captured.context.expected);
+  const result = validate(captured.input);
+  requireEqual(
+    result,
+    expected,
+    'Admission metadata differs from independent preparation evidence',
+  );
+  return result;
+}

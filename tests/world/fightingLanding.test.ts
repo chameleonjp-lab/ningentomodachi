@@ -579,3 +579,105 @@ describe('review fix2 exact grounded admission domain', () => {
     },
   );
 });
+
+import { captureFightingMotorGeometryPath } from '../../src/world/spatial-engine';
+import { fightingHurtProxy } from '../../src/world/combat-hurt';
+/** D numerical mechanism only: not C source/interval admission. */
+describe('D same-time motor geometry path preparation', () => {
+  const evaluate = (c: readonly [number, number, number], u: number) =>
+    c[0] + c[1] * u + c[2] * u * u;
+  test('restricts the actual quadratic to common game time rather than its endpoint chord', () => {
+    const projected = fall(400);
+    const path = captureFightingMotorGeometryPath(
+      projected,
+      100,
+      300,
+      0,
+      'airborne',
+    );
+    expect(path.from).toBe(100);
+    expect(path.to).toBe(300);
+    for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+      const actual = sampleFightingMotor(projected, 100 + 200 * u);
+      expect(evaluate(path.position.y, u)).toBeCloseTo(actual.position.y, 14);
+      expect(evaluate(path.groundClearanceM, u)).toBeCloseTo(
+        actual.position.y,
+        14,
+      );
+    }
+    expect(path.position.y[2]).not.toBe(0);
+    expect(path.expectedHurtProxy).toEqual(
+      fightingHurtProxy({ x: 0, y: 0, z: 0 }, 'airborne'),
+    );
+    expect(Object.isFrozen(path.position.y)).toBe(true);
+    expect(Object.isFrozen(path.expectedHurtProxy.volume.start)).toBe(true);
+  });
+  test('frozen piece is constant despite retained physical velocity and uses fixed elevated plane', () => {
+    const projected = fall(400, {
+      actor: actor(2),
+      support: { ...floor, planeY: 1 },
+      slices: [
+        { from: 0, to: 200, frozen: false },
+        { from: 200, to: 400, frozen: true },
+      ],
+    });
+    const path = captureFightingMotorGeometryPath(
+      projected,
+      200,
+      400,
+      1,
+      'crouching',
+    );
+    expect(sampleFightingMotor(projected, 250).velocity.y).not.toBe(0);
+    expect(path.position.y.slice(1)).toEqual([0, 0]);
+    expect(path.groundClearanceM[0]).toBe(path.position.y[0] - 1);
+    expect(path.expectedHurtProxy).toEqual(
+      fightingHurtProxy({ x: 0, y: 0, z: 0 }, 'crouching'),
+    );
+  });
+  test('rejects a landing endpoint whose left polynomial differs from installed floor state', () => {
+    // Real motor projections, not a forged endpoint or an epsilon allowance.
+    const projected = [1, 1.1, 1.3, 2, 2.4]
+      .map((y) => fall(1000, { actor: actor(y) }))
+      .find((result) => {
+        const piece = requirePhysicalValue(result.pieces[0]);
+        const seconds = (piece.to - piece.from) / 1000;
+        const leftY =
+          piece.position.y +
+          piece.velocity.y * seconds +
+          (piece.acceleration.y * seconds * seconds) / 2;
+        return leftY !== sampleFightingMotor(result, piece.to).position.y;
+      });
+    expect(projected).toBeDefined();
+    const result = requirePhysicalValue(projected);
+    const end = requirePhysicalValue(result.pieces[0]).to;
+    expect(sampleFightingMotor(result, end).position.y).toBe(0);
+    expect(() =>
+      captureFightingMotorGeometryPath(result, 0, end, 0, 'airborne'),
+    ).toThrow(/endpoint.*qualification/i);
+    // The following installed grounded piece remains independently admissible.
+    expect(
+      captureFightingMotorGeometryPath(result, end, result.to, 0, 'standing')
+        .groundClearanceM,
+    ).toEqual([0, 0, 0]);
+  });
+  test('refuses seam crossing, extrapolation, empty windows and nonfinite plane', () => {
+    const projected = fall(500);
+    for (const [from, to, plane] of [
+      [0, 500, 0],
+      [-1, 100, 0],
+      [200, 100, 0],
+      [100, 100, 0],
+      [0, 100, NaN],
+    ] as const)
+      expect(() =>
+        captureFightingMotorGeometryPath(
+          projected,
+          from,
+          to,
+          plane,
+          'standing',
+        ),
+      ).toThrow();
+  });
+});
