@@ -1054,3 +1054,212 @@ export function projectFightingContacts(input: {
     work,
   };
 }
+
+/** Isolated scalar certificate mechanism for c +/- sqrt(q), NOT geometry/source
+ * admission or an event solver. Existing contact/runtime paths do not call it.
+ * Every input Number means its exact binary64 value, never its decimal spelling.
+ * The explicit implementation domain caps rational intermediate size/work;
+ * exhaustion rejects. Fixed IEEE key decoding uses at most 65 bits independently.
+ * maxOperations counts budgeted rational/refinement/GCD steps, not CPU cycles.
+ */
+export function certifyFightingQuadraticRoot(request: {
+  readonly center: number;
+  readonly radicand: number;
+  readonly branch: number;
+  readonly precision: number;
+  readonly boundaries: readonly number[];
+  readonly maxTimeErrorMs: number;
+  readonly maxOperations: number;
+  readonly maxBits: number;
+}) {
+  // Capture each own data field once. Accessors cannot change the root or budget
+  // between exact comparisons. This structural capture is not source admission.
+  const own = (object: object, key: string) => {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor || !('value' in descriptor))
+      throw new RangeError('Unqualified scalar request requires own data');
+    return descriptor.value;
+  };
+  if (!request || typeof request !== 'object')
+    throw new RangeError('Unqualified scalar request requires own data');
+  const captured = {
+    center: own(request, 'center'),
+    radicand: own(request, 'radicand'),
+    branch: own(request, 'branch'),
+    precision: own(request, 'precision'),
+    maxTimeErrorMs: own(request, 'maxTimeErrorMs'),
+    maxOperations: own(request, 'maxOperations'),
+    maxBits: own(request, 'maxBits'),
+  };
+  const sourceBoundaries = own(request, 'boundaries');
+  if (!Array.isArray(sourceBoundaries))
+    throw new RangeError('Unqualified scalar boundaries');
+  const count = own(sourceBoundaries, 'length');
+  if (!Number.isSafeInteger(count) || count < 0 || count > 256)
+    throw new RangeError('Unqualified scalar boundaries');
+  const boundaries: number[] = [];
+  for (let index = 0; index < count; index++)
+    boundaries.push(own(sourceBoundaries, String(index)));
+  const input = { ...captured, boundaries };
+  if (
+    input.precision !== 53 ||
+    ![-1, 1].includes(input.branch) ||
+    ![input.center, input.radicand, input.maxTimeErrorMs].every(
+      Number.isFinite,
+    ) ||
+    input.radicand < 0 ||
+    input.maxTimeErrorMs < 0 ||
+    !Number.isSafeInteger(input.maxOperations) ||
+    input.maxOperations < 1 ||
+    input.maxOperations > 100000 ||
+    !Number.isSafeInteger(input.maxBits) ||
+    input.maxBits < 1 ||
+    input.maxBits > 16384 ||
+    !Array.isArray(input.boundaries) ||
+    input.boundaries.length > 256 ||
+    !input.boundaries.every(Number.isFinite)
+  )
+    throw new RangeError('Unqualified scalar numeric domain');
+  let operations = 0;
+  const work = () => {
+    if (++operations > input.maxOperations)
+      throw new RangeError('Unqualified numeric work budget');
+  };
+  const abs = (n: bigint) => (n < 0n ? -n : n);
+  const bits = (n: bigint) => abs(n).toString(2).length;
+  const checked = (n: bigint) => {
+    work();
+    if (bits(n) > input.maxBits)
+      throw new RangeError('Unqualified numeric bit budget');
+    return n;
+  };
+  const product = (a: bigint, b: bigint) => {
+    work();
+    if (bits(a) + bits(b) > input.maxBits)
+      throw new RangeError('Unqualified numeric bit budget');
+    return checked(a * b);
+  };
+  type Rational = readonly [bigint, bigint];
+  const rational = (n: bigint, d: bigint): Rational => {
+    checked(n);
+    checked(d);
+    if (d <= 0n) throw new RangeError('Unqualified rational denominator');
+    let a = abs(n),
+      b = d;
+    while (b) {
+      work();
+      const r = a % b;
+      a = b;
+      b = r;
+    }
+    return [n / a, d / a];
+  };
+  const subtract = (a: Rational, b: Rational) => {
+    const left = product(a[0], b[1]),
+      right = product(b[0], a[1]);
+    work();
+    if (Math.max(bits(left), bits(right)) + 1 > input.maxBits)
+      throw new RangeError('Unqualified numeric bit budget');
+    return rational(checked(left - right), product(a[1], b[1]));
+  };
+  const sign = (n: bigint) => (n < 0n ? -1 : n > 0n ? 1 : 0);
+  const compare = (a: Rational, b: Rational) => sign(subtract(a, b)[0]);
+  const buffer = new DataView(new ArrayBuffer(8));
+  const raw = (value: number) => {
+    buffer.setFloat64(0, value);
+    return buffer.getBigUint64(0);
+  };
+  const decode = (value: number): Rational => {
+    work();
+    if (!Number.isFinite(value))
+      throw new RangeError('Unqualified nonfinite scalar');
+    const data = raw(value),
+      exponent = Number((data >> 52n) & 2047n);
+    let mantissa = data & ((1n << 52n) - 1n);
+    if (exponent !== 0) mantissa |= 1n << 52n;
+    if (data >> 63n) mantissa = -mantissa;
+    const shift = exponent === 0 ? -1074 : exponent - 1023 - 52;
+    if (
+      (shift >= 0
+        ? bits(mantissa) + shift
+        : Math.max(bits(mantissa), 1 - shift)) > input.maxBits
+    )
+      throw new RangeError('Unqualified numeric bit budget');
+    return shift >= 0
+      ? rational(checked(mantissa << BigInt(shift)), 1n)
+      : rational(mantissa, checked(1n << BigInt(-shift)));
+  };
+  const center = decode(input.center),
+    q = decode(input.radicand);
+  const compareRoot = (value: Rational) => {
+    work();
+    const d = subtract(value, center);
+    if (q[0] === 0n) return -sign(d[0]);
+    if (input.branch === 1 && d[0] < 0n) return 1;
+    if (input.branch === -1 && d[0] > 0n) return -1;
+    const squared = rational(product(d[0], d[0]), product(d[1], d[1]));
+    return input.branch === 1 ? compare(q, squared) : compare(squared, q);
+  };
+  const mask = (1n << 64n) - 1n,
+    signBit = 1n << 63n;
+  const key = (value: number) => {
+    const data = raw(value);
+    return data & signBit ? mask ^ data : data ^ signBit;
+  };
+  const fromKey = (value: bigint) => {
+    work();
+    buffer.setBigUint64(0, value & signBit ? value ^ signBit : mask ^ value);
+    return buffer.getFloat64(0);
+  };
+  let low = key(-Number.MAX_VALUE),
+    high = key(Number.MAX_VALUE);
+  if (
+    compareRoot(decode(-Number.MAX_VALUE)) < 0 ||
+    compareRoot(decode(Number.MAX_VALUE)) > 0
+  )
+    throw new RangeError('Unqualified nonfinite representative');
+  // Binary search the ordered finite IEEE encodings, not a sampled time grid.
+  // Predicates are exact rational comparisons; at most 64 key subdivisions.
+  while (low < high) {
+    work();
+    const middle = (low + high + 1n) >> 1n;
+    if (compareRoot(decode(fromKey(middle))) >= 0) low = middle;
+    else high = middle - 1n;
+  }
+  const lowerNumber = fromKey(low),
+    lower = decode(lowerNumber);
+  let time = lowerNumber,
+    error: Rational = [0n, 1n];
+  if (compareRoot(lower) !== 0) {
+    const upperNumber = fromKey(low + 1n),
+      upper = decode(upperNumber);
+    const width = subtract(upper, lower);
+    const half = rational(width[0], product(width[1], 2n));
+    const midpoint = subtract(upper, half),
+      side = compareRoot(midpoint);
+    time =
+      side < 0 || (side === 0 && (raw(lowerNumber) & 1n) === 0n)
+        ? lowerNumber
+        : upperNumber;
+    // Root is in the selected half-cell. This conservative rational bound can
+    // refuse tighter requested errors; it never guesses a smaller error.
+    error = half;
+  }
+  const represented = decode(time);
+  for (const boundary of input.boundaries) {
+    const value = decode(boundary);
+    if (compareRoot(value) !== compare(represented, value))
+      throw new RangeError('Unqualified representative ownership mismatch');
+  }
+  if (compare(error, decode(input.maxTimeErrorMs)) > 0)
+    throw new RangeError('Unqualified timestamp representation error budget');
+  return Object.freeze({
+    time: time === 0 ? 0 : time,
+    operations,
+    timeErrorBound: Object.freeze({
+      numerator: error[0].toString(),
+      denominator: error[1].toString(),
+    }),
+    productionQualified: false as const,
+  });
+}

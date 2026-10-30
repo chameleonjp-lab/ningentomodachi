@@ -5261,3 +5261,154 @@ describe('A2 point consistent own-data snapshots and captured callable dispatch'
     expect(previous).toEqual(original.sample);
   });
 });
+
+// Admission METADATA is structural only, never a runtime capability/source proof.
+import { requireValue } from '../../src/core/invariant';
+import * as admissionMetadataContract from '../../src/contracts/fighting';
+function admissionMetadataFixture() {
+  return {
+    schema: 'fighting-geometry-admission-metadata-v1',
+    bindingSetId: 'reviewed-binding',
+    manifestDigest: 'a'.repeat(64),
+    sourceClosureDigest: 'b'.repeat(64),
+    lawImplementations: [
+      {
+        lawId: 'affine-v1',
+        implementationDigest: 'c'.repeat(64),
+        numericBackendId: 'exact-rational',
+        numericProfileDigest: 'd'.repeat(64),
+      },
+    ],
+    admittedDomainDigests: ['e'.repeat(64)],
+    limits: {
+      maxIntervalCalls: 10,
+      maxRefinementDepth: 12,
+      maxBranchSplits: 4,
+      maxEvaluations: 100,
+    },
+    normalAcceptance: { maxAngularErrorRad: 0.001 },
+    eventNumberProfile: {
+      precision: 53,
+      rounding: 'nearest-ties-even',
+      maxTimestampErrorMs: 0.0001,
+      maxWorldWitnessErrorM: 0.0001,
+      numericBackendId: 'exact-rational',
+    },
+    qualificationEvidenceDigest: 'f'.repeat(64),
+  };
+}
+it('exports explicit structural admission metadata capture without opening a production capability', () => {
+  expect(admissionMetadataContract).toHaveProperty(
+    'captureFightingGeometryAdmissionMetadata',
+    expect.any(Function),
+  );
+});
+it('captures admission metadata as detached frozen data matched to independent expected evidence', () => {
+  const input = admissionMetadataFixture(),
+    expected = structuredClone(input);
+  const result =
+    admissionMetadataContract.captureFightingGeometryAdmissionMetadata(input, {
+      expected,
+    });
+  expect(result).toEqual(expected);
+  expect(Object.isFrozen(result)).toBe(true);
+  expect(Object.isFrozen(requireValue(result.lawImplementations[0]))).toBe(
+    true,
+  );
+  requireValue(input.lawImplementations[0]).lawId = 'substituted';
+  expected.limits.maxEvaluations = 1;
+  expect(requireValue(result.lawImplementations[0]).lawId).toBe('affine-v1');
+  expect(result.limits.maxEvaluations).toBe(100);
+  expect(result).not.toHaveProperty('create');
+  expect(result).not.toHaveProperty('interval');
+});
+it.each([
+  'manifestDigest',
+  'sourceClosureDigest',
+  'qualificationEvidenceDigest',
+] as const)('rejects substituted %s despite matching bindingSetId', (field) => {
+  const input = admissionMetadataFixture(),
+    expected = structuredClone(input);
+  input[field] = '0'.repeat(64);
+  expect(() =>
+    admissionMetadataContract.captureFightingGeometryAdmissionMetadata(input, {
+      expected,
+    }),
+  ).toThrow(RangeError);
+});
+it.each([
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.eventNumberProfile.precision = 52;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.eventNumberProfile.rounding = 'floor';
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.eventNumberProfile.maxTimestampErrorMs = -1;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.eventNumberProfile.maxWorldWitnessErrorM = Infinity;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.normalAcceptance.maxAngularErrorRad = -1;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.limits.maxEvaluations = 0;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.limits.maxBranchSplits = 1.5;
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.lawImplementations.push(requireValue(v.lawImplementations[0]));
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.lawImplementations = [];
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.admittedDomainDigests = [];
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    v.admittedDomainDigests.push(requireValue(v.admittedDomainDigests[0]));
+  },
+  (v: ReturnType<typeof admissionMetadataFixture>) => {
+    requireValue(v.lawImplementations[0]).numericBackendId = 'foreign-backend';
+  },
+])(
+  'rejects invalid metadata even when independent expected metadata repeats the malformed value',
+  (mutate) => {
+    const input = admissionMetadataFixture();
+    mutate(input);
+    expect(() =>
+      admissionMetadataContract.captureFightingGeometryAdmissionMetadata(
+        input,
+        { expected: structuredClone(input) },
+      ),
+    ).toThrow(RangeError);
+  },
+);
+it('rejects metadata accessors without invoking them', () => {
+  const input = admissionMetadataFixture(),
+    expected = structuredClone(input);
+  let reads = 0;
+  Object.defineProperty(input, 'manifestDigest', {
+    enumerable: true,
+    get() {
+      reads++;
+      return expected.manifestDigest;
+    },
+  });
+  expect(() =>
+    admissionMetadataContract.captureFightingGeometryAdmissionMetadata(input, {
+      expected,
+    }),
+  ).toThrow(RangeError);
+  expect(reads).toBe(0);
+});
+it('rejects extra capability fields in metadata', () => {
+  const input = { ...admissionMetadataFixture(), ready: true };
+  expect(() =>
+    admissionMetadataContract.captureFightingGeometryAdmissionMetadata(input, {
+      expected: input,
+    }),
+  ).toThrow(RangeError);
+});

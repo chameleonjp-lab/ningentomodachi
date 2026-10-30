@@ -24,6 +24,7 @@ import {
   assertFiniteMotorInterval,
   faceToward,
   stepCharacter,
+  sampleFightingMotor,
   toBox,
 } from './character-motor';
 import {
@@ -32,6 +33,7 @@ import {
   streetContacts,
 } from './contact-candidates';
 import { add, dot, finite, length, mul, sub, unit, v } from './math';
+import { fightingHurtProxy } from './combat-hurt';
 import { resolveAttackStartStance, stanceBinding } from './attack-start-stance';
 import { createPoseTimeline } from './pose-timeline';
 import type { StreetLayout } from './street-layout';
@@ -726,4 +728,81 @@ export function createSpatialEngine(
       }
     },
   };
+}
+
+/** D-only preparation from an already resolved physical piece. Coefficients use
+ * the SAME u=(gameTime-from)/(to-from) for every coordinate. This is neither a
+ * source geometry certificate nor an interval capability; production stays gated.
+ * The caller retains its fixed support/basis and B slice identity. A closed
+ * piece endpoint must equal the installed motor position exactly. A left-limit
+ * polynomial with a rounded landing/bounds snap is not silently promoted to
+ * that endpoint: it needs a separately qualified endpoint policy. */
+export function captureFightingMotorGeometryPath(
+  projection: import('./character-motor').FightingMotorProjection,
+  from: number,
+  to: number,
+  planeY: number,
+  posture: import('../contracts').FightingPosture,
+) {
+  if (
+    ![from, to, planeY].every(Number.isFinite) ||
+    from < projection.from ||
+    to > projection.to ||
+    from >= to
+  )
+    throw new RangeError('Invalid fighting geometry path interval');
+  const piece = projection.pieces.find(
+    (p) => from >= p.from && from < p.to && to <= p.to,
+  );
+  if (!piece)
+    throw new RangeError('Fighting geometry path must not cross a motor seam');
+  if (
+    ![piece.position, piece.velocity, piece.acceleration].every((point) =>
+      [point.x, point.y, point.z].every(Number.isFinite),
+    )
+  )
+    throw new RangeError('Nonfinite fighting motor coefficients');
+  const offset = piece.frozen ? 0 : (from - piece.from) / 1000;
+  const span = piece.frozen ? 0 : (to - from) / 1000;
+  const coefficient = (axis: 'x' | 'y' | 'z', origin = 0) => {
+    const a = piece.acceleration[axis];
+    const result = [
+      piece.position[axis] +
+        piece.velocity[axis] * offset +
+        (a * offset * offset) / 2 -
+        origin,
+      piece.frozen ? 0 : (piece.velocity[axis] + a * offset) * span,
+      piece.frozen ? 0 : (a * span * span) / 2,
+    ] as const;
+    if (!result.every(Number.isFinite))
+      throw new RangeError('Nonfinite fighting motor coefficients');
+    return Object.freeze(result);
+  };
+  const position = Object.freeze({
+    x: coefficient('x'),
+    y: coefficient('y'),
+    z: coefficient('z'),
+  });
+  if (to === piece.to) {
+    const installed = sampleFightingMotor(projection, to).position;
+    for (const axis of ['x', 'y', 'z'] as const) {
+      const c = position[axis];
+      if (c[0] + c[1] + c[2] !== installed[axis])
+        throw new RangeError(
+          'Fighting motor endpoint requires separate qualification',
+        );
+    }
+  }
+  const expectedHurtProxy = fightingHurtProxy(v(), posture);
+  Object.freeze(expectedHurtProxy.volume.start);
+  Object.freeze(expectedHurtProxy.volume.end);
+  Object.freeze(expectedHurtProxy.volume);
+  Object.freeze(expectedHurtProxy);
+  return Object.freeze({
+    from,
+    to,
+    position,
+    groundClearanceM: coefficient('y', planeY),
+    expectedHurtProxy,
+  });
 }

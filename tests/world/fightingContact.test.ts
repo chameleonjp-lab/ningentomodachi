@@ -567,3 +567,137 @@ describe('review fix1 declared-linear singleton boundaries', () => {
     expect(() => project([malformed, trajectory('B')])).toThrow();
   });
 });
+
+import { certifyFightingQuadraticRoot } from '../../src/world/contact-candidates';
+/** Exact scalar mechanism only; no source geometry or runtime admission. */
+describe('isolated p53 quadratic root primitive', () => {
+  const certify = (extra = {}) =>
+    certifyFightingQuadraticRoot({
+      center: 2,
+      radicand: 1.25,
+      branch: -1,
+      precision: 53,
+      boundaries: [0, 4],
+      maxTimeErrorMs: 1e-12,
+      maxOperations: 100000,
+      maxBits: 8192,
+      ...extra,
+    });
+  test('matches independently established Python Fraction early/late root oracle', () => {
+    expect(certify().time).toBe(0.8819660112501051);
+    expect(certify({ radicand: 2 }).time).toBe(0.585786437626905);
+  });
+  test('matches signed/cancellation/subnormal-radicand Fraction oracle cases', () => {
+    // Generated with independently implemented prototype/backend.py Root/certify,
+    // Python Fraction, p53, max_steps=2048; not JS Math.sqrt expectations.
+    for (const [center, radicand, branch, expected] of [
+      // biome-ignore lint/suspicious/noApproximativeNumericConstant: independent Python Fraction oracle, not JS Math evaluation
+      [0, 2, 1, 1.4142135623730951],
+      // biome-ignore lint/suspicious/noApproximativeNumericConstant: independent Python Fraction oracle, not JS Math evaluation
+      [0, 2, -1, -1.4142135623730951],
+      [-2, 2, 1, -0.585786437626905],
+      [1e6, 2, -1, 999998.5857864376],
+      [0, Number.MIN_VALUE, 1, 2.2227587494850775e-162],
+      [0, Number.MIN_VALUE, -1, -2.2227587494850775e-162],
+    ] as const)
+      expect(
+        certify({ center, radicand, branch, boundaries: [], maxTimeErrorMs: 1 })
+          .time,
+      ).toBe(expected);
+  });
+  test('proves exact nearest-even ties without sqrt-rounded candidate', () => {
+    expect(certify({ center: 1, radicand: 2 ** -106, branch: 1 }).time).toBe(1);
+    expect(
+      certify({ center: 1 + 2 ** -52, radicand: 2 ** -106, branch: 1 }).time,
+    ).toBe(1 + 2 ** -51);
+    expect(
+      certify({
+        center: -1,
+        radicand: 2 ** -106,
+        branch: -1,
+        boundaries: [-4, 0],
+      }).time,
+    ).toBe(-1);
+  });
+  test('decodes subnormal and exact rational boundary without losing bits', () => {
+    expect(
+      certify({
+        center: Number.MIN_VALUE,
+        radicand: 0,
+        branch: 1,
+        boundaries: [0, Number.MIN_VALUE, 1],
+        maxTimeErrorMs: 0,
+      }).time,
+    ).toBe(Number.MIN_VALUE);
+    expect(
+      certify({
+        center: 1,
+        radicand: 0,
+        boundaries: [0, 1, 2],
+        maxTimeErrorMs: 0,
+      }).time,
+    ).toBe(1);
+  });
+  test('rejects boundary ownership mismatch rather than moving the representative', () => {
+    expect(() => certify({ boundaries: [0, 0.8819660112501051, 4] })).toThrow(
+      /ownership/,
+    );
+  });
+  test('does not execute accessors while capturing the scalar request', () => {
+    let reads = 0;
+    const hostile = {
+      center: 2,
+      radicand: 1.25,
+      precision: 53,
+      boundaries: [0, 4],
+      maxTimeErrorMs: 1,
+      maxOperations: 100000,
+      maxBits: 8192,
+      get branch() {
+        reads++;
+        return -1;
+      },
+    };
+    expect(() => certifyFightingQuadraticRoot(hostile as never)).toThrow(
+      /own data/i,
+    );
+    expect(reads).toBe(0);
+  });
+  test('canonicalizes signed zero and refuses a root beyond largest finite value', () => {
+    expect(
+      Object.is(
+        certify({
+          center: -0,
+          radicand: 0,
+          branch: 1,
+          boundaries: [],
+          maxTimeErrorMs: 0,
+        }).time,
+        0,
+      ),
+    ).toBe(true);
+    expect(() =>
+      certify({
+        center: Number.MAX_VALUE,
+        radicand: 1,
+        branch: 1,
+        boundaries: [],
+      }),
+    ).toThrow(/nonfinite representative/);
+  });
+  test('bounds arithmetic and rejects unsupported input rather than reporting miss', () => {
+    for (const extra of [
+      { maxOperations: 1 },
+      { maxBits: 32 },
+      { precision: 52 },
+      { radicand: -1 },
+      { center: Infinity },
+      { radicand: NaN },
+      { maxTimeErrorMs: 0 },
+      { branch: 0 },
+      { maxOperations: Infinity },
+      { maxBits: 1e9 },
+    ])
+      expect(() => certify(extra)).toThrow();
+  });
+});
